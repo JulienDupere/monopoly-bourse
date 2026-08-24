@@ -324,6 +324,7 @@ const FEATURE_LIST = [
   {key:'catBond', label:'Obligations catastrophe'},
   {key:'landShareAuction', label:'Enchère de parts de terrain (module indépendant, sans lien avec le reste de la partie)'},
   {key:'etf', label:'ETF de terrains (réserve permanente de la banque, émise progressivement aux joueurs)'},
+  {key:'lottery', label:'Loterie (pot commun: cotisation fixe par joueur, réclamé en un seul versement par le gagnant)'},
 ];
 
 /* ---------- Aide stockage ----------
@@ -473,8 +474,9 @@ function migrateState(s){
   if(s.settings.loanWithholdingPct===undefined) s.settings.loanWithholdingPct = 0.20; // % de tous les loyers reçus par l'emprunteur, retenu et versé au prêteur
   if(s.settings.loanRepaymentMultiple===undefined) s.settings.loanRepaymentMultiple = 1.5; // la retenue s'arrête une fois principal×multiple remboursé
   if(s.settings.loanMaxPrincipal===undefined) s.settings.loanMaxPrincipal = 5; // montant maximal empruntable par prêt (5M$)
+  if(s.settings.lotteryContribution===undefined) s.settings.lotteryContribution = 0.5; // montant fixe (M$) versé au pot commun à chaque cotisation
   if(!s.settings.features) s.settings.features = {};
-  ['insurance','houseAuction','stock','goAdvance','mortgage','rentSwap','rentCompensation','loan','catBond','landShareAuction'].forEach(k=>{
+  ['insurance','houseAuction','stock','goAdvance','mortgage','rentSwap','rentCompensation','loan','catBond','landShareAuction','lottery'].forEach(k=>{
     if(s.settings.features[k]===undefined) s.settings.features[k] = true;
   });
   // Le module ETF réduit en permanence le % achetable par les joueurs sur TOUS les terrains (et donc,
@@ -500,6 +502,7 @@ function migrateState(s){
   if(!s.stockMarket) s.stockMarket = {tradingOpen:false};
   if(s.currentDeductible===undefined) s.currentDeductible = 0;
   if(!s.houseAuction) s.houseAuction = {availableHouses:0, bids:[], lastResult:null};
+  if(s.lotteryPot===undefined) s.lotteryPot = 0; // pot commun de la loterie (argent des joueurs, jamais de la banque)
   s.players.forEach(p=>{
     if(!p.stats) p.stats = freshStats();
     if(p.houseReserve===undefined) p.houseReserve = 0;
@@ -572,7 +575,7 @@ async function createGame(names, startCash, bankCash, unit, settings){
   const code = Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*24)]).join('');
   const players = names.map((n,i)=>({id:uid(), name:n, cash:startCash, color:PLAYER_COLORS[i%PLAYER_COLORS.length],
     position:0, stats:freshStats(), stockCash:5, stockHoldings:{long:{},short:{},riskFree:0,reitLong:{}}, etfHoldings:{}, goAdvancesUsed:0, goAdvancesOwed:0, houseReserve:0, inJail:false, jailTurnsLeft:0, bankrupt:false}));
-  const mergedSettings = Object.assign({insuranceMarkup:0.25, discountRate:0.10, growthRate:0.02, goAdvanceRate:0.10, goAdvanceMax:5, sharesPerPlayer:1000, riskFreeRate:0.03, mortgageLTV:0.5, mortgageRate:0.35, mortgageRentContinues:false, liquidationPenalty:0, debtSpreadFactor:0.5, marginMultiple:2, maxOwners:3, bankMinSellPct:0, etfBankReservePct:10, etfIssuancePctPerLap:10, jailTurns:3, jailBailCost:0.5, bankCollectsRent:true, neutralPawnCapsAtGo:false, rentCompensationFee:0.25, linearRent:false, housesBeforeHotel:4, loanWithholdingPct:0.20, loanRepaymentMultiple:1.5, loanMaxPrincipal:5, features:{insurance:true,houseAuction:true,stock:true,goAdvance:true,mortgage:true,rentSwap:true,rentCompensation:true,loan:true,catBond:true,landShareAuction:true,etf:false}}, settings||{});
+  const mergedSettings = Object.assign({insuranceMarkup:0.25, discountRate:0.10, growthRate:0.02, goAdvanceRate:0.10, goAdvanceMax:5, sharesPerPlayer:1000, riskFreeRate:0.03, mortgageLTV:0.5, mortgageRate:0.35, mortgageRentContinues:false, liquidationPenalty:0, debtSpreadFactor:0.5, marginMultiple:2, maxOwners:3, bankMinSellPct:0, etfBankReservePct:10, etfIssuancePctPerLap:10, jailTurns:3, jailBailCost:0.5, bankCollectsRent:true, neutralPawnCapsAtGo:false, rentCompensationFee:0.25, linearRent:false, housesBeforeHotel:4, loanWithholdingPct:0.20, loanRepaymentMultiple:1.5, loanMaxPrincipal:5, lotteryContribution:0.5, features:{insurance:true,houseAuction:true,stock:true,goAdvance:true,mortgage:true,rentSwap:true,rentCompensation:true,loan:true,catBond:true,landShareAuction:true,etf:false,lottery:true}}, settings||{});
   const s = {
     code, createdAt:Date.now(), unit: unit||'M$',
     settings: mergedSettings,
@@ -582,6 +585,7 @@ async function createGame(names, startCash, bankCash, unit, settings){
     stockMarket: {tradingOpen:false},
     currentDeductible: 0,
     houseAuction: {availableHouses:0, bids:[], lastResult:null},
+    lotteryPot: 0,
     rentSwaps: [], rentCompensations: [], loans: [], catBonds: [], reits: [], taxInsurances: [],
     history: [],
     landAuctions: [],
@@ -1145,7 +1149,7 @@ function visibleTabs(){
   if(f.insurance && !bankrupt) tabs.push('assurances');
   if(f.stock) tabs.push('bourse');
   if(f.houseAuction && !bankrupt) tabs.push('maisons');
-  if((f.rentSwap || f.rentCompensation || f.catBond) && !bankrupt) tabs.push('marches');
+  if((f.rentSwap || f.rentCompensation || f.catBond || f.lottery) && !bankrupt) tabs.push('marches');
   if(f.landShareAuction && !bankrupt) tabs.push('enchereTerrain');
   if(f.etf && !bankrupt) tabs.push('etf');
   tabs.push('transactions');
@@ -2636,6 +2640,56 @@ async function closeRentCompensation(id){
   await saveGame(); render();
 }
 
+/* ---------- Loterie (pot commun) ----------
+   Un pot séparé (state.lotteryPot), alimenté uniquement par les joueurs — jamais par la banque. Chaque
+   cotisation verse un montant FIXE (state.settings.lotteryContribution, déterminé au début de la
+   partie) depuis l'encaisse du joueur vers le pot. Le pot se réclame en un seul versement intégral à un
+   joueur désigné (déterminé hors de l'app — ex: case ou carte du plateau physique), qui le vide à zéro.
+   Comme le reste des actions de la table des comptes (payer la caution, ajuster l'encaisse...), n'importe
+   quel appareil peut agir pour n'importe quel joueur — c'est un registre partagé, pas un compte protégé
+   par joueur. */
+async function contributeLottery(playerId){
+  const p = state.players.find(x=>x.id===playerId);
+  if(!p) return;
+  const amount = state.settings.lotteryContribution;
+  if(amount<=0) return;
+  if(p.cash<amount){ alert(`${p.name} n'a pas les ${fmt(amount)} nécessaires pour cotiser à la loterie.`); return; }
+  p.cash -= amount;
+  state.lotteryPot += amount;
+  log(`${p.name} cotise ${fmt(amount)} à la loterie (pot: ${fmt(state.lotteryPot)}).`,
+    [{label:`${p.name} (cotisation loterie)`, amount:-amount}, {label:'Pot de la loterie', amount:amount}]);
+  await saveGame(); render();
+}
+async function claimLottery(playerId){
+  const p = state.players.find(x=>x.id===playerId);
+  if(!p) return;
+  const amount = state.lotteryPot;
+  if(amount<=0){ alert('Le pot de la loterie est vide.'); return; }
+  p.cash += amount;
+  state.lotteryPot = 0;
+  log(`${p.name} remporte le pot de la loterie (${fmt(amount)}).`,
+    [{label:'Pot de la loterie', amount:-amount}, {label:`${p.name} (gain loterie)`, amount:amount}]);
+  await saveGame(); render();
+}
+function modalConfirmClaimLottery(playerId){
+  const pl = state.players.find(x=>x.id===playerId);
+  if(!pl) return;
+  const amount = state.lotteryPot;
+  if(amount<=0){ alert('Le pot de la loterie est vide.'); return; }
+  openModal(`
+    <h3>Réclamer le pot de la loterie ?</h3>
+    <div class="small"><b>Action IRRÉVERSIBLE.</b> Le pot actuel (${fmt(amount)}) sera intégralement versé à ${esc(pl.name)} et remis à zéro.</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-gold" id="mOk">Oui, verser le pot à ${esc(pl.name)}</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    closeModal();
+    await claimLottery(playerId);
+  });
+}
+
 /* ---------- Prêts (retenue automatique sur les loyers reçus) ---------- */
 /* Un prêteur (banque ou joueur) avance un capital à un emprunteur. En retour, un pourcentage fixe
    (settings.loanWithholdingPct, réglé au début de la partie) de TOUS les loyers que l'emprunteur
@@ -3519,9 +3573,27 @@ function renderMarches(){
     }).join('')}
   </table>`;
 
+  const lotteryHtml = `
+  <div class="section-title" style="margin-top:26px;">Loterie</div>
+  <div class="small" style="margin-bottom:10px;">Pot commun alimenté par les cotisations des joueurs (montant fixe, déterminé au début de la partie) — la banque n'y participe jamais. Le pot se réclame en un seul versement intégral au joueur désigné gagnant (déterminé hors de l'app, ex: case ou carte du plateau physique), puis se remet à zéro.</div>
+  <div class="small" style="margin-bottom:10px;">Pot actuel: <b>${fmt(state.lotteryPot)}</b> · Cotisation fixe: ${fmt(state.settings.lotteryContribution)} par joueur</div>
+  <table>
+    <tr><th>Joueur</th><th>Encaisse</th><th></th></tr>
+    ${activePlayers().map(p=>`
+      <tr>
+        <td><span class="badge" style="background:${p.color}">&nbsp;</span> ${esc(p.name)}</td>
+        <td class="money">${fmt(p.cash)}</td>
+        <td>
+          <button class="btn btn-ghost btn-sm" data-lottery-contribute="${p.id}" ${p.cash<state.settings.lotteryContribution?'disabled':''}>Cotiser à la loterie (${fmt(state.settings.lotteryContribution)})</button>
+          <button class="btn btn-gold btn-sm" data-lottery-claim="${p.id}" ${state.lotteryPot<=0?'disabled':''}>Réclamer le lot</button>
+        </td>
+      </tr>`).join('')}
+  </table>`;
+
   return (state.settings.features.rentSwap?swapsHtml:'')
     + (state.settings.features.rentCompensation?compHtml:'')
     + (state.settings.features.catBond?catHtml:'')
+    + (state.settings.features.lottery?lotteryHtml:'')
     + `<div id="modalHost"></div>`;
 }
 
@@ -4164,6 +4236,8 @@ function bindTabEvents(t){
       if(propIds.length===0){ alert('Sélectionnez au moins un terrain déclencheur.'); return; }
       issueCatBond(myPlayerId, label, propIds, principal, coupon, counterpartyId, fundSource);
     });
+    document.querySelectorAll('[data-lottery-contribute]').forEach(b=>b.addEventListener('click', ()=>contributeLottery(b.dataset.lotteryContribute)));
+    document.querySelectorAll('[data-lottery-claim]').forEach(b=>b.addEventListener('click', ()=>modalConfirmClaimLottery(b.dataset.lotteryClaim)));
   }
   if(t==='enchereTerrain'){
     const createBtn = document.getElementById('createLandAuctionBtn');
@@ -5097,6 +5171,10 @@ function renderSetup(){
       <label>Frais de signature (par joueur, en M$ — ex: 0.25 = 250K$)</label>
       <input type="number" step="0.01" min="0" id="setupRentCompFee" value="0.25">
 
+      <div class="setup-subhead">Loterie</div>
+      <label>Cotisation fixe par joueur (en M$ — ex: 0.5 = 500K$)</label>
+      <input type="number" step="0.01" min="0" id="setupLotteryContribution" value="0.5">
+
       <div class="setup-subhead">Prêts</div>
       <label>% de tous les loyers reçus par l'emprunteur, retenu et versé automatiquement au prêteur</label>
       <input type="number" step="1" min="0" max="100" id="setupLoanPct" value="20"> %
@@ -5165,6 +5243,7 @@ function renderSetup(){
       debtSpreadFactor: (parseFloat(document.getElementById('setupDebtSpread').value)||0)/100,
       marginMultiple: parseFloat(document.getElementById('setupMarginMultiple').value)||2,
       rentCompensationFee: parseFloat(document.getElementById('setupRentCompFee').value)||0,
+      lotteryContribution: parseFloat(document.getElementById('setupLotteryContribution').value)||0,
       linearRent: document.getElementById('setupLinearRent').checked,
       housesBeforeHotel: parseInt(document.getElementById('setupHousesBeforeHotel').value)||4,
       loanWithholdingPct: (parseFloat(document.getElementById('setupLoanPct').value)||0)/100,

@@ -2284,8 +2284,11 @@ async function sellMergedShare(mergeId, sellerId, buyerId, pct, price){
   const owners = props[0].owners;
   const sellerOwn = owners.find(o=>o.playerId===sellerId);
   if(!sellerOwn || pct<=0 || pct>sellerOwn.share){ alert('Pourcentage invalide.'); return; }
-  if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct){
-    alert(`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie). Vendre à un autre joueur n'a pas de minimum.`);
+  if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
+    // Exception demandée par l'utilisateur: si la part détenue est elle-même sous le minimum, vendre la
+    // TOTALITÉ de cette part reste permis (pct===sellerOwn.share) — seule une vente PARTIELLE d'une part
+    // déjà sous le minimum reste refusée, puisqu'elle laisserait un reliquat toujours sous le minimum.
+    alert(`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie), sauf si vous vendez la totalité de votre part (${sellerOwn.share}%). Vendre à un autre joueur n'a pas de minimum.`);
     return;
   }
   let newOwners = owners.map(o=>({...o}));
@@ -4633,7 +4636,7 @@ function modalSellShare(pid){
     <select id="mBuyer"><option value="BANK">Banque</option>${activePlayerOptions()}</select>
     <label>Pourcentage vendu</label>
     <input type="number" min="1" max="100" id="mPct" value="100">
-    ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque (aucun minimum pour une vente à un autre joueur).</div>`:''}
+    ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque, sauf si vous vendez la TOTALITÉ de la part détenue par le vendeur choisi (même si elle est inférieure au minimum) — aucun minimum pour une vente à un autre joueur.</div>`:''}
     <label>Prix convenu</label>
     <input type="number" step="0.01" id="mPrice" value="${p.basePrice}">
     <div class="modal-actions">
@@ -4648,8 +4651,11 @@ function modalSellShare(pid){
     const price = parseFloat(document.getElementById('mPrice').value)||0;
     const sellerOwn = p.owners.find(o=>o.playerId===sellerId);
     if(!sellerOwn || pct>sellerOwn.share){ alert('Pourcentage invalide.'); return; }
-    if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct){
-      alert(`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie). Vendre à un autre joueur n'a pas de minimum.`);
+    if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
+      // Exception demandée par l'utilisateur: si la part détenue est elle-même sous le minimum, vendre
+      // la TOTALITÉ de cette part reste permis (pct===sellerOwn.share) — seule une vente PARTIELLE d'une
+      // part déjà sous le minimum reste refusée, puisqu'elle laisserait un reliquat toujours sous le minimum.
+      alert(`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie), sauf si vous vendez la totalité de votre part (${sellerOwn.share}%). Vendre à un autre joueur n'a pas de minimum.`);
       return;
     }
     sellerOwn.share -= pct;
@@ -5110,7 +5116,7 @@ function modalSellMergedShare(mergeId){
     <select id="mBuyer"><option value="BANK">Banque</option>${activePlayerOptions()}</select>
     <label>Pourcentage vendu</label>
     <input type="number" min="1" max="100" id="mPct" value="100">
-    ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque (aucun minimum pour une vente à un autre joueur).</div>`:''}
+    ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque, sauf si vous vendez la TOTALITÉ de la part détenue par le vendeur choisi (même si elle est inférieure au minimum) — aucun minimum pour une vente à un autre joueur.</div>`:''}
     <label>Prix convenu (pour tout le lot)</label>
     <input type="number" step="0.01" id="mPrice" value="0">
     <div class="modal-actions">

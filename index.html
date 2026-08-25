@@ -325,6 +325,8 @@ const FEATURE_LIST = [
   {key:'landShareAuction', label:'Enchère de parts de terrain (module indépendant, sans lien avec le reste de la partie)'},
   {key:'etf', label:'ETF de terrains (réserve permanente de la banque, émise progressivement aux joueurs)'},
   {key:'lottery', label:'Loterie (pot commun: cotisation fixe par joueur, réclamé en un seul versement par le gagnant)'},
+  {key:'subInsurance', label:'Assurance sous-standard (1 seul lancé de dé, prime fortement majorée, terrains seulement, achetable en tout temps)'},
+  {key:'houseSource', label:'Provenance des maisons (chaque construction retire une maison de la réserve d’un joueur, avec compensation possible entre copropriétaires)'},
 ];
 
 /* ---------- Aide stockage ----------
@@ -457,6 +459,7 @@ function migrateState(s){
   if(s.settings.etfIssuancePctPerLap===undefined) s.settings.etfIssuancePctPerLap = 10; // % du fonds émis (mis en tranche) à chaque tour complet du pion neutre, une fois l'ETF ouvert
   if(s.settings.sharesPerPlayer===undefined) s.settings.sharesPerPlayer = 1000;
   if(s.settings.riskFreeRate===undefined) s.settings.riskFreeRate = 0.03;
+  if(s.settings.stockStartingCash===undefined) s.settings.stockStartingCash = 5; // encaisse boursière de départ par joueur (M$) — 5M par défaut, comme avant que ce ne soit réglable
   if(s.settings.mortgageLTV===undefined) s.settings.mortgageLTV = 0.25;      // emprunt max = 25% de la valeur de rachat
   if(s.settings.mortgageRate===undefined) s.settings.mortgageRate = 0.35;   // taux élevé: la dette est un pari quasi garanti pour le prêteur
   if(s.settings.mortgageRentContinues===undefined) s.settings.mortgageRentContinues = false; // règle classique par défaut: aucun loyer si hypothéqué
@@ -475,8 +478,11 @@ function migrateState(s){
   if(s.settings.loanRepaymentMultiple===undefined) s.settings.loanRepaymentMultiple = 1.5; // la retenue s'arrête une fois principal×multiple remboursé
   if(s.settings.loanMaxPrincipal===undefined) s.settings.loanMaxPrincipal = 5; // montant maximal empruntable par prêt (5M$)
   if(s.settings.lotteryContribution===undefined) s.settings.lotteryContribution = 0.5; // montant fixe (M$) versé au pot commun à chaque cotisation
+  if(s.settings.subInsuranceMarkup===undefined) s.settings.subInsuranceMarkup = 1.00; // majoration de l'assurance sous-standard (1 lancé) — volontairement bien plus punitive que insuranceMarkup
+  if(s.settings.insuranceGroupDiscount2nd===undefined) s.settings.insuranceGroupDiscount2nd = 0.05; // rabais de volume assureur: 2e terrain du même groupe/lot assuré auprès du même assureur (assurance NORMALE seulement, jamais sous-standard)
+  if(s.settings.insuranceGroupDiscount3rd===undefined) s.settings.insuranceGroupDiscount3rd = 0.10; // rabais de volume: 3e terrain (et plus) du même groupe/lot, même assureur
   if(!s.settings.features) s.settings.features = {};
-  ['insurance','houseAuction','stock','goAdvance','mortgage','rentSwap','rentCompensation','loan','catBond','landShareAuction','lottery'].forEach(k=>{
+  ['insurance','houseAuction','stock','goAdvance','mortgage','rentSwap','rentCompensation','loan','catBond','landShareAuction','lottery','subInsurance'].forEach(k=>{
     if(s.settings.features[k]===undefined) s.settings.features[k] = true;
   });
   // Le module ETF réduit en permanence le % achetable par les joueurs sur TOUS les terrains (et donc,
@@ -486,6 +492,13 @@ function migrateState(s){
   // partie créée sans le préciser), pour ne jamais surprendre une partie qui ne l'a pas explicitement
   // demandé — conforme à la demande explicite de l'utilisateur (« à mettre en option »).
   if(s.settings.features.etf===undefined) s.settings.features.etf = false;
+  // Le module « provenance des maisons » ajoute une ÉTAPE OBLIGATOIRE (choisir la réserve source, puis
+  // une compensation) à chaque construction — contrairement aux modules additifs ci-dessus qui n'ajoutent
+  // que des boutons/onglets facultatifs sans jamais gêner le flot existant, celui-ci change le
+  // déroulement même de la construction. Il doit donc, comme l'ETF, rester désactivé par défaut sur une
+  // partie migrée ET sur une nouvelle partie non explicitement configurée — demande explicite de
+  // l'utilisateur (« le tout en option »).
+  if(s.settings.features.houseSource===undefined) s.settings.features.houseSource = false;
   if(!s.mortgages) s.mortgages = {}; // (réservé, les hypothèques vivent sur chaque terrain: p.mortgage)
   if(!s.rentSwaps) s.rentSwaps = [];
   if(!s.rentCompensations) s.rentCompensations = [];
@@ -524,6 +537,7 @@ function migrateState(s){
     if(p.rentCollected===undefined) p.rentCollected = 0;
     if(p.timesLanded===undefined) p.timesLanded = 0;
     if(p.mortgage===undefined) p.mortgage = null;
+    if(p.subInsurance===undefined) p.subInsurance = null; // assurance sous-standard (1 lancé de dé) — jamais migrée depuis un ancien champ, toujours null par défaut
     if(!p.mortgages){ p.mortgages = p.mortgage ? [{ownerId:p.mortgage.borrowerId, principal:p.mortgage.principal, rate:p.mortgage.rate, lenderId:p.mortgage.lenderId}] : []; }
     delete p.mortgage;
     if(p.groupMergeId===undefined) p.groupMergeId = null;
@@ -573,9 +587,9 @@ function showTransactionPopup(title, entries){
 /* ---------- Création / jonction ---------- */
 async function createGame(names, startCash, bankCash, unit, settings){
   const code = Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*24)]).join('');
+  const mergedSettings = Object.assign({insuranceMarkup:0.25, discountRate:0.10, growthRate:0.02, goAdvanceRate:0.10, goAdvanceMax:5, sharesPerPlayer:1000, riskFreeRate:0.03, stockStartingCash:5, mortgageLTV:0.5, mortgageRate:0.35, mortgageRentContinues:false, liquidationPenalty:0, debtSpreadFactor:0.5, marginMultiple:2, maxOwners:3, bankMinSellPct:0, etfBankReservePct:10, etfIssuancePctPerLap:10, jailTurns:3, jailBailCost:0.5, bankCollectsRent:true, neutralPawnCapsAtGo:false, rentCompensationFee:0.25, linearRent:false, housesBeforeHotel:4, loanWithholdingPct:0.20, loanRepaymentMultiple:1.5, loanMaxPrincipal:5, lotteryContribution:0.5, subInsuranceMarkup:1.00, insuranceGroupDiscount2nd:0.05, insuranceGroupDiscount3rd:0.10, features:{insurance:true,houseAuction:true,stock:true,goAdvance:true,mortgage:true,rentSwap:true,rentCompensation:true,loan:true,catBond:true,landShareAuction:true,etf:false,lottery:true,subInsurance:true,houseSource:false}}, settings||{});
   const players = names.map((n,i)=>({id:uid(), name:n, cash:startCash, color:PLAYER_COLORS[i%PLAYER_COLORS.length],
-    position:0, stats:freshStats(), stockCash:5, stockHoldings:{long:{},short:{},riskFree:0,reitLong:{}}, etfHoldings:{}, goAdvancesUsed:0, goAdvancesOwed:0, houseReserve:0, inJail:false, jailTurnsLeft:0, bankrupt:false}));
-  const mergedSettings = Object.assign({insuranceMarkup:0.25, discountRate:0.10, growthRate:0.02, goAdvanceRate:0.10, goAdvanceMax:5, sharesPerPlayer:1000, riskFreeRate:0.03, mortgageLTV:0.5, mortgageRate:0.35, mortgageRentContinues:false, liquidationPenalty:0, debtSpreadFactor:0.5, marginMultiple:2, maxOwners:3, bankMinSellPct:0, etfBankReservePct:10, etfIssuancePctPerLap:10, jailTurns:3, jailBailCost:0.5, bankCollectsRent:true, neutralPawnCapsAtGo:false, rentCompensationFee:0.25, linearRent:false, housesBeforeHotel:4, loanWithholdingPct:0.20, loanRepaymentMultiple:1.5, loanMaxPrincipal:5, lotteryContribution:0.5, features:{insurance:true,houseAuction:true,stock:true,goAdvance:true,mortgage:true,rentSwap:true,rentCompensation:true,loan:true,catBond:true,landShareAuction:true,etf:false,lottery:true}}, settings||{});
+    position:0, stats:freshStats(), stockCash:mergedSettings.stockStartingCash, stockHoldings:{long:{},short:{},riskFree:0,reitLong:{}}, etfHoldings:{}, goAdvancesUsed:0, goAdvancesOwed:0, houseReserve:0, inJail:false, jailTurnsLeft:0, bankrupt:false}));
   const s = {
     code, createdAt:Date.now(), unit: unit||'M$',
     settings: mergedSettings,
@@ -1146,9 +1160,9 @@ function visibleTabs(){
   const bankrupt = !!(me && me.bankrupt);
   const tabs = ['banque'];
   if(!bankrupt) tabs.push('terrains');
-  if(f.insurance && !bankrupt) tabs.push('assurances');
+  if((f.insurance || f.subInsurance) && !bankrupt) tabs.push('assurances');
   if(f.stock) tabs.push('bourse');
-  if(f.houseAuction && !bankrupt) tabs.push('maisons');
+  if((f.houseAuction || f.houseSource) && !bankrupt) tabs.push('maisons'); // houseSource seul a aussi besoin de cet onglet: c'est là que vit la réserve de maisons par joueur
   if((f.rentSwap || f.rentCompensation || f.catBond || f.lottery) && !bankrupt) tabs.push('marches');
   if(f.landShareAuction && !bankrupt) tabs.push('enchereTerrain');
   if(f.etf && !bankrupt) tabs.push('etf');
@@ -1238,6 +1252,7 @@ function renderBanque(){
     <button class="btn btn-gold btn-sm" id="advancePawn">Avancer le pion neutre (jet de dés)</button>
     ${f.insurance?`<button class="btn ${state.insuranceOpen?'btn-brick':'btn-ghost'} btn-sm" id="toggleInsurance">${state.insuranceOpen?'Fermer les achats d\u2019assurance':'Ouvrir les achats d\u2019assurance'}</button>`:''}
     ${f.stock?`<button class="btn ${state.stockMarket.tradingOpen?'btn-brick':'btn-ghost'} btn-sm" id="toggleStock">${state.stockMarket.tradingOpen?'Fermer la bourse':'Ouvrir la bourse'}</button>`:''}
+    ${f.stock?`<button class="btn btn-brick btn-sm" id="liquidateStockBtn">Liquider toutes les positions boursières</button>`:''}
   </div>
   ` : '';
   const goSection = !f.goAdvance ? '' : `
@@ -1567,15 +1582,23 @@ function intrinsicValue(p){
   const computed = r>g ? (rentPerTurn * (1+g) / (r-g)) + mortgageValue : floorPrice;
   return Math.max(computed, floorPrice);
 }
-function payableRent(p, playerId){
+function payableRent(p, playerId, excludeJailed){
   // Montant réellement exposé si ce joueur tombe sur ce terrain (pour les calculs d'assurance/espérance).
-  // Exclut les parts hypothéquées (déjà sans effet sur le loyer réel) mais PAS les parts des joueurs en
-  // prison: l'assureur les considère comme s'ils pouvaient sortir à tout moment — c'est un risque réel
-  // pour lui, pas une réduction d'exposition.
+  // Exclut les parts hypothéquées (déjà sans effet sur le loyer réel). Par défaut (excludeJailed absent
+  // ou faux — TOUS les appels historiques, dont l'assurance normale sur tout un tour), les parts des
+  // joueurs en prison ne sont PAS exclues: l'assureur les considère comme s'ils pouvaient sortir à tout
+  // moment pendant le tour — c'est un risque réel pour lui, pas une réduction d'exposition, sur un
+  // horizon d'environ 5,71 lancers. `excludeJailed=true` (utilisé uniquement par l'assurance
+  // sous-standard — voir subInsuranceQuote) exclut EN PLUS les parts des copropriétaires actuellement en
+  // prison: contrairement à l'assurance normale, ce produit couvre un sinistre qui, s'il survient,
+  // survient MAINTENANT — aucune chance qu'un joueur en prison en sorte avant ce lancé précis, donc
+  // aucun risque réel sur cette part pour l'assureur (demande explicite de l'utilisateur: cette
+  // distinction ne doit jamais s'appliquer à l'assurance normale sur tout un tour).
   if(p.owners.length===0) return 0; // banque à 100%: aucun paiement forcé (enchère facultative, pas un désastre à assurer)
   const share = propertyOwnedShare(p, playerId);
   if(share>=100) return 0; // seul propriétaire : rien à débourser
   const mortgagedIds = state.settings.mortgageRentContinues ? [] : mortgagedOwnerIds(p);
+  const jailedIds = excludeJailed ? jailedOwnerIds() : [];
   // Réserve permanente de la banque (module ETF): le risque réel qu'un assureur couvre doit refléter
   // exactement ce que le visiteur paierait réellement (voir modalPayRent) — SEULE la portion de la
   // réserve déjà émise/vendue comme parts d'ETF (etfReservedCollectedPct) est un risque réel assurable ;
@@ -1588,7 +1611,7 @@ function payableRent(p, playerId){
     let total = 0;
     p.owners.forEach(o=>{
       if(o.playerId===playerId) return;
-      if(mortgagedIds.includes(o.playerId)) return;
+      if(mortgagedIds.includes(o.playerId) || jailedIds.includes(o.playerId)) return;
       const rate = p.type==='airport' ? ownerAirportRent(p, o.playerId) : ownerServiceMultiplier(p, o.playerId)*7;
       total += rate * (o.share/100);
     });
@@ -1600,7 +1623,7 @@ function payableRent(p, playerId){
   }
   const rentTotal = colorRentAt(p, p.houses);
   let payableShare = 1 - share/100;
-  p.owners.forEach(o=>{ if(o.playerId!==playerId && mortgagedIds.includes(o.playerId)) payableShare -= o.share/100; });
+  p.owners.forEach(o=>{ if(o.playerId!==playerId && (mortgagedIds.includes(o.playerId) || jailedIds.includes(o.playerId))) payableShare -= o.share/100; });
   const reservedUncollectedPct = reservedPct - reservedCollectedPct;
   if(reservedUncollectedPct>0) payableShare -= reservedUncollectedPct/100; // pas encore payable: exclue du risque assuré
   payableShare = Math.max(0, payableShare);
@@ -1756,6 +1779,51 @@ function insuranceQuote(p, playerId, claimMode){
   const exposure = Math.max(payableRent(p, playerId) - deductible, 0);
   const expectedLoss = prob * exposure;
   return {dist, prob, exposure, floor:expectedLoss, ceil: expectedLoss*(1+markup), deductible};
+}
+
+/* Rabais de volume assureur — demande explicite de l'utilisateur: quand un même assureur assure PLUSIEURS
+   terrains du même groupe/lot (ex: Bleu foncé 1 ET 2), il obtient un rabais sur la prime des terrains
+   suivants — 5% sur le 2e terrain du groupe qu'il assure, 10% sur le 3e (et plus), les deux pourcentages
+   étant réglables au début de la partie. S'applique UNIQUEMENT à l'assurance NORMALE (insuranceQuote /
+   p.insurance) — jamais à l'assurance sous-standard, exclue explicitement par l'utilisateur (« PAS sous
+   Standard »), qui n'a donc aucune notion de rabais de volume. Le rang (2e, 3e...) compte les terrains DU
+   MÊME GROUPE déjà assurés auprès de CE assureur en particulier, peu importe le joueur assuré — c'est un
+   rabais de volume pour l'assureur qui concentre son risque sur un même groupe, pas un rabais pour
+   l'assuré. Ne considère que les contrats déjà conclus (p.insurance persisté) — un achat groupé (bundle)
+   qui viserait plusieurs terrains du même groupe avec le même assureur EN UNE SEULE transaction n'est pas
+   compté entre les lignes de ce même achat (simplification volontaire, documentée dans le résumé). */
+function insuranceGroupDiscountTier(p, insurerId){
+  if(!p || !p.group || !GROUPS[p.group] || !insurerId) return 0;
+  const alreadyInsuredCount = state.properties.filter(o=>
+    o.id!==p.id && o.group===p.group && o.insurance && o.insurance.insurerId===insurerId
+  ).length;
+  if(alreadyInsuredCount<=0) return 0;
+  if(alreadyInsuredCount===1) return state.settings.insuranceGroupDiscount2nd||0;
+  return state.settings.insuranceGroupDiscount3rd||0;
+}
+
+/* ---------- Assurance sous-standard (couvre un seul lancé de dé, achetable en tout temps) ----------
+   Contrairement à insuranceQuote() (fondée sur lapLandingProbability/expectedLandingsPerYear — le risque
+   sur TOUT le tour du pion neutre), ce produit ne couvre que le TOUT PROCHAIN lancé de 2 dés du joueur
+   assuré: on réutilise donc directement rollProbability(distance) — déjà utilisée ailleurs pour
+   l'espérance de gain/perte par jet (playerExpectedGainPerRoll/playerExpectedLossPerRoll) — plutôt que le
+   modèle probabiliste sur tout un tour. Une distance hors de portée d'un seul lancé (0, 1, ou 13-39)
+   donne une probabilité nulle: aucun lancé de 2 dés ne peut jamais y mener directement. Aucune franchise
+   sur ce produit (volontairement simple — « sous-standard », pas négocié en détail comme l'assurance
+   normale). Majoration distincte et bien plus élevée (state.settings.subInsuranceMarkup), réglable au
+   début de la partie séparément de insuranceMarkup. Exposition calculée avec payableRent(..., true) —
+   excluant AUSSI les parts actuellement en prison (pas seulement hypothéquées comme pour l'assurance
+   normale): le sinistre couvert, s'il survient, survient au tout prochain lancé — aucune chance qu'un
+   copropriétaire en prison en sorte avant, contrairement à un tour complet où c'est un risque réel pour
+   l'assureur. Demande explicite de l'utilisateur: cette distinction ne s'applique qu'à ce produit. */
+function subInsuranceQuote(p, playerId){
+  const player = state.players.find(x=>x.id===playerId);
+  const dist = player ? distanceBetween(player.position, p.pos) : null;
+  const prob = dist!=null ? rollProbability(dist) : 0;
+  const markup = state.settings.subInsuranceMarkup;
+  const exposure = Math.max(payableRent(p, playerId, true), 0);
+  const expectedLoss = prob * exposure;
+  return {dist, prob, exposure, floor:expectedLoss, ceil: expectedLoss*(1+markup)};
 }
 
 function buybackValue(p){
@@ -2206,7 +2274,7 @@ async function mergeGroup(group){
     assigned += share;
     return {playerId:pid, share};
   });
-  props.forEach(p=>{ p.groupMergeId = mergeId; p.owners = newOwners.map(o=>({...o})); p.insurance = null; });
+  props.forEach(p=>{ p.groupMergeId = mergeId; p.owners = newOwners.map(o=>({...o})); p.insurance = null; p.subInsurance = null; });
   log(`Le lot ${GROUPS[group].label} est regroupé (${newOwners.map(o=>`${state.players.find(x=>x.id===o.playerId).name} ${o.share}%`).join(', ')}).`);
   await saveGame(); render();
 }
@@ -2911,6 +2979,107 @@ function processMarginCalls(){
   });
 }
 
+/* ---------- Liquidation générale de la bourse + transfert vers l'encaisse principale (créateur seulement) ----------
+   Demande explicite de l'utilisateur: un bouton, réservé au créateur de la partie, qui liquide TOUTES les
+   positions BOURSIÈRES (actions longues, positions à découvert, actif sans risque) de TOUS les joueurs et
+   convertit le tout en encaisse boursière (stockCash) — PAS les parts de REIT (state.reitLong), qui n'ont
+   ni cours ni mécanisme de rachat sur ce marché et restent donc hors de portée de cette liquidation. La
+   bourse reste normalement totalement étanche du jeu principal (voir renderBourse) — ce bouton, suivi
+   d'un second écran de transfert, est la SEULE façon prévue de faire passer de l'argent de la bourse vers
+   l'encaisse principale. Le montant réellement transféré pour chaque joueur est le moindre entre le
+   montant inscrit par le créateur et l'encaisse boursière réellement disponible pour ce joueur au moment
+   de la confirmation. */
+async function liquidateAllStockPositions(){
+  const entries = [];
+  state.players.forEach(inv=>{
+    Object.keys(inv.stockHoldings.long).forEach(t=>{
+      const n = inv.stockHoldings.long[t]||0;
+      if(n<=0) return;
+      const price = sharePrice(t);
+      const proceeds = price*n;
+      inv.stockCash += proceeds;
+      inv.stockHoldings.long[t] = 0;
+      entries.push({label:`${inv.name} (vente forcée, actions ${state.players.find(x=>x.id===t)?.name||'?'})`, amount:proceeds});
+    });
+    Object.keys(inv.stockHoldings.short).forEach(t=>{
+      const n = inv.stockHoldings.short[t]||0;
+      if(n<=0) return;
+      const price = sharePrice(t);
+      const cost = price*n;
+      inv.stockCash -= cost;
+      inv.stockHoldings.short[t] = 0;
+      entries.push({label:`${inv.name} (couverture forcée, actions ${state.players.find(x=>x.id===t)?.name||'?'})`, amount:-cost});
+    });
+    if(inv.stockHoldings.riskFree>0){
+      const amount = inv.stockHoldings.riskFree;
+      inv.stockCash += amount;
+      inv.stockHoldings.riskFree = 0;
+      entries.push({label:`${inv.name} (retrait forcé, actif sans risque)`, amount});
+    }
+  });
+  log(`Le créateur de la partie a liquidé l'ensemble des positions boursières de tous les joueurs (actions longues, positions à découvert, actif sans risque) — tout est maintenant en encaisse boursière, prêt pour un éventuel transfert vers l'encaisse principale.`, entries.length?entries:null);
+  await saveGame(); render();
+}
+async function transferStockToGame(transfers){
+  // transfers: [{playerId, amount}] — amount demandé par le créateur, PAS encore plafonné.
+  const entries = [];
+  transfers.forEach(t=>{
+    if(!(t.amount>0)) return;
+    const pl = state.players.find(x=>x.id===t.playerId);
+    if(!pl) return;
+    const actual = Math.min(t.amount, Math.max(0, pl.stockCash));
+    if(actual<=0) return;
+    pl.stockCash -= actual;
+    pl.cash += actual;
+    entries.push({label:`${pl.name} (encaisse boursière)`, amount:-actual});
+    entries.push({label:`${pl.name} (encaisse principale)`, amount:actual});
+  });
+  if(entries.length===0){ return; }
+  log(`Le créateur de la partie a transféré de l'encaisse boursière vers l'encaisse principale (seule façon prévue de faire passer de l'argent de la bourse vers le jeu).`, entries);
+  await saveGame(); render();
+  showTransactionPopup('Transfert bourse → jeu', entries);
+}
+function modalConfirmLiquidateStock(){
+  openModal(`
+    <h3>Liquider toutes les positions boursières ?</h3>
+    <div class="small"><b>Action IRRÉVERSIBLE.</b> Ferme immédiatement, pour TOUS les joueurs, toutes les actions détenues (longues), toutes les positions à découvert et tout l'actif sans risque — le tout converti en encaisse boursière. Les parts de REIT ne sont pas concernées (aucun cours ni mécanisme de rachat). Un écran de transfert vers l'encaisse principale s'ouvrira ensuite.</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-brick" id="mOk">Oui, tout liquider</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    closeModal();
+    await liquidateAllStockPositions();
+    modalTransferStockToGame();
+  });
+}
+function modalTransferStockToGame(){
+  const rows = state.players.map(p=>`
+    <div class="row" style="gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;">
+      <span style="flex:1;min-width:140px;">${esc(p.name)} — encaisse boursière disponible: <b>${fmt(p.stockCash)}</b></span>
+      <input type="number" step="0.01" min="0" max="${Math.max(0,p.stockCash)}" class="transfer-amount" data-pid="${p.id}" value="${Math.max(0,p.stockCash).toFixed(2)}" style="width:120px;">
+    </div>`).join('');
+  openModal(`
+    <h3>Transférer de la bourse vers l'encaisse principale</h3>
+    <div class="small" style="margin-bottom:8px;">Pour chaque joueur, inscrivez le montant à transférer de son encaisse boursière vers son encaisse principale — le montant réellement transféré sera le moindre entre ce montant et son encaisse boursière disponible au moment de la confirmation. Laissez à 0 pour ne rien transférer pour ce joueur. C'est la seule façon prévue de faire passer de l'argent de la bourse vers le jeu.</div>
+    <div id="transferRows">${rows}</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Fermer sans transférer</button>
+      <button class="btn btn-primary" id="mOk">Confirmer les transferts</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const transfers = [];
+    document.querySelectorAll('.transfer-amount').forEach(inp=>{
+      const amount = parseFloat(inp.value)||0;
+      if(amount>0) transfers.push({playerId:inp.dataset.pid, amount});
+    });
+    closeModal();
+    await transferStockToGame(transfers);
+  });
+}
+
 function renderBoard(){
   const squares = buildBoardSquares();
   let cells = '';
@@ -2943,6 +3112,36 @@ function renderAssurances(){
   const quotes = state.properties.map(p=>({p, q:insuranceQuote(p, myPlayerId)}))
     .filter(x=>x.q.prob>0 && x.q.floor>0)
     .sort((a,b)=>b.q.prob-a.q.prob);
+  const subQuotes = state.properties.filter(p=>!p.reitId).map(p=>({p, q:subInsuranceQuote(p, myPlayerId)}))
+    .filter(x=>x.q.prob>0 && x.q.floor>0)
+    .sort((a,b)=>b.q.prob-a.q.prob);
+  const subInsuredProps = state.properties.filter(p=>p.subInsurance);
+  const subInsuranceHtml = !state.settings.features.subInsurance ? '' : `
+  <div class="section-title" style="margin-top:22px;">Assurance sous-standard (1 seul lancé de dé)</div>
+  <div class="small" style="margin-bottom:8px;">Achetable en tout temps — peu importe si les achats d'assurance normaux sont ouverts ou fermés ci-dessus — et ne couvre que le TOUT PROCHAIN lancé de dé du joueur assuré, sur un terrain seulement (jamais les taxes ni les cartes Chance/Chess). Aucune franchise sur ce produit. Majoration actuelle: <b>${Math.round(state.settings.subInsuranceMarkup*100)}%</b> (bien plus élevée que la majoration normale, réglée séparément au début de la partie).</div>
+  <table>
+    <tr><th>Terrain</th><th>Distance</th><th>Probabilité (1 lancé)</th><th>Risque</th><th>Sans prime</th><th>Avec majoration</th><th></th></tr>
+    ${subQuotes.length===0?'<tr><td class="empty" colspan="7">Aucun risque assurable en un seul lancé depuis votre position (distance hors de portée de 2 dés, ou aucune part à risque).</td></tr>':''}
+    ${subQuotes.map(({p,q})=>`<tr>
+        <td>${esc(p.name)}</td>
+        <td>${q.dist}</td>
+        <td>${(q.prob*100).toFixed(2)}%</td>
+        <td class="money">${fmt(q.exposure)}</td>
+        <td class="money">${fmt(q.floor)}</td>
+        <td class="money">${fmt(q.ceil)}</td>
+        <td>${p.subInsurance?'<span class="small">assuré</span>':`<button class="btn btn-ghost btn-sm" data-sub-insure="${p.id}">Assurer (1 lancé)</button>`}</td>
+      </tr>`).join('')}
+  </table>
+  ${subInsuredProps.length>0?`
+  <div class="small" style="margin-top:10px;font-weight:600;">Contrats sous-standard en vigueur</div>
+  ${subInsuredProps.map(p=>{
+    const insured = state.players.find(x=>x.id===p.subInsurance.insuredPlayerId);
+    return `<div class="deed-actions" style="margin-bottom:6px;">
+      <span class="ownerchip">${esc(p.name)} — ${esc(insured?insured.name:'?')} · vendeur: ${esc(insurerLabel(p.subInsurance.insurerId))} · prime ${fmt(p.subInsurance.premium)}</span>
+      <button class="btn btn-ghost btn-sm" data-cancel-sub-insurance="${p.id}">Annuler (rembourse)</button>
+      <button class="btn btn-brick btn-sm" data-expire-sub-insurance="${p.id}">Lancé terminé (expire)</button>
+    </div>`;
+  }).join('')}` : ''}`;
   return `
   <div class="section-title">Votre position</div>
   <div class="small" style="margin-bottom:8px;">Cliquez sur une case pour indiquer où se trouve <b>${esc(me?me.name:'')}</b> sur le plateau.</div>
@@ -3005,6 +3204,7 @@ function renderAssurances(){
       </div>
       </div></div>`;
   }).join('')}
+  ${subInsuranceHtml}
   ${renderCardInsuranceSection('chance','Cartes Chance')}
   ${renderCardInsuranceSection('chess','Cartes Chess')}
   <div id="modalHost"></div>
@@ -3334,7 +3534,7 @@ function renderBourse(){
     <span class="badge" style="background:${state.stockMarket.tradingOpen?'#2E8B57':'#A6402E'}">${state.stockMarket.tradingOpen?'Transactions ouvertes':'Transactions fermées'}</span>
     <span class="small">Une transaction par année (à l'ouverture décidée par le créateur, après un tour complet du pion neutre). ${state.settings.sharesPerPlayer} actions par joueur.</span>
   </div>
-  <div class="small" style="margin-bottom:12px;">Encaisse boursière et gains/pertes sont totalement étanches du jeu principal: ils ne peuvent ni payer une dette, ni éviter une faillite sur le plateau. Ils s'ajoutent uniquement à la valeur nette finale pour la répartition de fin de partie.</div>
+  <div class="small" style="margin-bottom:12px;">Encaisse boursière et gains/pertes sont étanches du jeu principal: ils ne peuvent ni payer une dette, ni éviter une faillite sur le plateau, et s'ajoutent normalement uniquement à la valeur nette finale pour la répartition de fin de partie — sauf via le bouton « Liquider toutes les positions boursières » (onglet Banque, créateur seulement), qui liquide toutes les positions puis permet de transférer une partie de l'encaisse boursière vers l'encaisse principale. C'est la SEULE façon prévue de faire passer de l'argent de la bourse vers le jeu.</div>
   <table>
     <tr><th>Joueur</th><th>Cours de l'action</th><th>Vos actions détenues</th><th>Vos actions à découvert</th></tr>
     ${rows.map(r=>`
@@ -3381,7 +3581,9 @@ function renderMaisons(){
   const isCreator = myPlayerId===state.creatorId;
   const myBid = state.houseAuction.bids.find(b=>b.playerId===myPlayerId);
   const last = state.houseAuction.lastResult;
-  return `
+  const auctionOn = state.settings.features.houseAuction;
+  const sourceOn = state.settings.features.houseSource;
+  const auctionHtml = !auctionOn ? '' : `
   <div class="section-title">Enchère de maisons</div>
   <div class="row" style="gap:14px;flex-wrap:wrap;margin-bottom:10px;">
     <span class="small">Maisons disponibles ce tour: <b>${state.houseAuction.availableHouses}</b></span>
@@ -3419,8 +3621,20 @@ function renderMaisons(){
       else cell = '<span class="small">🔒 Offre soumise</span>';
       return `<tr><td>${esc(p.name)}</td><td>${cell}</td></tr>`;
     }).join('')}
-  </table>
-  <div class="section-title" style="margin-top:22px;">Réserve de maisons gagnées (à placer sur vos terrains)</div>
+  </table>`;
+  const lastResultHtml = (!auctionOn || !last) ? '' : `
+  <div class="section-title" style="margin-top:22px;">Dernier résultat</div>
+  <div class="small">Clôturé à ${esc(last.closedAt)} · ${last.availableHouses} maison(s) disponibles · prix d'équilibre ${fmt(last.clearingPrice)}</div>
+  <table>
+    <tr><th>Joueur</th><th>Maisons obtenues</th><th>Coût total</th></tr>
+    ${last.allocations.map(a=>{
+      const pl = state.players.find(x=>x.id===a.playerId);
+      return `<tr><td>${esc(pl?pl.name:'?')}</td><td>${a.qty}</td><td class="money">${fmt(a.qty*last.clearingPrice)}</td></tr>`;
+    }).join('')}
+  </table>`;
+  return `
+  ${auctionHtml}
+  <div class="section-title" style="margin-top:22px;">Réserve de maisons ${auctionOn?'gagnées ':''}(à placer sur vos terrains)</div>
   <table>
     <tr><th>Joueur</th><th>Maisons non placées</th><th></th></tr>
     ${state.players.map(p=>`
@@ -3433,17 +3647,10 @@ function renderMaisons(){
         </td>
       </tr>`).join('')}
   </table>
-  <div class="small" style="margin-top:6px;">Cette réserve est indicative — utilisez les boutons + / − des terrains dans l'onglet Terrains pour construire réellement les maisons.</div>
-  ${last? `
-  <div class="section-title" style="margin-top:22px;">Dernier résultat</div>
-  <div class="small">Clôturé à ${esc(last.closedAt)} · ${last.availableHouses} maison(s) disponibles · prix d'équilibre ${fmt(last.clearingPrice)}</div>
-  <table>
-    <tr><th>Joueur</th><th>Maisons obtenues</th><th>Coût total</th></tr>
-    ${last.allocations.map(a=>{
-      const pl = state.players.find(x=>x.id===a.playerId);
-      return `<tr><td>${esc(pl?pl.name:'?')}</td><td>${a.qty}</td><td class="money">${fmt(a.qty*last.clearingPrice)}</td></tr>`;
-    }).join('')}
-  </table>` : ''}
+  <div class="small" style="margin-top:6px;">${sourceOn
+    ? 'Avec l’option « provenance des maisons » activée, cette réserve se décrémente AUTOMATIQUEMENT au moment de la construction (onglet Terrains, choix du joueur source) — les boutons + / − ci-dessus restent disponibles pour une correction manuelle.'
+    : 'Cette réserve est indicative — utilisez les boutons + / − des terrains dans l’onglet Terrains pour construire réellement les maisons.'}</div>
+  ${lastResultHtml}
   <div id="modalHost"></div>
   `;
 }
@@ -4086,6 +4293,8 @@ function bindTabEvents(t){
       log(`Marché boursier ${state.stockMarket.tradingOpen?'ouvert':'fermé'} par le créateur de la partie.`);
       await saveGame(); render();
     });
+    const liquidateStockBtn = document.getElementById('liquidateStockBtn');
+    if(liquidateStockBtn) liquidateStockBtn.addEventListener('click', modalConfirmLiquidateStock);
     const issueLoanBtn = document.getElementById('issueLoanBtn');
     if(issueLoanBtn) issueLoanBtn.addEventListener('click', ()=>{
       const lenderId = document.getElementById('mLoanLender').value;
@@ -4098,7 +4307,10 @@ function bindTabEvents(t){
     document.querySelectorAll('[data-buy]').forEach(b=>b.addEventListener('click', ()=>modalBuyShares(b.dataset.buy)));
     document.querySelectorAll('[data-sell]').forEach(b=>b.addEventListener('click', ()=>modalSellShare(b.dataset.sell)));
     document.querySelectorAll('[data-rent]').forEach(b=>b.addEventListener('click', ()=>modalPayRent(b.dataset.rent)));
-    document.querySelectorAll('[data-house-build]').forEach(b=>b.addEventListener('click', ()=>buildHouse(b.dataset.houseBuild)));
+    document.querySelectorAll('[data-house-build]').forEach(b=>b.addEventListener('click', ()=>{
+      if(state.settings.features.houseSource) modalBuildHouseSource(b.dataset.houseBuild);
+      else buildHouse(b.dataset.houseBuild);
+    }));
     document.querySelectorAll('[data-house-down]').forEach(b=>b.addEventListener('click', ()=>removeHouse(b.dataset.houseDown)));
     document.querySelectorAll('[data-bid]').forEach(b=>b.addEventListener('click', ()=>modalPlaceBid(b.dataset.bid)));
     document.querySelectorAll('[data-close-auction]').forEach(b=>b.addEventListener('click', ()=>closeAuction(b.dataset.closeAuction)));
@@ -4146,6 +4358,9 @@ function bindTabEvents(t){
     document.querySelectorAll('[data-expire-deck-insurance]').forEach(b=>b.addEventListener('click', ()=>expireCardInsurance(b.dataset.expireDeckInsurance)));
     document.querySelectorAll('[data-manage-deck]').forEach(b=>b.addEventListener('click', ()=>modalManageDeck(b.dataset.manageDeck)));
     document.querySelectorAll('[data-card-details]').forEach(b=>b.addEventListener('click', ()=>modalCardDetails(b.dataset.cardDetails)));
+    document.querySelectorAll('[data-sub-insure]').forEach(b=>b.addEventListener('click', ()=>modalSubInsureProperty(b.dataset.subInsure)));
+    document.querySelectorAll('[data-cancel-sub-insurance]').forEach(b=>b.addEventListener('click', ()=>cancelSubInsurance(b.dataset.cancelSubInsurance)));
+    document.querySelectorAll('[data-expire-sub-insurance]').forEach(b=>b.addEventListener('click', ()=>expireSubInsurance(b.dataset.expireSubInsurance)));
   }
   if(t==='bourse'){
     const bBuy = document.querySelector('[data-stock-buy]'); if(bBuy) bBuy.addEventListener('click', ()=>modalStockTrade('buy'));
@@ -4596,6 +4811,10 @@ function modalPayRent(pid){
     const bankForgiven = cutResults.reduce((s,c)=> s + (c.withheld>0 && (!c.loan.lenderId || c.loan.lenderId==='BANK') ? c.withheld : 0), 0);
     payable -= bankForgiven;
     const insured = p.insurance && p.insurance.insuredPlayerId===visitorId ? p.insurance : null;
+    // Une assurance sous-standard active pour CE visiteur ne s'applique que si l'assurance normale ne
+    // couvre pas déjà ce sinistre (un joueur pourrait en théorie détenir les deux à la fois — l'assurance
+    // normale, déjà en vigueur pour le tour, prime naturellement puisqu'elle a été négociée en premier).
+    const subInsured = !insured && p.subInsurance && p.subInsurance.insuredPlayerId===visitorId ? p.subInsurance : null;
     if(insured){
       const deductible = Math.min(insured.deductible||0, payable);
       const insurerPortion = payable - deductible;
@@ -4605,6 +4824,13 @@ function modalPayRent(pid){
       else { const insurer = state.players.find(x=>x.id===insurerId); if(insurer) insurer.cash -= insurerPortion; }
       if(insurerPortion>0) entries.push({label:`${insurerLabel(insurerId)} (assureur)`, amount:-insurerPortion});
       if(insured.claimMode==='single') p.insurance = null; // un seul sinistre par terrain: couverture consommée
+    } else if(subInsured){
+      // Aucune franchise sur ce produit: l'assureur sous-standard absorbe la totalité du loyer dû.
+      const insurerId = subInsured.insurerId;
+      if(!insurerId || insurerId==='BANK') state.bank.cash -= payable;
+      else { const insurer = state.players.find(x=>x.id===insurerId); if(insurer) insurer.cash -= payable; }
+      if(payable>0) entries.push({label:`${insurerLabel(insurerId)} (assureur sous-standard)`, amount:-payable});
+      p.subInsurance = null; // toujours un seul sinistre: le lancé couvert vient d'avoir lieu
     } else {
       visitor.cash -= payable;
       visitor.stats.rentPaid += payable;
@@ -4656,9 +4882,17 @@ function modalPayRent(pid){
   });
 }
 
-async function buildHouse(pid){
+/* Provenance des maisons + compensation entre copropriétaires (module optionnel « houseSource », voir
+   section 44 du résumé) — demande explicite de l'utilisateur: quand l'option est active, la construction
+   doit provenir de la réserve d'un joueur (onglet Maisons), et une compensation NÉGOCIÉE HORS APP peut
+   être versée à ce joueur par les AUTRES copropriétaires du terrain, au pro rata de leurs parts
+   (`p.owners` exclut déjà nativement la banque et les ETF — leur part n'y figure jamais, donc aucune
+   exclusion additionnelle n'est nécessaire). `sourcePlayerId`/`compensationTotal` sont des paramètres
+   OPTIONNELS: absents (comme dans tous les appels historiques et quand l'option est désactivée),
+   `buildHouse` se comporte EXACTEMENT comme avant — aucun changement de comportement par défaut. */
+async function buildHouse(pid, sourcePlayerId, compensationTotal){
   const p = state.properties.find(x=>x.id===pid);
-  if(!p.groupMergeId){ alert('La construction de maisons n\u2019est possible que sur un terrain regroupé en lot (voir le bouton « Regrouper le lot »).'); return; }
+  if(!p.groupMergeId){ alert('La construction de maisons n’est possible que sur un terrain regroupé en lot (voir le bouton « Regrouper le lot »).'); return; }
   if(p.houses>=hotelLevel()) return;
   const cost = HOUSE_COST_BY_GROUP[p.group] || 0;
   if(p.owners.length===0){ alert('Aucun propriétaire pour payer la construction — ce terrain appartient encore à la banque.'); return; }
@@ -4699,8 +4933,109 @@ async function buildHouse(pid){
   }
   p.houses += 1;
   log(`Construction sur ${p.name}: ${houseLabel(p.houses)}${cost>0?` — coût ${fmt(cost)} réparti selon les parts.`:' — aucun coût (hôtel non facturé).'}`, entries.length?entries:null);
+
+  if(sourcePlayerId){
+    const source = state.players.find(x=>x.id===sourcePlayerId);
+    if(source){
+      source.houseReserve = Math.max(0, source.houseReserve-1);
+      let compTotal = 0;
+      const amount = compensationTotal||0;
+      if(amount>0){
+        const totalOwnersShare = p.owners.reduce((s,o)=>s+o.share,0);
+        p.owners.forEach(o=>{
+          if(o.playerId===sourcePlayerId || totalOwnersShare<=0) return;
+          const payer = state.players.find(x=>x.id===o.playerId);
+          if(!payer) return;
+          const part = amount * (o.share/totalOwnersShare);
+          payer.cash -= part; compTotal += part;
+          entries.push({label:`${payer.name} (compensation maison, ${o.share}% des parts, hors banque/ETF)`, amount:-part});
+        });
+        source.cash += compTotal;
+        entries.push({label:`${source.name} (compensation reçue — maison de sa réserve)`, amount:compTotal});
+      }
+      log(`Maison de ${p.name} prise dans la réserve de ${source.name} (réserve restante: ${source.houseReserve})${compTotal>0?` — compensation de ${fmt(compTotal)} versée par les autres copropriétaires, au pro rata des parts (hors banque/ETF).`:' — aucune compensation.'}`);
+    }
+  }
+
   await saveGame(); render();
-  if(entries.length) showTransactionPopup(`Construction — ${p.name}`, entries);
+  if(entries.length) showTransactionPopup(`Construction${sourcePlayerId?' & compensation':''} — ${p.name}`, entries);
+}
+/* Étape 1 (provenance): appelée à la place de buildHouse() directement quand l'option houseSource est
+   active. Reproduit d'abord les mêmes conditions de refus que buildHouse() (lot non regroupé, déjà à
+   l'hôtel, aucun propriétaire, encaisse insuffisante) en délèguant simplement à buildHouse(pid) SANS
+   source — ce qui déclenche exactement la même alerte que d'habitude — plutôt que de dupliquer ces
+   messages ici. Seulement si tout est en ordre, on demande la réserve source, requise par l'utilisateur
+   (« Celle-ci doit se trouver dans la réserve d'un joueur »). */
+function modalBuildHouseSource(pid){
+  const p = state.properties.find(x=>x.id===pid);
+  if(!p || !p.groupMergeId || p.houses>=hotelLevel() || p.owners.length===0){ buildHouse(pid); return; }
+  const cost = HOUSE_COST_BY_GROUP[p.group] || 0;
+  if(cost>0){
+    const insufficient = p.owners.find(o=>{
+      const owner = state.players.find(x=>x.id===o.playerId);
+      return !owner || owner.cash < cost*(o.share/100);
+    });
+    if(insufficient){ buildHouse(pid); return; }
+  }
+  const reserveHolders = state.players.filter(pl=>!pl.bankrupt && pl.houseReserve>0);
+  if(reserveHolders.length===0){
+    alert('Aucun joueur n’a de maison en réserve — impossible de construire tant que l’option « provenance des maisons » est active. Passez par l’onglet Maisons (enchère ou ajustement manuel) pour en obtenir une.');
+    return;
+  }
+  openModal(`
+    <h3>D'où provient la maison ? — ${esc(p.name)}</h3>
+    <div class="small" style="margin-bottom:8px;">Cette maison doit provenir de la réserve d'un joueur (onglet Maisons).</div>
+    <label>Joueur source</label>
+    <select id="mHouseSource">${reserveHolders.map(pl=>`<option value="${pl.id}">${esc(pl.name)} (réserve: ${pl.houseReserve})</option>`).join('')}</select>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mNext">Suivant — compensation</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mNext').addEventListener('click', ()=>{
+    const sourceId = document.getElementById('mHouseSource').value;
+    modalHouseCompensation(pid, sourceId);
+  });
+}
+/* Étape 2 (compensation): montant TOTAL librement négocié par les joueurs (hors app), inscrit par le
+   créateur/banquier — 0 par défaut = aucune compensation. Réparti au pro rata des parts de TOUS les
+   copropriétaires du terrain SAUF la source elle-même (elle ne se paie pas elle-même) — `p.owners`
+   n'inclut déjà jamais la banque ni les ETF. Si la source est elle-même copropriétaire, les AUTRES
+   copropriétaires paient quand même leur part — exactement le cas noté explicitement par l'utilisateur
+   (« si la maison venait de la réserve de Mehdi, Julien pourrait avoir à payer une compensation à Mehdi
+   quand même »). */
+function modalHouseCompensation(pid, sourceId){
+  const p = state.properties.find(x=>x.id===pid);
+  const source = state.players.find(x=>x.id===sourceId);
+  const payers = p.owners.filter(o=>o.playerId!==sourceId);
+  const totalOwnersShare = p.owners.reduce((s,o)=>s+o.share,0);
+  const breakdown = amount => payers.length===0 ? '' : payers.map(o=>{
+    const owner = state.players.find(x=>x.id===o.playerId);
+    const w = totalOwnersShare>0 ? (o.share/totalOwnersShare) : 0;
+    return `${owner?esc(owner.name):'?'}: ${fmt(amount*w)} (${Math.round(w*100)}% des parts, hors banque/ETF)`;
+  }).join('<br>');
+  openModal(`
+    <h3>Compensation — ${esc(p.name)}</h3>
+    <div class="small" style="margin-bottom:8px;">Maison prise dans la réserve de <b>${esc(source?source.name:'?')}</b>. Si une compensation a été négociée entre les copropriétaires, inscrivez le montant total à lui transférer — réparti au pro rata des parts des AUTRES copropriétaires (jamais la banque ni les ETF). Laissez à 0 si aucune compensation n'a été convenue.</div>
+    ${payers.length===0 ? `<div class="small">Aucun autre copropriétaire sur ce terrain — aucune compensation possible.</div>` : `
+    <label>Montant total à transférer à ${esc(source?source.name:'?')}</label>
+    <input type="number" step="0.01" min="0" id="mCompAmount" value="0">
+    <div class="small" id="mCompBreakdown" style="margin-top:6px;">${breakdown(0)}</div>
+    `}
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mOk">Construire</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  const amountInput = document.getElementById('mCompAmount');
+  if(amountInput) amountInput.addEventListener('input', e=>{
+    document.getElementById('mCompBreakdown').innerHTML = breakdown(parseFloat(e.target.value)||0);
+  });
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const amount = amountInput ? (parseFloat(amountInput.value)||0) : 0;
+    closeModal();
+    await buildHouse(pid, sourceId, amount);
+  });
 }
 async function removeHouse(pid){
   const p = state.properties.find(x=>x.id===pid);
@@ -4975,14 +5310,50 @@ function insurerCash(insurerId){
   const pl = state.players.find(x=>x.id===insurerId);
   return pl ? pl.cash : 0;
 }
-function insurerOptionsHtml(excludeId, worstCase){
+/* Portion du "pire cas" qui reviendrait à CET assureur potentiel s'il payait effectivement le sinistre,
+   parce qu'il est lui-même copropriétaire du terrain assuré (ou, pour la banque, détient encore une part
+   ordinaire non vendue et bankCollectsRent est actif) — cette portion ne représente donc PAS un vrai
+   décaissement net pour lui: il se la reverse à lui-même via la distribution normale du loyer dans
+   modalPayRent(), exactement comme un propriétaire qui ne paie jamais sa propre part. Un joueur qui
+   possède 50% d'un lot n'a donc besoin de couvrir en liquide que l'autre 50% pour pouvoir vendre une
+   assurance dessus — demande explicite de l'utilisateur (exemple: hôtel à 20M$ sur Bleu foncé 2, Julien
+   copropriétaire à 50%, n'a besoin que de 10M$, pas 20M$). Reproduit fidèlement les mêmes exclusions que
+   la distribution réelle (parts hypothéquées si le loyer ne continue pas, propriétaires en prison — voir
+   modalPayRent), pour ne jamais sous-estimer l'exposition nette réelle. `p` peut être omis (assurances
+   sans terrain précis, ex. taxes, ou bundle) — retourne alors 0, comportement inchangé. */
+function insurerOwnershipRebate(p, insuredPlayerId, insurerId){
+  if(!p) return 0;
+  const mortgagedIds = state.settings.mortgageRentContinues ? [] : mortgagedOwnerIds(p);
+  const jailedIds = jailedOwnerIds();
+  if(p.type==='airport' || p.type==='service'){
+    if(insurerId==='BANK') return 0; // la banque ne détient jamais de part sur aéroports/services
+    if(insurerId===insuredPlayerId) return 0;
+    const owner = p.owners.find(o=>o.playerId===insurerId);
+    if(!owner || mortgagedIds.includes(insurerId) || jailedIds.includes(insurerId)) return 0;
+    const rate = p.type==='airport' ? ownerAirportRent(p, insurerId) : ownerServiceMultiplier(p, insurerId)*7;
+    return rate * (owner.share/100);
+  }
+  const rentTotal = colorRentAt(p, p.houses);
+  if(insurerId==='BANK'){
+    if(!state.settings.bankCollectsRent) return 0;
+    return rentTotal * (purchasableBankShare(p)/100);
+  }
+  if(insurerId===insuredPlayerId) return 0;
+  const owner = p.owners.find(o=>o.playerId===insurerId);
+  if(!owner || mortgagedIds.includes(insurerId) || jailedIds.includes(insurerId)) return 0;
+  return rentTotal * (owner.share/100);
+}
+function insurerOptionsHtml(excludeId, worstCase, p, insuredPlayerId){
   const opts = [{id:'BANK', label:'Banque'}].concat(
-    activePlayers().filter(p=>p.id!==excludeId).map(p=>({id:p.id, label:p.name}))
+    activePlayers().filter(pl=>pl.id!==excludeId).map(pl=>({id:pl.id, label:pl.name}))
   );
   return opts.map(o=>{
     const cash = insurerCash(o.id);
-    const ok = cash >= worstCase;
-    return `<option value="${o.id}" ${!ok?'disabled':''}>${esc(o.label)} (${fmt(cash)})${!ok?' — insuffisant':''}</option>`;
+    const rebate = insurerOwnershipRebate(p, insuredPlayerId, o.id);
+    const netWorstCase = Math.max(0, worstCase - rebate);
+    const ok = cash >= netWorstCase;
+    const note = rebate>0 ? ` — copropriétaire, exposition nette ${fmt(netWorstCase)}` : '';
+    return `<option value="${o.id}" ${!ok?'disabled':''}>${esc(o.label)} (${fmt(cash)})${!ok?' — insuffisant':''}${note}</option>`;
   }).join('');
 }
 function modalInsureBundle(claimMode){
@@ -4990,13 +5361,20 @@ function modalInsureBundle(claimMode){
   if(!state.insuranceOpen){ alert('Les achats d\u2019assurance sont fermés pour le moment.'); return; }
   const items = insurableItems(myPlayerId, claimMode);
   if(items.length===0){ alert('Aucun risque assurable depuis votre position.'); return; }
-  const rows = items.map((it,idx)=>`
+  const rows = items.map((it,idx)=>{
+    // Rabais de volume: la banque est le vendeur par défaut (1re option de insurerOptionsHtml) — on
+    // reflète donc déjà le rabais applicable à la banque dans la prime suggérée initiale de chaque ligne;
+    // elle se recalcule ensuite au changement de vendeur, voir l'écouteur .bundle-insurer plus bas.
+    const prop = it.type==='prop' ? state.properties.find(x=>x.id===it.id) : null;
+    const initialDiscount = prop ? insuranceGroupDiscountTier(prop, 'BANK') : 0;
+    return `
     <div class="row" style="gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;">
       <input type="checkbox" class="bundle-check" data-idx="${idx}" style="width:auto;">
       <span style="flex:1;min-width:140px;">${esc(it.label)} : ${(it.q.prob*100).toFixed(2)}% de probabilité de sinistre. ${fmt(it.q.exposure)} à risque.</span>
       <select class="bundle-insurer" data-idx="${idx}" style="max-width:170px;">${insurerOptionsHtml(myPlayerId, it.q.ceil)}</select>
-      <input type="number" step="0.01" class="bundle-premium" data-idx="${idx}" value="${it.q.ceil.toFixed(2)}" style="width:90px;">
-    </div>`).join('');
+      <input type="number" step="0.01" class="bundle-premium" data-idx="${idx}" value="${(it.q.ceil*(1-initialDiscount)).toFixed(2)}" style="width:90px;">
+    </div>`;
+  }).join('');
   openModal(`
     <h3>Assurer plusieurs cases pour ce tour</h3>
     <div class="small" style="margin-bottom:8px;">Cochez les cases (terrains ou taxes) à assurer et choisissez un vendeur pour chacune. Les cases assignées au même vendeur forment un seul contrat groupé (une seule prime totale). Le montant « à risque » est ce que vous devriez payer si l'événement se produit et que vous n'êtes pas assuré.</div>
@@ -5015,6 +5393,16 @@ function modalInsureBundle(claimMode){
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mClaimMode').addEventListener('change', (e)=>{ modalInsureBundle(e.target.value); });
+  document.querySelectorAll('.bundle-insurer').forEach(sel=>{
+    sel.addEventListener('change', e=>{
+      const idx = e.target.dataset.idx;
+      const it = items[idx];
+      if(it.type!=='prop') return; // rabais de volume: assurance normale sur des terrains seulement, jamais sur les taxes
+      const prop = state.properties.find(x=>x.id===it.id);
+      const discount = insuranceGroupDiscountTier(prop, e.target.value);
+      document.querySelector(`.bundle-premium[data-idx="${idx}"]`).value = (it.q.ceil*(1-discount)).toFixed(2);
+    });
+  });
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const selections = [];
     document.querySelectorAll('.bundle-check').forEach(c=>{
@@ -5034,14 +5422,16 @@ function modalInsureProperty(pid){
   const p = state.properties.find(x=>x.id===pid);
   const q = insuranceQuote(p, myPlayerId);
   const rangeText = pid2=>{ const qq=insuranceQuote(p,pid2); return `Fourchette négociable: de ${fmt(qq.floor)} (sans prime, espérance pure) à ${fmt(qq.ceil)} (avec la prime de la banque) — distance ${qq.dist!==null?qq.dist:'?'} case(s), sur tout le tour du pion neutre. Franchise du tour: ${fmt(state.currentDeductible||0)}.`; };
+  const discountText = insurerId2=>{ const d = insuranceGroupDiscountTier(p, insurerId2); return d>0 ? `Rabais de volume: -${Math.round(d*100)}% (ce vendeur assure déjà un autre terrain du groupe ${GROUPS[p.group]?GROUPS[p.group].label:''}) — déjà appliqué à la prime suggérée ci-dessous.` : ''; };
   const worstCase = Math.max(payableRent(p, myPlayerId) - (state.currentDeductible||0), 0);
   openModal(`
     <h3>Assurer — ${esc(p.name)}</h3>
     <label>Joueur assuré</label>
     <select id="mPlayer">${activePlayerOptions(myPlayerId)}</select>
     <div class="small" id="mRangeText">${rangeText(myPlayerId)}</div>
-    <label>Vendeur de l'assurance (doit pouvoir couvrir le pire cas après franchise: ${fmt(worstCase)})</label>
-    <select id="mInsurer">${insurerOptionsHtml(myPlayerId, worstCase)}</select>
+    <label>Vendeur de l'assurance (doit pouvoir couvrir le pire cas après franchise: ${fmt(worstCase)} — moins s'il est copropriétaire du terrain, voir la liste)</label>
+    <select id="mInsurer">${insurerOptionsHtml(myPlayerId, worstCase, p, myPlayerId)}</select>
+    <div class="small" id="mDiscountText"></div>
     <label>Prime négociée</label>
     <input type="number" step="0.01" id="mPremium" value="${q.ceil.toFixed(2)}">
     <div class="small">Franchise appliquée (fixée pour ce tour dans l'onglet Assurances): <b>${fmt(state.currentDeductible||0)}</b></div>
@@ -5049,13 +5439,23 @@ function modalInsureProperty(pid){
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
     </div>`);
+  const refreshPremium = ()=>{
+    const playerId = document.getElementById('mPlayer').value;
+    const insurerId = document.getElementById('mInsurer').value;
+    const qq = insuranceQuote(p, playerId);
+    const discount = insuranceGroupDiscountTier(p, insurerId);
+    document.getElementById('mPremium').value = (qq.ceil*(1-discount)).toFixed(2);
+    document.getElementById('mDiscountText').textContent = discountText(insurerId);
+  };
+  refreshPremium();
   document.getElementById('mPlayer').addEventListener('change', e=>{
     const qq = insuranceQuote(p, e.target.value);
     document.getElementById('mRangeText').textContent = rangeText(e.target.value);
-    document.getElementById('mPremium').value = qq.ceil.toFixed(2);
     const wc = Math.max(payableRent(p, e.target.value) - (state.currentDeductible||0), 0);
-    document.getElementById('mInsurer').innerHTML = insurerOptionsHtml(e.target.value, wc);
+    document.getElementById('mInsurer').innerHTML = insurerOptionsHtml(e.target.value, wc, p, e.target.value);
+    refreshPremium();
   });
+  document.getElementById('mInsurer').addEventListener('change', refreshPremium);
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const playerId = document.getElementById('mPlayer').value;
@@ -5091,6 +5491,79 @@ async function expirePropInsurance(pid){
   if(!p.insurance) return;
   log(`Assurance sur ${p.name} expirée (fin du jet) — prime conservée par ${insurerLabel(p.insurance.insurerId)}.`);
   p.insurance = null;
+  await saveGame(); render();
+}
+
+/* ---------- Assurance sous-standard: achat, annulation, expiration ---------- */
+function modalSubInsureProperty(pid){
+  const p = state.properties.find(x=>x.id===pid);
+  const q = subInsuranceQuote(p, myPlayerId);
+  const rangeText = pid2=>{ const qq=subInsuranceQuote(p,pid2); return `Fourchette négociable: de ${fmt(qq.floor)} (sans prime, espérance pure) à ${fmt(qq.ceil)} (avec la majoration sous-standard de ${Math.round(state.settings.subInsuranceMarkup*100)}%) — distance ${qq.dist!==null?qq.dist:'?'} case(s). Couvre uniquement le TOUT PROCHAIN lancé de dé de ce joueur, peu importe où il tombe — la couverture disparaît ensuite, qu'elle ait servi ou non.`; };
+  const worstCase = Math.max(payableRent(p, myPlayerId, true), 0);
+  openModal(`
+    <h3>Assurance sous-standard — ${esc(p.name)}</h3>
+    <div class="small" style="margin-bottom:8px;">Achetable en tout temps (même hors des périodes normales d'achat d'assurance), sur des terrains uniquement — jamais sur les taxes ni les cartes Chance/Chess. Aucune franchise sur ce produit.</div>
+    <label>Joueur assuré</label>
+    <select id="mPlayer">${activePlayerOptions(myPlayerId)}</select>
+    <div class="small" id="mRangeText">${rangeText(myPlayerId)}</div>
+    <label>Vendeur de l'assurance (doit pouvoir couvrir le pire cas: ${fmt(worstCase)} — moins s'il est copropriétaire du terrain, voir la liste)</label>
+    <select id="mInsurer">${insurerOptionsHtml(myPlayerId, worstCase, p, myPlayerId)}</select>
+    <label>Prime négociée</label>
+    <input type="number" step="0.01" id="mPremium" value="${q.ceil.toFixed(2)}">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mOk">Confirmer</button>
+    </div>`);
+  document.getElementById('mPlayer').addEventListener('change', e=>{
+    const qq = subInsuranceQuote(p, e.target.value);
+    document.getElementById('mRangeText').textContent = rangeText(e.target.value);
+    document.getElementById('mPremium').value = qq.ceil.toFixed(2);
+    const wc = Math.max(payableRent(p, e.target.value, true), 0);
+    document.getElementById('mInsurer').innerHTML = insurerOptionsHtml(e.target.value, wc, p, e.target.value);
+  });
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const playerId = document.getElementById('mPlayer').value;
+    const insurerId = document.getElementById('mInsurer').value;
+    const premium = parseFloat(document.getElementById('mPremium').value)||0;
+    await buySubInsurance(pid, playerId, insurerId, premium);
+    closeModal();
+  });
+}
+/* Logique d'achat isolée dans une fonction dédiée (plutôt que directement dans le gestionnaire de clic du
+   modal) pour rester testable indépendamment de l'interface — même principe que contributeLottery/
+   claimLottery. */
+async function buySubInsurance(pid, playerId, insurerId, premium){
+  const p = state.properties.find(x=>x.id===pid);
+  const pl = state.players.find(x=>x.id===playerId);
+  if(!p || !pl) return;
+  pl.cash -= premium; pl.stats.spentInsurance += premium;
+  if(insurerId==='BANK') state.bank.cash += premium;
+  else { const ins = state.players.find(x=>x.id===insurerId); if(ins) ins.cash += premium; }
+  p.subInsurance = {insuredPlayerId:playerId, premium, insurerId};
+  log(`${pl.name} prend une assurance sous-standard (1 lancé) sur ${p.name} auprès de ${insurerLabel(insurerId)} pour une prime de ${premium.toFixed(2)}.`,
+    [{label:`${pl.name} (prime sous-standard)`, amount:-premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:premium}]);
+  await saveGame(); render();
+}
+async function cancelSubInsurance(pid){
+  const p = state.properties.find(x=>x.id===pid);
+  if(!p.subInsurance) return;
+  const pl = state.players.find(x=>x.id===p.subInsurance.insuredPlayerId);
+  const premium = p.subInsurance.premium;
+  const insurerId = p.subInsurance.insurerId;
+  if(pl) pl.cash += premium;
+  if(!insurerId || insurerId==='BANK') state.bank.cash -= premium;
+  else { const ins = state.players.find(x=>x.id===insurerId); if(ins) ins.cash -= premium; }
+  log(`Assurance sous-standard annulée sur ${p.name} — prime de ${premium.toFixed(2)} remboursée à ${pl?pl.name:'?'} par ${insurerLabel(insurerId)}.`,
+    [{label:`${pl?pl.name:'?'} (remboursement)`, amount:premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:-premium}]);
+  p.subInsurance = null;
+  await saveGame(); render();
+}
+async function expireSubInsurance(pid){
+  const p = state.properties.find(x=>x.id===pid);
+  if(!p.subInsurance) return;
+  log(`Assurance sous-standard sur ${p.name} expirée (le lancé de dé couvert est terminé) — prime conservée par ${insurerLabel(p.subInsurance.insurerId)}.`);
+  p.subInsurance = null;
   await saveGame(); render();
 }
 
@@ -5148,6 +5621,8 @@ function renderSetup(){
       <input type="number" step="1" id="setupDebtSpread" value="50"> %
 
       <div class="setup-subhead">Bourse</div>
+      <label>Encaisse boursière de départ par joueur (étanche du jeu principal, sauf transfert via le bouton dédié du créateur)</label>
+      <input type="number" step="0.01" min="0" id="setupStockStartingCash" value="5">
       <label>Nombre d'actions par joueur</label>
       <input type="number" step="1" id="setupShares" value="1000">
       <label>Taux de l'actif sans risque (par année)</label>
@@ -5175,6 +5650,16 @@ function renderSetup(){
       <label>Cotisation fixe par joueur (en M$ — ex: 0.5 = 500K$)</label>
       <input type="number" step="0.01" min="0" id="setupLotteryContribution" value="0.5">
 
+      <div class="setup-subhead">Assurance sous-standard</div>
+      <label>Majoration de la prime (bien plus élevée que la majoration normale ci-dessus — ne couvre qu'un seul lancé de dé)</label>
+      <input type="number" step="1" min="0" id="setupSubInsuranceMarkup" value="100"> %
+
+      <div class="setup-subhead">Rabais de volume — assurance normale seulement (jamais sous-standard)</div>
+      <label>Rabais sur le 2e terrain du même groupe/lot assuré auprès du même assureur</label>
+      <input type="number" step="1" min="0" max="100" id="setupInsuranceGroupDiscount2nd" value="5"> %
+      <label>Rabais sur le 3e terrain (et plus) du même groupe/lot, même assureur</label>
+      <input type="number" step="1" min="0" max="100" id="setupInsuranceGroupDiscount3rd" value="10"> %
+
       <div class="setup-subhead">Prêts</div>
       <label>% de tous les loyers reçus par l'emprunteur, retenu et versé automatiquement au prêteur</label>
       <input type="number" step="1" min="0" max="100" id="setupLoanPct" value="20"> %
@@ -5193,7 +5678,7 @@ function renderSetup(){
       <div id="featureChecks" style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
         ${FEATURE_LIST.map(f=>`
           <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-weight:400;color:var(--ink);margin:0;">
-            <input type="checkbox" id="feat_${f.key}" ${f.key==='etf'?'':'checked'} style="width:auto;">
+            <input type="checkbox" id="feat_${f.key}" ${(f.key==='etf'||f.key==='houseSource')?'':'checked'} style="width:auto;">
             ${esc(f.label)}
           </label>`).join('')}
       </div>
@@ -5233,6 +5718,7 @@ function renderSetup(){
       growthRate: (parseFloat(document.getElementById('setupGrowth').value)||0)/100,
       goAdvanceRate: (parseFloat(document.getElementById('setupGoRate').value)||0)/100,
       goAdvanceMax: parseInt(document.getElementById('setupGoAdvanceMax').value)||0,
+      stockStartingCash: parseFloat(document.getElementById('setupStockStartingCash').value)||0,
       sharesPerPlayer: parseInt(document.getElementById('setupShares').value)||1000,
       riskFreeRate: (parseFloat(document.getElementById('setupRiskFree').value)||0)/100,
       mortgageLTV: (parseFloat(document.getElementById('setupMortgageLTV').value)||0)/100,
@@ -5244,6 +5730,9 @@ function renderSetup(){
       marginMultiple: parseFloat(document.getElementById('setupMarginMultiple').value)||2,
       rentCompensationFee: parseFloat(document.getElementById('setupRentCompFee').value)||0,
       lotteryContribution: parseFloat(document.getElementById('setupLotteryContribution').value)||0,
+      subInsuranceMarkup: (parseFloat(document.getElementById('setupSubInsuranceMarkup').value)||0)/100,
+      insuranceGroupDiscount2nd: (parseFloat(document.getElementById('setupInsuranceGroupDiscount2nd').value)||0)/100,
+      insuranceGroupDiscount3rd: (parseFloat(document.getElementById('setupInsuranceGroupDiscount3rd').value)||0)/100,
       linearRent: document.getElementById('setupLinearRent').checked,
       housesBeforeHotel: parseInt(document.getElementById('setupHousesBeforeHotel').value)||4,
       loanWithholdingPct: (parseFloat(document.getElementById('setupLoanPct').value)||0)/100,

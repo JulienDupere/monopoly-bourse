@@ -227,7 +227,13 @@ tr:last-child td{border-bottom:none;}
 .deed-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
 .houses{font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-top:4px;}
 .group-title{color:var(--ink);font-family:inherit;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;margin:20px 0 8px;font-size:14px;opacity:0.85;}
-.modal-bg{position:fixed;inset:0;background:rgba(17,24,39,0.55);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50;}
+/* Section 145 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur, suite à un alpha test
+   (« Les message pop-up apparaissent au milieu de la page possible de les faire apparaitre en haut. »):
+   align-items passe de 'center' à 'flex-start' — la modale s'ancre désormais en haut du viewport (avec
+   une marge confortable, padding-top plus généreux que le padding latéral/bas) plutôt qu'au centre
+   vertical, qui pouvait tomber sous la ligne de flottaison sur un écran de téléphone (clavier virtuel
+   ouvert, ou simplement un long formulaire) et forcer un défilement pour même voir le haut de la modale. */
+.modal-bg{position:fixed;inset:0;background:rgba(17,24,39,0.55);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:flex;align-items:flex-start;justify-content:center;padding:16px;padding-top:min(8vh,64px);overflow-y:auto;z-index:50;}
 .modal{background:var(--paper-solid);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:var(--radius-lg);max-width:460px;width:100%;max-height:90vh;overflow:auto;padding:20px;box-shadow:0 20px 50px -8px rgba(17,24,39,0.35);}
 .modal h3{font-family:inherit;font-weight:800;text-transform:uppercase;color:var(--ink);margin:0 0 14px;border-bottom:2px solid var(--gold);padding-bottom:8px;}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;}
@@ -561,6 +567,36 @@ let isSpectator = false;
 let lastSerialized = null;
 let pollTimer = null;
 let etfDutchTicker = null; // ré-affichage local (sans réseau) pour animer le prix décroissant d'une enchère Dutch ETF en cours — voir startEtfDutchTicker
+// Section 145 (ALPHA test, voir RESUME_ET_REGLES.md): « Les ETF dans l'enchère qui part à 500M et qui
+// descend dans les écrans des autres joueurs non admin ont vois seulement 0K$. » Diagnostic confirmé:
+// etfDutchCurrentValue() calculait `elapsed = Date.now() - dutch.startedAt` en comparant l'horloge LOCALE
+// de CHAQUE appareil à `startedAt`, écrit une seule fois par l'appareil qui a démarré la manche avec SA
+// PROPRE horloge — un simple décalage d'horloge entre appareils (courant: navigateurs différents, fuseaux
+// mal réglés, dérive système) suffit à faire calculer un `elapsed` bien supérieur à durationMs (60s) sur
+// les autres appareils dès la première lecture, d'où un 0 K$ constant. Cette application n'a aucune
+// horloge serveur fiable (Firebase RTDB utilisé comme simple stockage clé-valeur) — la solution retenue
+// est donc un ANCRAGE LOCAL: dès qu'un appareil observe une NOUVELLE manche (identifiée par son
+// `startedAt` distant), il note SON PROPRE Date.now() à cet instant précis et calcule ensuite l'écoulement
+// uniquement à partir de CET ancrage local — plus aucune comparaison d'horloges entre appareils. Le seul
+// écart résiduel est le délai réseau/poll (jusqu'à ~3s, voir startPolling) avant qu'un appareil ne
+// découvre une manche déjà démarrée ailleurs, ce qui est acceptable et sans commune mesure avec un décalage
+// d'horloge pouvant représenter des heures.
+const etfDutchLocalAnchors = {};
+/* Calcule le temps ÉCOULÉ (en ms) pour la manche Dutch `dutch` d'une tranche, en ancrant la mesure sur
+   l'horloge LOCALE de cet appareil au moment où IL a lui-même découvert cette manche (jamais sur
+   `dutch.startedAt`, écrit par l'horloge d'un autre appareil — voir commentaire ci-dessus). Une manche est
+   identifiée par la paire (etf.id, tranche.id); un `startedAt` distant différent de celui déjà ancré
+   signale une NOUVELLE manche (ou une relance) et réinitialise l'ancrage. */
+function etfDutchLocalElapsed(etf, tranche, dutch, nowMs){
+  nowMs = nowMs===undefined ? Date.now() : nowMs;
+  const key = etf.id+':'+tranche.id;
+  let anchor = etfDutchLocalAnchors[key];
+  if(!anchor || anchor.remoteStartedAt!==dutch.startedAt){
+    anchor = {remoteStartedAt: dutch.startedAt, localObservedAt: nowMs};
+    etfDutchLocalAnchors[key] = anchor;
+  }
+  return Math.max(0, nowMs - anchor.localObservedAt);
+}
 let lastDiceResult = null; // dernier lancer de dés affiché (éphémère, propre à ce navigateur — jamais synchronisé)
 let lastDiceResults = null; // dernier lancer « pour tous » (tableau de résultats, un par joueur) — éphémère, idem
 // Section 101 (2026-09-01, voir RESUME_ET_REGLES.md): état ouvert/fermé des accordéons de sections
@@ -681,6 +717,23 @@ function boardCellPosition(pos){
   if(pos<=30) return {row:1, col:1+(pos-20)};
   return {row:1+(pos-30), col:11};
 }
+/* Section 150 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: remplacer, pour le
+   plateau du mode spectateur (tvSlideBoard), la forme « plateau Monopoly » (périmètre d'une grille
+   11x11 — voir boardCellPosition ci-dessus — qui laisse les 9x9 cases du centre totalement vides,
+   « un grand espace noir perdu ») par un chemin en « serpent » façon jeu de l'oie / chutes et
+   échelles: une grille PLEINE de 8 colonnes × 5 lignes (40 cases, aucune case vide), où chaque ligne
+   alterne son sens de lecture (gauche→droite puis droite→gauche, etc.) pour rester un chemin continu
+   d'une case à l'autre. Le trajet logique (case 39 → case 0 boucle) est identique, seule la
+   représentation visuelle change — et chaque case occupe une part BEAUCOUP plus grande de l'écran,
+   ce qui permet d'y afficher plus d'information (voir tvSlideBoard: noms d'entreprises en toutes
+   lettres plutôt que 2 initiales). */
+function boardCellPositionSnake(pos){
+  const COLS = 8;
+  const row = Math.floor(pos/COLS);
+  const idxInRow = pos % COLS;
+  const col = (row%2===0) ? idxInRow : (COLS-1-idxInRow);
+  return {row: row+1, col: col+1};
+}
 function distanceBetween(fromPos, toPos){
   let d = toPos - fromPos;
   if(d<0) d += 40;
@@ -784,8 +837,9 @@ function migrateState(s){
   if(!s.ceoAnnouncements) s.ceoAnnouncements = [];
   // Section 134 (voir RESUME_ET_REGLES.md) — dividende différé: annonces de dividende en attente de
   // versement au prochain semestre (voir modalAnnounceDividend/advanceGameClock). Chaque entrée: {id,
-  // companyId, amount, announcedAtRoll, payAtRoll, recordHolders:[{playerId, shares}]}. Une ancienne
-  // sauvegarde n'a évidemment aucune annonce en attente (l'ancien comportement versait instantanément).
+  // companyId, amount, announcedAtRoll, payAtRoll, recordHolders:[{playerId, shares}],
+  // totalSharesAtAnnouncement}. Une ancienne sauvegarde n'a évidemment aucune annonce en attente (l'ancien
+  // comportement versait instantanément).
   if(!s.dividendAnnouncements) s.dividendAnnouncements = [];
   // Section 137 (voir RESUME_ET_REGLES.md) — affichage TV (spectateur) piloté par le créateur: ce que la
   // TV/l'écran spectateur montre n'est plus une rotation automatique locale à chaque appareil (voir
@@ -1463,6 +1517,7 @@ function renderPortefeuille(){
   </table>
   ${renderPortefeuilleTrading(me, company)}
   ${renderPortefeuilleFinancials()}
+  ${renderPortefeuilleHistory(me)}
   <div id="modalHost"></div>`;
 }
 /* Section 128 (voir RESUME_ET_REGLES.md) — trading joueurs Phase 1 (DESIGN_TRADING_JOUEURS.md): REMPLACE
@@ -1540,7 +1595,7 @@ function renderPortefeuilleTopBar(me, company){
   const pfActionsMenuHtml = `${pfActionsMenuStyle}
   <div class="ent-actions-menu" id="pfActionsMenu">
     <button type="button" class="btn btn-gold btn-sm ent-actions-toggle" id="pfActionsMenuBtn" aria-haspopup="true" aria-expanded="false" title="Actions de trading">☰ Actions</button>
-    <div class="ent-actions-panel" id="pfActionsPanel">${actionsMenuGroupTitle('Comptant', true)}<button class="btn btn-ghost btn-sm" id="openBuySharesBtn">📈 Acheter des actions</button><button class="btn btn-ghost btn-sm" id="openSellSharesBtn">📉 Vendre des actions</button>${isCeo ? `<button class="btn btn-ghost btn-sm" id="openAnnounceCeoTradeBtn">📢 Annoncer un achat/une vente de mes propres parts</button>` : ''}${actionsMenuGroupTitle('Vente à découvert')}<button class="btn btn-ghost btn-sm" id="openShortSharesBtn">📉 Vendre à découvert</button><button class="btn btn-ghost btn-sm" id="openCoverShortSharesBtn">📈 Racheter pour clôturer</button>${actionsMenuGroupTitle('Bons gouvernementaux')}<button class="btn btn-ghost btn-sm" id="openInvestBondsBtn">💰 Investir</button><button class="btn btn-ghost btn-sm" id="openWithdrawBondsBtn">🏦 Retirer</button>${actionsMenuGroupTitle('Options')}<button class="btn btn-ghost btn-sm" id="openOptionTradeBtn">🎯 Nouvelle position d'option</button></div>
+    <div class="ent-actions-panel" id="pfActionsPanel">${actionsMenuGroupTitle('Comptant', true)}<button class="btn btn-ghost btn-sm" id="openBuySharesBtn">📈 Acheter des actions</button><button class="btn btn-ghost btn-sm" id="openSellSharesBtn">📉 Vendre des actions</button>${isCeo ? `<button class="btn btn-ghost btn-sm" id="openAnnounceCeoTradeBtn">📢 Annoncer un achat/une vente de mes propres parts</button>` : ''}${actionsMenuGroupTitle('Vente à découvert')}<button class="btn btn-ghost btn-sm" id="openShortSharesBtn">📉 Vendre à découvert</button><button class="btn btn-ghost btn-sm" id="openCoverShortSharesBtn">📈 Racheter pour clôturer</button>${actionsMenuGroupTitle('Bons gouvernementaux')}<button class="btn btn-ghost btn-sm" id="openInvestBondsBtn">💰 Investir</button><button class="btn btn-ghost btn-sm" id="openWithdrawBondsBtn">🏦 Retirer</button>${actionsMenuGroupTitle('Options')}<button class="btn btn-ghost btn-sm" id="openOptionChainBtn">📊 Voir la chaîne d'options</button><button class="btn btn-ghost btn-sm" id="openOptionTradeBtn">🎯 Nouvelle position d'option</button></div>
   </div>`;
   return `${marketWindowHtml}${pfActionsMenuHtml}`;
 }
@@ -1561,28 +1616,28 @@ function renderPortefeuilleTrading(me, company){
   const positionsHtml = myPositions.length>0
     ? `<table><tr><th>Entreprise</th><th>Parts</th><th>Coût moyen</th><th>Prix/part</th><th>Valeur de marché</th><th>P&amp;L latent</th></tr>${positionsRows}</table>`
     : '<div class="empty">Aucune position boursière pour le moment.</div>';
-  const announcementsRows = state.ceoAnnouncements.map(ann=>{
+  // Section 146 (ALPHA test 2, voir RESUME_ET_REGLES.md) — item 4, demande explicite de l'utilisateur:
+  // « Mettre les annonces publics toute en haut de la page portefeuille (Dividendes annoncés et Annonce
+  // CEO), sans titre de section, ni descriptif. Juste une ligne d'information » — remplace l'ancien
+  // accordéon pf-annonces (titre « 📢 Annonces » + 2 paragraphes descriptifs + 2 tables complètes) par un
+  // simple bandeau compact, une ligne par annonce en attente (dividende OU CEO, mêmes infos qu'avant:
+  // compagnie/montant/lancers restants, + CEO/direction pour les annonces CEO), sans titre ni texte
+  // d'accompagnement. Rien affiché si aucune annonce n'est en attente (pas de ligne vide « Aucune… », vu
+  // qu'il n'y a plus de titre de section sous lequel la loger — cohérent avec la demande de minimalisme).
+  const dividendAnnouncementLines = state.dividendAnnouncements.map(ann=>{
+    const co = companyById(ann.companyId);
+    const rollsLeft = Math.max(0, ann.payAtRoll - state.gameClock.rollCount);
+    return `<div>💎 Dividende ${co?esc(co.name):'—'} : ${fmt(ann.amount)} — versé dans ${rollsLeft} lancer(s)</div>`;
+  });
+  const ceoAnnouncementLines = state.ceoAnnouncements.map(ann=>{
     const co = companyById(ann.companyId);
     const ceo = state.players.find(p=>p.id===ann.ceoId);
     const rollsLeft = Math.max(0, ann.executeAtRoll - state.gameClock.rollCount);
-    return `<tr><td>${co?esc(co.name):'—'}</td><td>${ceo?esc(ceo.name):'—'}</td><td>${ann.direction==='buy'?'Achat':'Vente'}</td><td class="money">${fmt(ann.amount)}</td><td>${rollsLeft}</td></tr>`;
-  }).join('');
-  const announcementsHtml = state.ceoAnnouncements.length>0
-    ? `<table><tr><th>Entreprise</th><th>CEO</th><th>Direction</th><th>Montant</th><th>Lancers restants avant exécution</th></tr>${announcementsRows}</table>`
-    : '<div class="empty">Aucune annonce CEO en attente.</div>';
-  // Section 134 (voir RESUME_ET_REGLES.md) — dividende différé avec réservation de cash: petite liste
-  // minimale « Dividendes annoncés, en attente de versement », visible par TOUS les joueurs (même esprit
-  // que les annonces CEO ci-dessus — transparence). Une UI plus riche regroupant dividendes ET annonces CEO
-  // dans une seule section « Annonces » est prévue dans une phase ULTÉRIEURE — volontairement PAS construite
-  // ici (demande explicite de rester minimal pour cette tâche).
-  const dividendAnnouncementsRows = state.dividendAnnouncements.map(ann=>{
-    const co = companyById(ann.companyId);
-    const rollsLeft = Math.max(0, ann.payAtRoll - state.gameClock.rollCount);
-    return `<tr><td>${co?esc(co.name):'—'}</td><td class="money">${fmt(ann.amount)}</td><td>${rollsLeft}</td></tr>`;
-  }).join('');
-  const dividendAnnouncementsHtml = state.dividendAnnouncements.length>0
-    ? `<table><tr><th>Entreprise</th><th>Montant</th><th>Lancers restants avant versement</th></tr>${dividendAnnouncementsRows}</table>`
-    : '<div class="empty">Aucun dividende annoncé en attente.</div>';
+    return `<div>📢 ${ceo?esc(ceo.name):'—'} (${co?esc(co.name):'—'}) : ${ann.direction==='buy'?'achat':'vente'} de ${fmt(ann.amount)} — exécuté dans ${rollsLeft} lancer(s)</div>`;
+  });
+  const announcementBannerHtml = (dividendAnnouncementLines.length>0 || ceoAnnouncementLines.length>0)
+    ? `<div class="small" id="pfAnnouncementBanner" style="margin:2px 0 14px;">${[...dividendAnnouncementLines, ...ceoAnnouncementLines].join('')}</div>`
+    : '';
   // Section 129 (voir RESUME_ET_REGLES.md) — trading joueurs PHASE 2 (DESIGN_TRADING_JOUEURS.md, section
   // 3): 3e section « Mes positions à découvert », ajoutée aux deux sections Phase 1 ci-dessus sans les
   // modifier. Une ligne par companyId présent dans me.shortPositions (shares>epsilon — même convention de
@@ -1617,50 +1672,30 @@ function renderPortefeuilleTrading(me, company){
   // devenues fausses « les options viendront/restent pour une phase séparée » ci-dessus. C'est la DERNIÈRE
   // pièce du puzzle du trading joueurs — DESIGN_TRADING_JOUEURS.md est désormais entièrement implémenté
   // (comptant, short, bons, options) et netWorth()/la condition de victoire sont enfin COMPLÈTES.
-  // Éligibilité de la chaîne/de l'ouverture: MÊME filtre que modalBuySellShares/modalShortShares (IPO
-  // financée ET pas sa propre compagnie si CEO — voir activeCompanies/companyPendingIpoShares).
-  const optionEligible = activeCompanies().filter(c=>companyPendingIpoShares(c)<=0 && c.ceoId!==me.id);
-  // portefeuilleOptionsCompanyId: variable de MODULE (voir sa déclaration), retombe sur la 1re compagnie
-  // éligible si rien choisi encore ou si l'ancien choix ne correspond plus à aucune compagnie éligible.
-  if(portefeuilleOptionsCompanyId===null || !optionEligible.some(c=>c.id===portefeuilleOptionsCompanyId)){
-    portefeuilleOptionsCompanyId = optionEligible.length>0 ? optionEligible[0].id : null;
-  }
-  let chainHtml = '<div class="empty">Aucune entreprise disponible pour la chaîne d’options pour le moment.</div>';
-  let optionsCompanySelectorHtml = '';
-  if(optionEligible.length>0){
-    optionsCompanySelectorHtml = `<div style="margin-bottom:6px;"><label class="small" style="display:inline;margin:0;" for="pfOptionsCompanySelect">Entreprise</label><br><select id="pfOptionsCompanySelect">${optionEligible.map(c=>`<option value="${c.id}" ${c.id===portefeuilleOptionsCompanyId?' selected':''}>${companyOptionLabel(c)} — ${fmtPrice(c.stockPrice||0)}/part</option>`).join('')}</select></div>`;
-    const chainCo = companyById(portefeuilleOptionsCompanyId);
-    const chain = optionChainFor(chainCo);
-    const expiryHeaders = chain.expiries.map(e=>`<th>${e.semesters} sem.</th>`).join('');
-    const buildRows = (type)=>chain.strikes.map((strike,i)=>{
-      const cells = chain.expiries.map(e=>`<td class="money">${fmtPrice(optionPremiumFor(chainCo, type, strike, e.rollTarget))}</td>`).join('');
-      const pctLabel = `${OPTION_STRIKE_PCTS[i]>=0?'+':''}${(OPTION_STRIKE_PCTS[i]*100).toFixed(0)}%`;
-      return `<tr><td class="money">${fmtPrice(strike)} (${pctLabel})</td>${cells}</tr>`;
-    }).join('');
-    chainHtml = `
-    <div class="small" style="margin:6px 0 2px;">Chaîne — Calls (prix courant ${fmtPrice(chainCo.stockPrice||0)}/part)</div>
-    <table><tr><th>Strike</th>${expiryHeaders}</tr>${buildRows('call')}</table>
-    <div class="small" style="margin:10px 0 2px;">Chaîne — Puts</div>
-    <table><tr><th>Strike</th>${expiryHeaders}</tr>${buildRows('put')}</table>`;
-  }
+  // Section 146 (ALPHA test 2, voir RESUME_ET_REGLES.md) — item 1: la chaîne de primes (calls/puts, tous
+  // strikes × échéances) ET son sélecteur de compagnie ne sont PLUS construits ici — ils vivent désormais
+  // dans la modale dédiée modalOptionChain() (voir sa définition, et le bouton #openOptionChainBtn du menu
+  // ☰ Actions), pour libérer de la place visuelle dans la page tant qu'on n'a pas cliqué dessus.
   const myOptions = (me.optionPositions||[]).map(pos=>{
     const co = companyById(pos.companyId);
     return (co && pos.shares>1e-9) ? {co, pos} : null;
   }).filter(Boolean);
   const optionsRows = myOptions.map(({co,pos})=>{
     const premium = optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll);
-    const marketValue = pos.shares*premium;
+    const marketValue = optionNotional(pos.shares, premium);
     // P&L latent: pour une position LONGUE, un gain si la prime a MONTÉ depuis l'ouverture; pour une
     // position ÉCRITE, c'est l'inverse (le vendeur profite d'une prime qui a BAISSÉ — il pourrait racheter
-    // moins cher qu'il n'a encaissé).
-    const pnl = (pos.side==='long' ? (premium-pos.premiumAtOpen) : (pos.premiumAtOpen-premium)) * pos.shares;
+    // moins cher qu'il n'a encaissé). Section 145: passe par optionNotional() (×100, voir
+    // OPTION_CONTRACT_MULTIPLIER) — sinon ce P&L affiché ne balancerait plus avec le cash réellement reçu/
+    // payé à la clôture (closeOptionPosition, qui l'applique déjà).
+    const pnl = optionNotional(pos.shares, pos.side==='long' ? (premium-pos.premiumAtOpen) : (pos.premiumAtOpen-premium));
     const rollsLeft = Math.max(0, pos.expiryRoll - state.gameClock.rollCount);
     const typeLabel = pos.type==='call' ? 'CALL' : 'PUT';
     const sideLabel = pos.side==='long' ? 'Longue' : 'Écrite';
     return `<tr><td>${esc(co.name)}</td><td>${typeLabel}</td><td>${sideLabel}</td><td class="money">${fmtPrice(pos.strike)}</td><td>${rollsLeft}</td><td>${pos.shares.toFixed(4)}</td><td class="money">${fmtPrice(pos.premiumAtOpen)}</td><td class="money">${fmt(marketValue)}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td><td><button class="btn btn-ghost btn-sm" data-close-option="${pos.id}">Clôturer</button></td></tr>`;
   }).join('');
   const optionsPositionsHtml = myOptions.length>0
-    ? `<table><tr><th>Entreprise</th><th>Type</th><th>Côté</th><th>Strike</th><th>Lancers restants</th><th>Parts</th><th>Prime à l'ouverture</th><th>Valeur de marché</th><th>P&amp;L latent</th><th></th></tr>${optionsRows}</table>`
+    ? `<table><tr><th>Entreprise</th><th>Type</th><th>Côté</th><th>Strike</th><th>Lancers restants</th><th>Contrats</th><th>Prime à l'ouverture</th><th>Valeur de marché</th><th>P&amp;L latent</th><th></th></tr>${optionsRows}</table>`
     : '<div class="empty">Aucune position d’option pour le moment.</div>';
 
   // Section 136 — point 6: graphique comparatif du cours entre entreprises. portefeuilleCompareCompanyIds
@@ -1727,61 +1762,109 @@ function renderPortefeuilleTrading(me, company){
   // contenu, PAS en fusionnant son contenu dans un autre onglet. Clés PRÉFIXÉES `pf-` (aucune collision
   // possible avec celles de Mon Entreprise: identite/terrains/casesHostiles/maisons/produits). Toutes
   // OUVERTES par défaut (entrepriseAccordionOpen, inchangée) — même convention que Mon Entreprise, rien de
-  // caché par surprise à un nouvel utilisateur. La chaîne d'options ET la table « Mes positions d'options »
-  // sont regroupées dans le MÊME accordéon `pf-options` (même instrument, logiquement une seule chose) —
-  // l'ancien sous-titre séparé « Mes positions d'options » devient un simple `<div class="small">` interne.
+  // caché par surprise à un nouvel utilisateur. (Note section 146, ALPHA test 2: la chaîne d'options a
+  // depuis été déplacée hors de pf-options, dans sa propre modale modalOptionChain() — voir plus bas.)
   // IMPORTANT: le binding qui persiste l'état ouvert/fermé (`toggle` sur <details class="entreprise-
   // accordion">) doit être câblé aussi sous bindTabEvents(t==='portefeuille') — voir plus bas, MÊME
   // sélecteur/logique que sous t==='entreprise' — sinon ces accordéons se rouvriraient tout seuls à chaque
   // render() (polling storage.get très fréquent).
-  return `
-  ${entrepriseAccordion('pf-comparer', 'Comparer le cours entre entreprises', `
-  <div class="small" style="margin-bottom:8px;">Superposez le cours de plusieurs entreprises sur un même graphique (prix par part, historique complet).</div>
-  <div style="margin-bottom:6px;">${compareCheckboxesHtml}</div>
-  ${compareChartHtml}`)}
-  ${entrepriseAccordion('pf-secteur', 'Répartition sectorielle de mon portefeuille', `
-  <div class="small" style="margin-bottom:8px;">Proportion de la valeur de marché de vos positions boursières LONGUES (actions détenues au comptant — pas les positions à découvert ni les options), groupées par type d'entreprise, plus votre solde de bons gouvernementaux.</div>
-  ${sectorMixHtml}`)}
-  ${entrepriseAccordion('pf-annonces', '📢 Annonces', `
-  <div class="small" style="margin-bottom:8px;">Visible par TOUS les joueurs (transparence).</div>
-  <div class="section-title" style="margin-top:14px;font-size:0.95em;">Dividendes annoncés, en attente de versement</div>
-  <div class="small" style="margin-bottom:8px;">Un dividende annoncé est immédiatement immobilisé (sorti de la trésorerie de l'entreprise) mais versé seulement au PROCHAIN semestre, au prorata des parts détenues AU MOMENT DE L'ANNONCE (voir 💎 Annoncer un dividende, Mon Entreprise).</div>
-  ${dividendAnnouncementsHtml}
-  <div class="section-title" style="margin-top:14px;font-size:0.95em;">Annonces CEO — achat/vente futur de parts</div>
-  <div class="small" style="margin-bottom:8px;">Un CEO ne peut pas trader directement les parts de sa propre entreprise, mais peut ANNONCER publiquement une intention d'achat/vente, exécutée automatiquement 1 an plus tard au prix courant à ce moment-là. Irrévocable : aucune option d'annulation.</div>
-  ${announcementsHtml}`)}
-  ${(() => {
+  // Section 149 (voir RESUME_ET_REGLES.md) — 4 demandes explicites de l'utilisateur, en cours de session:
+  // (1) l'historique de transactions doit être COMPLÈTEMENT en bas de l'onglet — il est donc RETIRÉ d'ici
+  // (voir renderPortefeuilleHistory(), fonction séparée) et rendu par renderPortefeuille() en TOUT DERNIER,
+  // APRÈS renderPortefeuilleFinancials() (qui, avant cette section, s'affichait ENCORE après l'historique
+  // — l'historique n'était donc pas vraiment tout en bas).
+  // (3) « Les instruments de trading devrait se trouver avec les positions boursières » — le bloc
+  // « Instruments de trading » (short/bons/options), qui s'affichait auparavant APRÈS les graphiques
+  // comparer/secteur, est désormais déplacé JUSTE APRÈS « Mes positions boursières » (pf-comptant) — les
+  // deux sections qui décrivent « ce que je possède » restent groupées, avant les graphiques de
+  // comparaison/répartition qui, eux, ne portent pas directement sur les positions détenues.
+  const instrumentsTradingHtml = (() => {
     // Section 141 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur (« Dans instrument de
     // trading ne pas afficher les sections qui sont vides par exemple si je n'ai pas de position à
     // découvert, ne pas afficher la section Mes positions à découvert »). Chaque accordéon d'instrument
     // n'est affiché que si le joueur a une exposition RÉELLE à cet instrument — jamais un tableau vide.
     // « Vide » par instrument: comptant/short/options = aucune position détenue (myPositions/myShorts/
-    // myOptions) ; options compte aussi une chaîne à parcourir (optionEligible) comme « non vide » même
-    // sans position ouverte, puisque la chaîne de primes est un outil de décision, pas juste une liste de
-    // positions ; bons = solde quasi nul (me.bondBalance), cohérent avec le même principe même si ce
+    // myOptions) ; bons = solde quasi nul (me.bondBalance), cohérent avec le même principe même si ce
     // n'est pas une LISTE au sens strict. Aucune de ces conditions ne touche au menu ☰ Actions (toujours
     // visible tout en haut, voir renderPortefeuilleTopBar) — l'utilisateur peut donc toujours OUVRIR une
     // nouvelle position sur un instrument dont la section est actuellement masquée faute d'exposition.
-    const showComptant = myPositions.length>0;
+    // Section 146 (ALPHA test 2) — item 1: « Mes positions boursières » (pf-comptant) est RETIRÉE d'ici et
+    // promue en section à part entière juste au-dessus (voir plus bas) ; showOptions ne dépend plus de
+    // optionEligible (la chaîne, elle, est toujours accessible via le bouton ☰ Actions même quand cette
+    // section est masquée faute de position ouverte).
     const showShort = myShorts.length>0;
     const showBons = (me.bondBalance||0) > 1e-9;
-    const showOptions = optionEligible.length>0 || myOptions.length>0;
+    const showOptions = myOptions.length>0;
     const blocks = [
-      showComptant ? entrepriseAccordion('pf-comptant', 'Mes positions boursières', positionsHtml) : '',
       showShort ? entrepriseAccordion('pf-short', 'Mes positions à découvert', shortsHtml) : '',
       showBons ? entrepriseAccordion('pf-bons', 'Mes bons gouvernementaux', bondsHtml) : '',
       showOptions ? entrepriseAccordion('pf-options', 'Options (PUT/CALL)', `
-      ${optionsCompanySelectorHtml}
-      ${chainHtml}
-      <div class="small" style="font-weight:600;margin-top:10px;">Mes positions</div>
+      <div class="small" style="margin-bottom:8px;">Consultez la chaîne de primes (calls/puts) depuis le menu ☰ Actions ci-dessus — « 📊 Voir la chaîne d'options ».</div>
       ${optionsPositionsHtml}`) : '',
     ];
-    if(!showComptant && !showShort && !showBons && !showOptions){
+    if(!showShort && !showBons && !showOptions){
       return `<div class="section-title" style="margin-top:16px;">Instruments de trading</div>
       <div class="empty">Aucune position de trading pour le moment — utilisez le menu ☰ Actions ci-dessus pour en ouvrir une.</div>`;
     }
     return `<div class="section-title" style="margin-top:16px;">Instruments de trading</div>${blocks.join('')}`;
-  })()}`;
+  })();
+  return `
+  ${announcementBannerHtml}
+  ${(() => {
+    // Section 146 (ALPHA test 2, voir RESUME_ET_REGLES.md) — item 3, demande explicite de l'utilisateur:
+    // « Mettre les positions boursières dans la section portefeuille » — « Mes positions boursières »
+    // (pf-comptant) était techniquement déjà dans l'onglet Portefeuille, mais NOYÉE tout en bas, repliée
+    // dans le regroupement générique « Instruments de trading » aux côtés de short/bons/options.
+    // Interprétation retenue: la sortir de ce regroupement et lui donner sa propre place bien en évidence,
+    // juste sous le bandeau d'annonces (item 4) et AVANT même les graphiques — c'est l'information la plus
+    // directement utile (« qu'est-ce que je possède, et ça vaut combien »). Même condition d'affichage
+    // qu'avant (masquée si aucune position — jamais un tableau vide).
+    return myPositions.length>0 ? entrepriseAccordion('pf-comptant', 'Mes positions boursières', positionsHtml) : '';
+  })()}
+  ${instrumentsTradingHtml}
+  <!-- Section 146 (ALPHA test 2, voir RESUME_ET_REGLES.md) — item 2, demande explicite de l'utilisateur:
+  « Mettre le graphique sectoriel à côté du graphique d'évolution des cours » — pf-comparer et pf-secteur,
+  auparavant empilés verticalement l'un sous l'autre, sont mis côte à côte via un simple flex row.
+  Section 149 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: la répartition 50/50 devient
+  70% pour « Comparer le cours » / 30% pour « Répartition sectorielle » — flex-basis:0% (via le raccourci
+  flex:0.7/flex:0.3, qui somme à 1) fait grandir chaque colonne proportionnellement à ce ratio plutôt
+  que selon son contenu, donnant EXACTEMENT 70%/30% de la largeur disponible (moins le gap). flex-wrap
+  laisse les deux accordéons retomber en pile sur un écran étroit (mobile) plutôt que de les écraser. -->
+  <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+    <div style="flex:0.7;min-width:280px;">
+    ${entrepriseAccordion('pf-comparer', 'Comparer le cours entre entreprises', `
+    <div class="small" style="margin-bottom:8px;">Superposez le cours de plusieurs entreprises sur un même graphique (prix par part, historique complet).</div>
+    <div style="margin-bottom:6px;">${compareCheckboxesHtml}</div>
+    ${compareChartHtml}`)}
+    </div>
+    <div style="flex:0.3;min-width:220px;">
+    ${entrepriseAccordion('pf-secteur', 'Répartition sectorielle de mon portefeuille', `
+    <div class="small" style="margin-bottom:8px;">Proportion de la valeur de marché de vos positions boursières LONGUES (actions détenues au comptant — pas les positions à découvert ni les options), groupées par type d'entreprise, plus votre solde de bons gouvernementaux.</div>
+    ${sectorMixHtml}`)}
+    </div>
+  </div>`;
+}
+/* Section 149 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Historique des
+   transactions dans Portefeuille devrait être complètement en bas ». Auparavant construit et retourné à
+   l'intérieur de renderPortefeuilleTrading() (donc affiché AVANT renderPortefeuilleFinancials(), pas
+   « complètement en bas »): extrait ici en fonction séparée, appelée par renderPortefeuille() en TOUT
+   DERNIER, après renderPortefeuilleFinancials(). Contenu et calcul STRICTEMENT inchangés (section 145) —
+   seul l'emplacement/le point d'appel changent. */
+function renderPortefeuilleHistory(me){
+  const belongsToPlayer = label => label===me.name || label.indexOf(me.name+' (')===0;
+  const historyRows = state.log.filter(l=>l.entries && l.entries.length && l.entries.some(e=>belongsToPlayer(e.label)));
+  return entrepriseAccordion('pf-historique', `Historique de ${esc(me.name)}`, `
+  <div class="loglist">
+    ${historyRows.length===0?'<div class="empty">Aucune transaction enregistrée pour vous pour l’instant.</div>':''}
+    ${historyRows.map(l=>`
+      <div class="logrow">
+        <div><span class="logtime">${esc(l.ts)}</span> — <b>${esc(l.text)}</b></div>
+        <table style="margin-top:4px;">
+          ${l.entries.map(e=>`<tr><td style="padding:2px 8px;">${esc(e.label)}</td><td class="money" style="padding:2px 8px;color:${e.amount<0?'var(--brick)':'#047857'};">${e.amount>=0?'+':''}${e.amount.toFixed(2)}</td></tr>`).join('')}
+        </table>
+      </div>`).join('')}
+  </div>
+  `);
 }
 /* Section 122 (2026-09-02, voir RESUME_ET_REGLES.md): les 3 états financiers par compagnie (État des
    résultats / Bilan / État des flux de trésorerie), une COLONNE PAR COMPAGNIE ACTIVE, comparés côte à côte
@@ -1825,13 +1908,22 @@ function renderPortefeuilleFinancials(){
   // période (#pfSemesterSelect) reste volontairement VISIBLE EN DEHORS/AU-DESSUS de l'accordéon — demande
   // explicite: changer de période doit rester possible sans avoir à déplier le reste.
   const selectorHtml = `
-  <div style="margin-top:26px;margin-bottom:2px;"><label class="small" style="display:inline;margin:0;" for="pfSemesterSelect">Période</label><br><select id="pfSemesterSelect">${periodOptions}</select></div>
+  <div style="margin-bottom:2px;"><label class="small" style="display:inline;margin:0;" for="pfSemesterSelect">Période</label><br><select id="pfSemesterSelect">${periodOptions}</select></div>
   ${partialWarningHtml}`;
+  // Section 149 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Avoir une séparation
+  // plus marquée pour les états financiers pour que ça sorte du reste. » L'ensemble de cette section
+  // (sélecteur de période + accordéon) est désormais enveloppé dans une « carte » visuellement distincte —
+  // fond plein, bordure dorée épaisse, coins arrondis, ombre douce — même langage visuel que `.card`/le
+  // panneau du menu ☰ Actions (`ent-actions-panel`, voir actionsMenuStyleBlock) déjà utilisés ailleurs dans
+  // l'app pour un bloc mis en évidence, plutôt qu'une simple suite de titres de section comme le reste de
+  // l'onglet Portefeuille.
+  const financialsCardOpen = `<div style="margin-top:30px;padding:18px 20px 6px;background:var(--paper-solid);border:2px solid var(--gold);border-radius:var(--radius-lg);box-shadow:var(--shadow-soft);">`;
+  const financialsCardClose = `</div>`;
 
   if(companies.length===0){
     const bodyHtml = '<div class="empty">Aucune entreprise fondée pour l’instant.</div>';
-    return `${selectorHtml}
-  ${entrepriseAccordion('pf-etats-financiers', 'États financiers par entreprise', bodyHtml)}`;
+    return `${financialsCardOpen}${selectorHtml}
+  ${entrepriseAccordion('pf-etats-financiers', 'États financiers par entreprise', bodyHtml)}${financialsCardClose}`;
   }
 
   const statements = companies.map(c=>({
@@ -1941,8 +2033,8 @@ function renderPortefeuilleFinancials(){
   </table>
   </div>`;
 
-  return `${selectorHtml}
-  ${entrepriseAccordion('pf-etats-financiers', 'États financiers par entreprise', bodyHtml)}`;
+  return `${financialsCardOpen}${selectorHtml}
+  ${entrepriseAccordion('pf-etats-financiers', 'États financiers par entreprise', bodyHtml)}${financialsCardClose}`;
 }
 /* Onglet Entreprise — objectif final de l'étape 5/8, Bloc 8 (2026-09-01). Contenu volontairement
    sommaire à l'étape 4 (trésorerie + actionnariat seulement); enrichi ici avec: valeur comptable/
@@ -2054,13 +2146,13 @@ function renderEntreprise(){
     const lotProps = merged ? lotProperties(p.groupMergeId) : [p];
     const sh = propertyOwnedShare(host, company.id);
     const iv = merged ? intrinsicValueLot(p.groupMergeId) : intrinsicValue(p);
-    // Section 99 (voir RESUME_ET_REGLES.md): demande explicite de l'utilisateur — la colonne affiche
-    // désormais le loyer actuel ET la part de ce loyer qui revient réellement à l'entreprise (loyer actuel
-    // × sa part de propriété `sh`, en %). `rentValues` garde les montants bruts (avant `fmt`) pour pouvoir
-    // appliquer le même ratio à CHAQUE valeur d'un lot regroupé (qui peut contenir plusieurs terrains,
-    // d'où le join(' / ') déjà existant, inchangé pour la ligne du haut).
+    // Section 99 (voir RESUME_ET_REGLES.md): la colonne affichait le loyer actuel ET la part de ce loyer
+    // qui revient réellement à l'entreprise. Section 148 (2026-09-02, voir RESUME_ET_REGLES.md): demande
+    // explicite de l'utilisateur — ne garder QUE la part réelle (`rentShareLabel`), retirer la ligne du
+    // loyer total (`rentLabel`, plus affichée mais le calcul reste disponible si besoin ailleurs).
+    // `rentValues` garde les montants bruts (avant `fmt`) pour pouvoir appliquer le même ratio à CHAQUE
+    // valeur d'un lot regroupé (qui peut contenir plusieurs terrains, d'où le join(' / ')).
     const rentValues = lotProps.map(x=>x.type==='color' ? colorRentAt(x, x.houses) : expectedRentValue(x));
-    const rentLabel = rentValues.map(fmt).join(' / ');
     const rentShareLabel = rentValues.map(v=>fmt(v*sh/100)).join(' / ');
     const mortgaged = (host.mortgages||[]).some(m=>m.companyId===company.id);
     // Section 98 (voir RESUME_ET_REGLES.md): demande explicite de l'utilisateur — un lot regroupé
@@ -2076,7 +2168,7 @@ function renderEntreprise(){
     // EXACTEMENT les mêmes modales/fonctions métier qu'avant (modalSellShare/modalSellMergedShare/
     // modalMortgage/modalMortgageLot/repayMortgage/repayMortgageLot) — aucune logique réécrite. La
     // dernière colonne (autrefois ces deux boutons) n'a donc plus rien à afficher pour un terrain/lot.
-    return `<tr><td>${label}</td><td>${sh}%</td><td class="money">${fmt(iv!=null?iv:p.basePrice)}</td><td class="money">${rentLabel}<br><b>${rentShareLabel}</b></td><td class="small">${mortgaged?'🏦 hypothéquée':''}</td><td></td></tr>`;
+    return `<tr><td>${label}</td><td>${sh}%</td><td class="money">${fmt(iv!=null?iv:p.basePrice)}</td><td class="money">${rentShareLabel}</td><td class="small">${mortgaged?'🏦 hypothéquée':''}</td><td></td></tr>`;
   }).join('');
 
   // Section 112 (2026-09-01, voir RESUME_ET_REGLES.md — retrait de l'onglet Résumé): bloc « Cases
@@ -2092,15 +2184,31 @@ function renderEntreprise(){
   // settlePropertyRent, qui exclut déjà ces parts inconditionnellement lors d'un atterrissage réel) —
   // l'ancien appel sans ce flag sous-estimait cette exclusion et pouvait afficher un montant hostile trop
   // élevé pour un terrain partiellement détenu par une entreprise enquêtée.
-  const hostileProps = state.properties
+  // Section 148 (voir RESUME_ET_REGLES.md): demande explicite de l'utilisateur — au lieu d'une ligne par
+  // terrain individuel, ce tableau regroupe désormais par GROUPE DE COULEUR (ex. « Rose »), avec dans la
+  // colonne coût les loyers de CHAQUE terrain hostile du groupe, un par un, dans l'ordre du plateau (« les
+  // 3 montants de loyers XX/YY/TT »), joints par « / » — même convention de jointure que `rentLabel`/
+  // `rentShareLabel` dans « Terrains possédés » juste au-dessus. Un groupe n'apparaît que s'il contient AU
+  // MOINS un terrain hostile (payableRent>0); un terrain du même groupe qui n'est pas hostile (non possédé,
+  // possédé par l'entreprise elle-même, ou hypothéqué) n'ajoute simplement aucun montant à sa ligne. Calculé
+  // en ordre du plateau (state.properties) PUIS les groupes eux-mêmes sont triés par exposition maximale
+  // décroissante — le groupe le plus risqué en premier, même principe que l'ancien tri par terrain.
+  const hostileRaw = state.properties
     .map(p=>({p, rent: payableRent(p, company.id, true)}))
-    .filter(x=>x.rent>0.0001)
-    .sort((a,b)=>b.rent-a.rent);
+    .filter(x=>x.rent>0.0001);
   const hostileTaxes = TAX_SQUARES
     .map(t=>({t, cost: taxSquareCost(t.pos, company.id)}))
     .filter(x=>x.cost>0.0001);
-  const hostileRows = hostileProps.map(({p,rent})=>
-    `<tr><td>${propertyGroupBadge(p)}</td><td class="money">${fmt(rent)}</td></tr>`).join('')
+  const hostileGroupsMap = new Map();
+  hostileRaw.forEach(({p, rent})=>{
+    if(!hostileGroupsMap.has(p.group)) hostileGroupsMap.set(p.group, []);
+    hostileGroupsMap.get(p.group).push(rent);
+  });
+  const hostileGroupRows = Array.from(hostileGroupsMap.entries())
+    .sort((a,b)=>Math.max(...b[1])-Math.max(...a[1]))
+    .map(([g,rents])=>`<tr><td>${groupColorBadge(g, GROUPS[g].label)}</td><td class="money">${rents.map(fmt).join(' / ')}</td></tr>`)
+    .join('');
+  const hostileRows = hostileGroupRows
     + hostileTaxes.map(({t,cost})=>
     `<tr><td>${esc(t.label)}</td><td class="money">${fmt(cost)}</td></tr>`).join('');
 
@@ -2547,15 +2655,25 @@ function renderEntreprise(){
       <td>${canTakeOver?`<button class="btn btn-gold btn-sm" data-takeover-live-sub="${p.id}">Devenir l'assureur</button>`:''}</td>
     </tr>`;
   };
+  // Section 148 (voir RESUME_ET_REGLES.md): capture l'état vide de « Devenir l'assureur » à part —
+  // nécessaire pour `produitsFinanciersEmpty` ci-dessous, qui doit savoir si CE bloc (le seul qui affichait
+  // encore quelque chose même quand `allProductsEmpty` est vrai) a lui aussi zéro contrat à reprendre.
+  const becomeInsurerEmpty = (bankInsuredProps.length+bankTaxInsurances.length+bankSubInsuredProps.length)===0;
   const becomeInsurerHtml = `
   <div class="small" style="font-weight:600;margin-top:14px;">Devenir l'assureur</div>
-  ${(bankInsuredProps.length+bankTaxInsurances.length+bankSubInsuredProps.length)===0?'<div class="empty">Aucun contrat actuellement assuré par la banque pour le moment.</div>':`
+  ${becomeInsurerEmpty?'<div class="empty">Aucun contrat actuellement assuré par la banque pour le moment.</div>':`
   <table>
     <tr><th>Couverture</th><th>Assuré</th><th>Prime d'origine</th><th>Prix de reprise actuel</th><th></th></tr>
     ${bankInsuredProps.map(liveTakeoverPropRow).join('')}
     ${bankTaxInsurances.map(liveTakeoverTaxRow).join('')}
     ${bankSubInsuredProps.map(liveTakeoverSubRow).join('')}
   </table>`}`;
+  // Point 6 (voir RESUME_ET_REGLES.md, section 148): demande explicite de l'utilisateur — « Masquer la
+  // section produits financiers dans mon entreprise si rien n'est affiché ». Jusqu'ici l'accordéon ne
+  // pouvait JAMAIS être totalement vide: `becomeInsurerHtml` affichait toujours au moins son titre + un
+  // message de repli, même quand les 7 « produits » de `allProductsEmpty` étaient tous vides. Même
+  // convention que la section 141 (ternaire tout l'appel `entrepriseAccordion(...)`, pas un vide interne).
+  const produitsFinanciersEmpty = allProductsEmpty && becomeInsurerEmpty;
   // « Marchés » (ex-2e section de l'onglet fusionné) — swaps de loyers + accords de compensation.
   // Section 100 (2026-09-01, voir RESUME_ET_REGLES.md): le FORMULAIRE de proposition (sélecteurs terrain/
   // entreprise partenaire/plafonds/années, bouton de création) est retiré d'ici — demande explicite de
@@ -2744,14 +2862,14 @@ function renderEntreprise(){
 
   ${entrepriseAccordion('terrains', `Terrains possédés (valeur totale: ${fmt(companyRealEstateValue(company))})`, `
   <table>
-    <tr><th>Terrain</th><th>Part</th><th>Valeur intrinsèque</th><th>Loyer actuel/Ma part</th><th>Hypothèque</th><th></th></tr>
+    <tr><th>Terrain</th><th>Part</th><th>Valeur intrinsèque</th><th>Ma part de loyer</th><th>Hypothèque</th><th></th></tr>
     ${(ownedProps.length===0 && !etfRowsForOwnedTable)?`<tr><td class="empty" colspan="6">Aucun terrain détenu.</td></tr>`:ownedPropsRows+etfRowsForOwnedTable}
   </table>
   `)}
 
   ${entrepriseAccordion('casesHostiles', `Cases hostiles (si vous y tombiez maintenant)`, `
   <table><tr><th>Case</th><th>Coût si vous y tombez</th></tr>
-    ${(hostileProps.length===0 && hostileTaxes.length===0)?`<tr><td class="empty" colspan="2">Aucune case hostile depuis votre situation actuelle.</td></tr>`:hostileRows}
+    ${(hostileGroupsMap.size===0 && hostileTaxes.length===0)?`<tr><td class="empty" colspan="2">Aucune case hostile depuis votre situation actuelle.</td></tr>`:hostileRows}
   </table>
   `)}
 
@@ -2762,7 +2880,7 @@ function renderEntreprise(){
   ${houseBidHintHtml}
   `)}
 
-  ${entrepriseAccordion('produits', `Produits financiers`, `
+  ${produitsFinanciersEmpty ? '' : entrepriseAccordion('produits', `Produits financiers`, `
   ${(f.insurance||f.subInsurance)?`
   ${(myInsuredContracts.length>0 || subInsuredMine.length>0)?`
   <div class="small" style="font-weight:600;">Assurances — en tant qu'assurée</div>
@@ -2914,10 +3032,13 @@ function renderCompanySetupGate(me){
   app.innerHTML = `
   <div class="setup-grid">
     <div class="card pad" style="max-width:560px;margin:40px auto;">
-      <div class="small" style="margin-bottom:10px;">Vous êtes:
-        <select id="cWhoami" style="width:auto;display:inline-block;padding:4px 8px;">
-          ${state.players.map(p=>`<option value="${p.id}" ${p.id===me.id?'selected':''}>${esc(p.name)}</option>`).join('')}
-        </select>
+      <div class="small" style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <span>Vous êtes:
+          <select id="cWhoami" style="width:auto;display:inline-block;padding:4px 8px;">
+            ${state.players.map(p=>`<option value="${p.id}" ${p.id===me.id?'selected':''}>${esc(p.name)}</option>`).join('')}
+          </select>
+        </span>
+        <span style="cursor:pointer;text-decoration:underline;" id="leaveGameSetup">quitter la partie</span>
       </div>
       <div class="section-title">Bienvenue, ${esc(me.name)} — fondez votre entreprise</div>
       <div class="small" style="margin-bottom:14px;">Avant d'accéder à la partie, vous devez créer l'entreprise dont vous serez le CEO. Vous en achèterez automatiquement ${ceoShares}/${totalShares} parts (50%) pour un montant FIXE — le même pour tous les joueurs, quel que soit l'ordre d'arrivée — afin que toutes les entreprises démarrent avec la même valorisation. Cet argent devient la trésorerie de départ de l'entreprise. Le reste des parts sera offert aux autres joueurs lors de l'introduction en bourse (IPO), plus tard dans la partie.</div>
@@ -2941,6 +3062,12 @@ function renderCompanySetupGate(me){
     await storageSet('mychar:'+gameCode, myPlayerId, false);
     render();
   });
+  // Section 150 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « un [quitter la
+  // partie] dans la création d'entreprise » — cet écran (avant la fondation de l'entreprise) n'affiche
+  // pas l'en-tête normal de render() (voir renderCompanySetupGate ci-dessus, appelée à la place), donc
+  // pas non plus le lien « quitter la partie » habituel — ajouté ici séparément via quitGame().
+  const leaveBtn = document.getElementById('leaveGameSetup');
+  if(leaveBtn) leaveBtn.addEventListener('click', quitGame);
   document.getElementById('cSubmit').addEventListener('click', async ()=>{
     const name = document.getElementById('cName').value;
     const desc = document.getElementById('cDesc').value;
@@ -3288,7 +3415,10 @@ function netWorth(player){
       const co = companyById(pos.companyId);
       if(!co || !(pos.shares>0)) return;
       const premium = optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll);
-      total += (pos.side==='long' ? 1 : -1) * pos.shares * premium;
+      // Section 145: optionNotional() (×100, levier 100X — voir OPTION_CONTRACT_MULTIPLIER) — sinon
+      // netWorth() sous-évalue 100× la valeur de marché réelle des positions d'options, ce qui fausserait
+      // à la fois la condition de victoire et le déclenchement des appels de marge (enforceMarginCalls).
+      total += (pos.side==='long' ? 1 : -1) * optionNotional(pos.shares, premium);
     });
   }
   return total;
@@ -3459,11 +3589,14 @@ function etfDutchStartRound(tranche){
 /* Valeur courante (pour l'ensemble du fonds) d'une manche Dutch, à l'instant `nowMs` (par défaut
    maintenant). Descend linéairement de startValue à 0 sur durationMs, puis reste clouée à 0
    indéfiniment (toujours réclamable, sans expiration automatique) tant que personne n'a cliqué. Une
-   manche déjà remportée ('won') retourne son prix GELÉ au moment du clic gagnant, pas le prix courant. */
-function etfDutchCurrentValue(dutch, nowMs){
+   manche déjà remportée ('won') retourne son prix GELÉ au moment du clic gagnant, pas le prix courant.
+   Section 145: `elapsed` vient désormais de etfDutchLocalElapsed() (ancrage local par appareil), plus
+   jamais d'une comparaison directe à dutch.startedAt (voir commentaire sur etfDutchLocalAnchors) — d'où
+   la signature élargie à (etf, tranche, ...) plutôt que (dutch, ...) seul. */
+function etfDutchCurrentValue(etf, tranche, nowMs){
+  const dutch = tranche.dutch;
   if(dutch.status!=='running') return dutch.frozenValue!=null ? dutch.frozenValue : 0;
-  nowMs = nowMs===undefined ? Date.now() : nowMs;
-  const elapsed = Math.max(0, nowMs - dutch.startedAt);
+  const elapsed = etfDutchLocalElapsed(etf, tranche, dutch, nowMs);
   const frac = Math.min(1, elapsed/dutch.durationMs);
   return Math.max(0, dutch.startValue * (1-frac));
 }
@@ -3488,7 +3621,7 @@ async function claimEtfDutchAuction(etfId, companyId){
     render();
     return;
   }
-  const value = etfDutchCurrentValue(tranche.dutch);
+  const value = etfDutchCurrentValue(etf, tranche);
   tranche.dutch.status = 'won';
   tranche.dutch.winnerId = companyId; // companyId (Étape 5/8, Bloc 4) — l'entreprise, pas le joueur, remporte la manche
   tranche.dutch.frozenValue = value;
@@ -3658,6 +3791,10 @@ function visibleTabs(){
   // partie, centralisant les commandes et paramètres d'administration auparavant dispersés dans
   // d'autres onglets (voir renderAdmin) — demande explicite de l'utilisateur.
   if(myPlayerId===state.creatorId) tabs.push('admin');
+  // Section 147 (voir RESUME_ET_REGLES.md) — nouvel onglet Simulation (outil d'équilibrage du moteur
+  // boursier), réservé au créateur de la partie exactement comme 'admin' juste au-dessus (même condition,
+  // même raison: outil de test/calibration, pas une fonctionnalité de jeu pour les joueurs).
+  if(myPlayerId===state.creatorId) tabs.push('simulation');
   // Onglet 'banque' retiré complètement (voir RESUME_ET_REGLES.md section 26) — demande explicite de
   // l'utilisateur (« Onglet BANQUE va pouvoir être retiré complètement »). Son contenu (classement des
   // joueurs, marché des subventions d'avance, prêts) avait été relogé dans renderAdmin() — retiré à son
@@ -3790,6 +3927,20 @@ function renderTicker(items){
   el.innerHTML = doubled || '<span class="ticker-item">Aucune donnée pour l’instant.</span>';
 }
 
+/* Section 150 (voir RESUME_ET_REGLES.md) — factorisation de « quitter la partie » (jusqu'ici uniquement
+   câblée dans l'en-tête de render(), voir plus bas), pour la réutiliser aussi en mode spectateur et sur
+   l'écran de création d'entreprise (demande explicite de l'utilisateur: « Ajouter un quitter la partie
+   dans le mode spectateur et un dans la création d'entreprise »). Comportement INCHANGÉ (section 135):
+   réinitialise seulement l'état CLIENT local — la partie elle-même n'est ni supprimée ni quittée côté
+   serveur, le même code permet toujours de la rejoindre ensuite. */
+async function quitGame(){
+  if(!confirm('Quitter la partie ? Vous pourrez la rejoindre à nouveau avec le même code.')) return;
+  if(pollTimer) clearInterval(pollTimer);
+  isSpectator = false;
+  await storageSet('lastcode', '', false);
+  await storageSet('lastspectator', '', false);
+  gameCode=null; state=null; myPlayerId=null; render();
+}
 function render(){
   updateStockTicker();
   if(!gameCode || !state){ renderSetup(); return; }
@@ -3852,23 +4003,14 @@ function render(){
     await storageSet('mychar:'+gameCode, myPlayerId, false);
     render();
   });
-  document.getElementById('leaveGame').addEventListener('click', async ()=>{
-    // Section 135 (voir RESUME_ET_REGLES.md): confirmation avant de quitter — demande explicite de
-    // l'utilisateur. Le handler ne fait que réinitialiser l'état CLIENT local (gameCode/state/myPlayerId,
-    // voir ci-dessous) — la partie elle-même n'est ni supprimée ni quittée côté serveur, donc le même code
-    // permet toujours de la rejoindre ensuite (message du confirm() reflète ce comportement réel).
-    if(!confirm('Quitter la partie ? Vous pourrez la rejoindre à nouveau avec le même code.')) return;
-    if(pollTimer) clearInterval(pollTimer);
-    await storageSet('lastcode', '', false);
-    gameCode=null; state=null; myPlayerId=null; render();
-  });
+  document.getElementById('leaveGame').addEventListener('click', quitGame);
   document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click', ()=>{ activeTab = t.dataset.tab; render(); }));
   bindTabEvents(activeTab);
 }
 
 function tabLabel(t){
   // 'resume' retiré (section 112, voir RESUME_ET_REGLES.md) — onglet Résumé supprimé entièrement.
-  return {portefeuille:'Portefeuille', entreprise:'Mon Entreprise', admin:'Administration', etf:'ETF', lexique:'Lexique'}[t];
+  return {portefeuille:'Portefeuille', entreprise:'Mon Entreprise', admin:'Administration', simulation:'Simulation', etf:'ETF', lexique:'Lexique'}[t];
 }
 
 function renderTab(t){
@@ -3877,6 +4019,7 @@ function renderTab(t){
   if(t==='portefeuille') return renderPortefeuille();
   if(t==='entreprise') return renderEntreprise();
   if(t==='admin') return renderAdmin();
+  if(t==='simulation') return renderSimulation(); // section 147, voir RESUME_ET_REGLES.md
   if(t==='etf') return renderEtf();
   if(t==='lexique') return renderLexique();
 }
@@ -4007,6 +4150,14 @@ function renderAdmin(){
     retirés (n'existaient que pour l'ancienne Bourse). -->
     ${f.mortgage?`<button class="btn ${state.stockMarket.tradingOpen?'btn-brick':'btn-ghost'} btn-sm" id="toggleStock">${state.stockMarket.tradingOpen?'Fermer la fenêtre de transactions annuelle':'Ouvrir la fenêtre de transactions annuelle'}</button>`:''}
   </div>
+  <!-- Section 146 (ALPHA test 2, voir RESUME_ET_REGLES.md) — item 5: bouton spécial pour forcer le
+  lancer de dés pour toutes les entreprises même si certaines n'ont pas cliqué « Prêt » (voir le binding
+  #forceNextTurnBtn sous bindTabEvents t==='admin', et performRollForAllCompanies()/
+  checkAllCompaniesReady() plus haut dans le fichier pour le mécanisme normal qu'il court-circuite). -->
+  <div class="row" style="gap:14px;flex-wrap:wrap;margin-bottom:6px;">
+    <button class="btn btn-brick btn-sm" id="forceNextTurnBtn">⏩ Forcer le prochain tour (même si pas tous prêts)</button>
+  </div>
+  <div class="small" style="margin-bottom:14px;">Déclenche immédiatement le lancer de dés pour toutes les entreprises actives non enquêtées par l'AMF, même si certains CEO n'ont pas encore cliqué sur « Prêt » dans leur onglet Entreprise (utile si un CEO est absent/injoignable). Réinitialise ensuite le statut « Prêt » de toutes les entreprises pour le tour suivant, exactement comme un lancer normal déclenché par le dernier clic « Prêt ».</div>
   <div class="row" style="gap:14px;flex-wrap:wrap;margin-bottom:6px;">
     <button class="btn btn-gold btn-sm" id="adjustBank">Ajuster la banque</button>
     <button class="btn btn-gold btn-sm" id="openShareSwap">Échanger des parts entre entreprises</button>
@@ -4169,7 +4320,13 @@ function renderAdmin(){
   const mergeGroupAdminSection = (()=>{
     const byGroup = {};
     state.properties.forEach(p=>{ (byGroup[p.group] = byGroup[p.group]||[]).push(p); });
-    const rows = Object.keys(GROUPS).filter(g=>byGroup[g]).map(g=>{
+    // Section 145 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur, suite à un alpha test
+    // (« Les aéroports et les services publics ne se regroupe pas enlever l'option dans Administration »):
+    // AEROPORT/SERVICE retirés de la liste — le regroupement de lot (copropriété fusionnée en une seule
+    // structure de parts) n'a de sens que pour la construction de maisons (terrains de type 'color'
+    // uniquement, voir modalBuildHouseCompany/buildHouse), jamais utile ni fonctionnel pour ces deux
+    // groupes.
+    const rows = Object.keys(GROUPS).filter(g=>byGroup[g] && g!=='AEROPORT' && g!=='SERVICE').map(g=>{
       const groupProps = byGroup[g];
       const mergeId = groupProps[0].groupMergeId;
       const allMerged = mergeId && groupProps.every(p=>p.groupMergeId===mergeId);
@@ -4982,13 +5139,20 @@ function advanceGameClock(){
       const co = companyById(ann.companyId);
       const totalRecordShares = ann.recordHolders.reduce((s,h)=>s+h.shares,0);
       if(!co || totalRecordShares<=0) return; // défensif — ne devrait normalement jamais arriver
+      // Section 148 (voir RESUME_ET_REGLES.md): dénominateur = TOTAL des parts à l'annonce (banque
+      // comprise), pas seulement totalRecordShares (actionnaires réels seulement) — sinon la part exclue
+      // de la banque se retrouvait redistribuée aux autres actionnaires au lieu de rester non versée. Le
+      // fallback `|| totalRecordShares` couvre une annonce créée avant cette section (ancienne sauvegarde
+      // sans totalSharesAtAnnouncement), pour préserver EXACTEMENT l'ancien comportement sur ces annonces-
+      // là plutôt que de planter sur une division par undefined.
+      const totalSharesBasis = ann.totalSharesAtAnnouncement || totalRecordShares;
       const entries = [];
       let paidTotal = 0;
       ann.recordHolders.forEach(rec=>{
         const currentEntry = co.shareholders.find(s=>s.playerId===rec.playerId);
         const currentShares = currentEntry ? currentEntry.shares : 0;
         if(currentShares + 1e-9 >= rec.shares){
-          const cut = ann.amount * (rec.shares/totalRecordShares); // proportion FIGÉE à l'annonce, jamais recalculée
+          const cut = ann.amount * (rec.shares/totalSharesBasis); // proportion FIGÉE à l'annonce, jamais recalculée
           const pl = state.players.find(x=>x.id===rec.playerId);
           if(pl){ pl.cash += cut; paidTotal += cut; entries.push({label:`${pl.name} (dividende reçu — ${co.name})`, amount:cut}); }
         }
@@ -4996,11 +5160,11 @@ function advanceGameClock(){
       });
       const unclaimed = ann.amount - paidTotal;
       if(unclaimed > 1e-9){
-        co.cash += unclaimed; // portion non réclamée (bénéficiaire inéligible) retourne à la trésorerie
+        co.cash += unclaimed; // portion non réclamée (part de la banque exclue + bénéficiaire(s) inéligible(s)) retourne à la trésorerie
         logFin(co.id, 'dividend_forfeited_return', unclaimed);
         entries.push({label:`${co.name} (portion de dividende non réclamée — retour trésorerie)`, amount:unclaimed});
       }
-      const dividendPerShare = ann.amount/totalRecordShares;
+      const dividendPerShare = ann.amount/totalSharesBasis;
       state.players.forEach(pl=>{
         const shortPos = pl.shortPositions && pl.shortPositions[ann.companyId];
         if(shortPos && shortPos.shares>1e-9){
@@ -5221,6 +5385,15 @@ const FIN_CATEGORIES = {
   rent_compensation_revenue: {bucket:'revenue', cf:'operating', label:'Compensations de loyer reçues'},
   house_compensation_revenue:{bucket:'revenue', cf:'operating', label:'Compensations de construction reçues'},
   etf_dividend_revenue:      {bucket:'revenue', cf:'operating', label:'Revenus ETF'},
+  // Section 145 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur, suite à un alpha test
+  // (« Les subventions (GO) devrait apparaître comme des revenus dans les états financier »). Reclassée
+  // ici depuis le bloc « Financement » plus bas (où elle était bucket:null/cf:'financing', traitée comme
+  // du capital emprunté, symétrique à mortgage_proceeds/loan_proceeds) vers bucket:'revenue'/
+  // cf:'operating' — même traitement que go_salary_revenue juste au-dessus. Économiquement défendable:
+  // la subvention est encaissée IMMÉDIATEMENT et jamais remboursée en cash — un futur passage par GO qui
+  // « rembourse » l'avance ne fait que sauter la collecte du salaire normal, sans aucun mouvement de
+  // trésorerie à ce moment-là (voir applyPassGoEffect: la branche remboursement ne loggue rien).
+  go_advance_proceeds:        {bucket:'revenue', cf:'operating', label:'Subventions d’avance GO reçues'},
   // --- Dépenses (état des résultats + flux d'opérations) ---
   rent_expense:               {bucket:'expense', cf:'operating', label:'Loyers payés'},
   tax_expense:                {bucket:'expense', cf:'operating', label:'Taxes payées'},
@@ -5251,7 +5424,6 @@ const FIN_CATEGORIES = {
   mortgage_investment_recovery:{bucket:null, cf:'investing', label:'Capital hypothécaire recouvré'},
   // --- Financement (jamais à l'état des résultats) ---
   share_issuance_proceeds:    {bucket:null, cf:'financing', label:'Capital-actions reçu'},
-  go_advance_proceeds:        {bucket:null, cf:'financing', label:'Subventions d’avance GO reçues'},
   loan_proceeds:               {bucket:null, cf:'financing', label:'Capital de prêt reçu'},
   loan_repayment_via_rent:     {bucket:null, cf:'financing', label:'Remboursement de prêt (retenue sur loyers)'},
   mortgage_proceeds:           {bucket:null, cf:'financing', label:'Capital hypothécaire reçu'},
@@ -5589,6 +5761,27 @@ const SHORT_MARGIN_MAINTENANCE_PCT = 0.30;
 const OPTION_EXPIRY_SEMESTERS = [1,2,3];
 const OPTION_STRIKE_PCTS = [-0.20,-0.10,0,0.10,0.20];
 const OPTION_PREMIUM_FLOOR_PCT = 0.005;
+// Section 145 (ALPHA test, voir RESUME_ET_REGLES.md): « Remettre l'effet de levier 100X pour les options
+// finalement » — demande explicite de l'utilisateur qui REVIENT sur la décision documentée ci-dessus (et
+// dans DESIGN_TRADING_JOUEURS.md section 5: « pas de paramètre de levier explicite »). OPTION_PREMIUM_
+// FLOOR_PCT reste tel quel (toujours utile pour éviter une prime quasi nulle en fin d'échéance), mais
+// s'ajoute maintenant un vrai MULTIPLICATEUR DE CONTRAT explicite, exactement comme une option cotée réelle
+// (1 contrat = droit sur 100 parts du sous-jacent, pas 1 seule) —「shares」dans player.optionPositions
+// représente donc désormais un nombre de CONTRATS, chacun portant sur 100 parts réelles. Tous les flux
+// monétaires (prime payée/encaissée à l'ouverture, rachat/revente à la fermeture, règlement en cash à
+// l'échéance, marge exigée sur une écriture nue) passent par optionNotional() ci-dessous, qui applique ce
+// multiplicateur de façon uniforme — jamais un calcul de flux monétaire direct shares*premium ailleurs dans
+// le module Options. optionCoveredShares() est ajustée en conséquence (parts RÉELLEMENT détenues/cash
+// comparées à contrats×100, pas contrats directement) pour que covered call/cash-secured put restent
+// corrects sous ce nouveau multiplicateur.
+const OPTION_CONTRACT_MULTIPLIER = 100;
+/* Point d'entrée UNIQUE pour convertir (contrats, prime par part) en un montant réellement payé/encaissé/
+   réglé en $ — voir le commentaire de OPTION_CONTRACT_MULTIPLIER ci-dessus. `premium` peut être une prime
+   Black-Scholes (ouverture/fermeture) OU une valeur intrinsèque à l'échéance (settleExpiredOptions) — même
+   formule dans les deux cas, ce sont toutes les deux des montants PAR PART. */
+function optionNotional(contracts, premium){
+  return contracts * premium * OPTION_CONTRACT_MULTIPLIER;
+}
 
 /* API générique d'injection — utilisée par les Phases B/C À VENIR (aucun appelant réel dans cette Phase
    A, en dehors des tests) pour réinjecter des cubes sur un événement ponctuel (prêt, hypothèque, entrée
@@ -5889,7 +6082,9 @@ function enforceMarginCalls(){
         if(!co) return;
         const covered = optionCoveredShares(p, pos);
         const naked = Math.max(0, pos.shares-covered);
-        requiredMargin += SHORT_MARGIN_MAINTENANCE_PCT * naked * (co.stockPrice||0);
+        // Section 145: `naked` est en CONTRATS (chacun = 100 parts réelles, voir OPTION_CONTRACT_MULTIPLIER)
+        // — le risque notionnel réel se mesure donc sur naked×100 parts, pas naked parts.
+        requiredMargin += SHORT_MARGIN_MAINTENANCE_PCT * naked * OPTION_CONTRACT_MULTIPLIER * (co.stockPrice||0);
       });
       if(netWorth(p)>=requiredMargin) break; // en règle (y compris si requiredMargin===0 — tout est couvert), rien à faire
       // Choisit le PLUS GROS candidat parmi les DEUX familles, comparées ENSEMBLE (voir commentaire ci-dessus).
@@ -5903,7 +6098,7 @@ function enforceMarginCalls(){
       writtenOptions.forEach(pos=>{
         const co = companyById(pos.companyId);
         if(!co) return;
-        const val = pos.shares*optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll);
+        const val = optionNotional(pos.shares, optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll));
         if(val>bestValue){ bestValue = val; bestKind = 'option'; bestOptionPos = pos; bestCoId = pos.companyId; }
       });
       if(!bestKind) break; // défensif — ne devrait jamais arriver (shortCoIds/writtenOptions non vides ici)
@@ -6104,6 +6299,203 @@ function resolveStockDraws(company, results){
 }
 
 /* ========================================================================================================
+   ---------- Onglet Simulation — outil d'équilibrage du moteur boursier ----------
+   Section 147 (voir RESUME_ET_REGLES.md). Demande explicite de l'utilisateur, verbatim: « Possible de faire
+   une simulation ou un onglet simulation rapidement après des test je trouve que l'action de les
+   entreprises en croissance explose beaucoup plus que les autres. j'aimerais faire des test et équilibrer
+   au besoin » — clarifiée via deux questions à choix: affichage = « Simulation rapide en fond » (un bouton
+   qui joue INSTANTANÉMENT N années de lancers de dés PAR COMPAGNIE FICTIVE simulée, sans passer par le
+   plateau, puis affiche un graphique comparatif) ; paramètres = « Oui, réglables en direct » (formulaire
+   dans l'onglet, sans avoir besoin de modifier le code pour tester une hypothèse).
+
+   Portée délibérément ISOLÉE du moteur réel: cet outil ne touche JAMAIS state.companies/state.gameClock/
+   quoi que ce soit de la partie en cours — il simule des compagnies FICTIVES en mémoire pure (jamais
+   persistées dans `state`, jamais synchronisées entre appareils — simParams/simResults sont des variables
+   de MODULE, comme portefeuilleOptionsCompanyId ailleurs) et leur applique EXACTEMENT la même formule
+   multiplicative cumulative que le moteur réel (voir resolveStockDraws/volatilityMultiplier juste au-dessus)
+   — SAUF sur un point délibéré: le tirage vert/rouge/blanc utilise des PROBABILITÉS CONSTANTES (dérivées du
+   ratio de réserve initiale configuré pour CETTE partie, state.settings.stockInitial*) plutôt qu'une réserve
+   finie SANS remise. Une simulation « rapide » de plusieurs années sans les déclencheurs de fond/à-coups du
+   design (groupe A/B — liés à des actions de jeu réelles: prêts, hypothèques, semestres comptables...)
+   épuiserait la réserve réelle en quelques tours et figerait le prix, ce qui empêcherait justement d'observer
+   le comportement à LONG TERME que l'utilisateur veut tester — les probabilités constantes évitent ce biais.
+   Le facteur d'endettement (`companyDebtRatio`) et le facteur de taille relative (moyenne des compagnies
+   actives) sont neutres ici (aucune dette, aucune comparaison de taille — decision délibérée: chaque
+   compagnie fictive n'utilise QUE le facteur de TYPE, `typeVolatility`, pour isoler précisément la variable
+   que l'utilisateur soupçonne — STOCK_TYPE_VOLATILITY — de tout bruit additionnel). Les valeurs ajustées ici
+   ne changent JAMAIS les constantes réelles du moteur (STOCK_* plus haut, `const`, immuables par nature) —
+   une fois une bonne valeur trouvée par ce test, l'appliquer en dur au moteur réel reste une modification de
+   code séparée. */
+
+let simParams = null; // paramètres courants du formulaire — null tant que l'onglet n'a jamais été ouvert
+let simResults = null; // résultat de la DERNIÈRE simulation lancée. Jamais recalculé à chaque render() (le
+// polling storage.get est très fréquent — un recalcul à chaque passage ferait « trembler » le graphique de
+// façon aléatoire en continu) — seulement au clic sur #simRunBtn, voir bindTabEvents(t==='simulation').
+
+function simDefaultParams(){
+  const g = state.settings.stockInitialGreen, r = state.settings.stockInitialRed, w = state.settings.stockInitialWhite;
+  const total = g+r+w;
+  return {
+    years: 15,
+    trialsPerType: 3,
+    startPrice: 100,
+    drawsMin: STOCK_DRAWS_MIN, drawsMax: STOCK_DRAWS_MAX,
+    // Champs édités en % (0-100) dans le formulaire — reconvertis en fraction au moment du calcul, pour
+    // rester lisibles à l'écran (voir STOCK_MOVE_PCT_MIN/MAX, qui sont eux des fractions 0-1).
+    moveMinPct: STOCK_MOVE_PCT_MIN*100, moveMaxPct: STOCK_MOVE_PCT_MAX*100,
+    floorPct: STOCK_FOUNDING_FLOOR_PCT*100,
+    // Probabilités vert/rouge dérivées du ratio de réserve initiale CONFIGURÉ pour cette partie (pas un
+    // 33/33/33 arbitraire) — blanc = le reste (100-vert-rouge), jamais un champ édité directement, pour
+    // garantir que les 3 sommes toujours exactement à 100 sans jonglerie de validation croisée.
+    greenPct: total>0 ? Math.round(g/total*1000)/10 : 100/3,
+    redPct: total>0 ? Math.round(r/total*1000)/10 : 100/3,
+    typeVolatility: Object.assign({}, STOCK_TYPE_VOLATILITY),
+  };
+}
+
+/* Simule UNE compagnie fictive de type `type` sur p.years années (p.years*6 « lancers », même convention
+   que le reste de l'app — 6 lancers = 1 année). Retourne {points:[{x,y}], finalPrice, minPrice, maxPrice,
+   collapsed}. Même formule que resolveStockDraws/volatilityMultiplier (mouvement multiplicatif cumulatif,
+   plancher de fin de partie), debtFactor=1/sizeFactor=1 neutres (voir commentaire de section ci-dessus),
+   tirage par probabilité constante plutôt que réserve finie. */
+function simulateOneCompany(type, p){
+  const typeFactor = p.typeVolatility[type]!==undefined ? p.typeVolatility[type] : 1;
+  const vol = Math.min(STOCK_VOLATILITY_CLAMP_MAX, Math.max(STOCK_VOLATILITY_CLAMP_MIN, typeFactor));
+  const founding = p.startPrice>0 ? p.startPrice : 100;
+  let price = founding;
+  const floorPrice = founding * (p.floorPct/100);
+  const totalRolls = Math.max(0, Math.round(p.years*6));
+  const greenP = Math.max(0, Math.min(100, p.greenPct))/100;
+  const redP = Math.max(0, Math.min(100-p.greenPct, p.redPct))/100;
+  const moveMinFrac = p.moveMinPct/100, moveMaxFrac = Math.max(p.moveMinPct, p.moveMaxPct)/100;
+  const points = [{x:0, y:price}];
+  let minPrice = price, maxPrice = price, collapsed = false;
+  for(let roll=1; roll<=totalRolls && !collapsed; roll++){
+    const n = p.drawsMin + Math.floor(Math.random()*(Math.max(p.drawsMin,p.drawsMax)-p.drawsMin+1));
+    for(let i=0;i<n;i++){
+      const rnd = Math.random();
+      const color = rnd<greenP ? 'green' : (rnd<greenP+redP ? 'red' : 'white');
+      if(color==='white') continue;
+      const pct = (moveMinFrac + Math.random()*(moveMaxFrac-moveMinFrac)) * vol;
+      price *= (color==='green') ? (1+pct) : (1-pct);
+      if(price<0) price = 0;
+    }
+    if(price<floorPrice){ price = 0; collapsed = true; }
+    points.push({x:roll, y:price});
+    if(price<minPrice) minPrice = price;
+    if(price>maxPrice) maxPrice = price;
+  }
+  return {points, finalPrice:price, minPrice, maxPrice, collapsed};
+}
+
+/* Lance p.trialsPerType essais indépendants PAR type de compagnie (COMPANY_TYPES), retourne
+   {byType:{[typeKey]: {trials:[...simulateOneCompany results], avgFinal, minFinal, maxFinal,
+   collapsedCount}}, params: p} — la copie de `p` capturée ici fige les paramètres utilisés pour CE résultat
+   précis (même si le formulaire est modifié ensuite sans relancer, le graphique affiché reste cohérent avec
+   ce qui a produit). */
+function runStockSimulation(p){
+  const byType = {};
+  COMPANY_TYPES.forEach(t=>{
+    const trials = [];
+    for(let i=0;i<Math.max(1,Math.round(p.trialsPerType));i++){
+      trials.push(simulateOneCompany(t.key, p));
+    }
+    const finals = trials.map(tr=>tr.finalPrice);
+    byType[t.key] = {
+      trials,
+      avgFinal: finals.reduce((s,v)=>s+v,0)/finals.length,
+      minFinal: Math.min(...finals),
+      maxFinal: Math.max(...finals),
+      collapsedCount: trials.filter(tr=>tr.collapsed).length,
+    };
+  });
+  return { byType, params: Object.assign({}, p, {typeVolatility: Object.assign({}, p.typeVolatility)}) };
+}
+
+/* Formateur LOCAL pour les prix simulés — jamais fmtPrice() (qui suppose un montant interne en MILLIONS et
+   multiplie ×1e6, convention du moteur RÉEL, non pertinente ici: le prix simulé est un simple indice
+   abstrait, base p.startPrice, sans lien avec state.unit). Aucun symbole monétaire — pour ne jamais laisser
+   croire que ces chiffres sont de l'argent réel de la partie. */
+function simFmtIndex(n){
+  n = Number(n)||0;
+  return n.toFixed(2);
+}
+
+function renderSimulation(){
+  if(simParams===null) simParams = simDefaultParams();
+  const p = simParams;
+  const whitePct = Math.max(0, 100 - p.greenPct - p.redPct);
+
+  const typeVolatilityRows = COMPANY_TYPES.map(t=>{
+    const realVal = STOCK_TYPE_VOLATILITY[t.key]!==undefined ? STOCK_TYPE_VOLATILITY[t.key] : 1;
+    return `<tr><td>${esc(t.label)} <span class="small">(moteur réel: ${realVal})</span></td><td><input type="number" step="0.05" min="0" id="simVol_${t.key}" value="${p.typeVolatility[t.key]!==undefined?p.typeVolatility[t.key]:1}" style="width:80px;"></td></tr>`;
+  }).join('');
+
+  const resultsHtml = (()=>{
+    if(!simResults) return '<div class="empty">Aucune simulation lancée pour le moment — ajustez les paramètres ci-dessus si désiré, puis cliquez sur « ▶️ Lancer la simulation ».</div>';
+    const TYPE_COLORS = { valeur:'#047857', dividende:'var(--gold)', croissance:'var(--brick)' };
+    const series = [];
+    COMPANY_TYPES.forEach(t=>{
+      simResults.byType[t.key].trials.forEach((trial, i)=>{
+        series.push({ label: `${t.label} #${i+1}`, color: TYPE_COLORS[t.key]||'#999', points: trial.points });
+      });
+    });
+    const chartHtml = `${svgLineChart(series, simFmtIndex)}${tvChartLegend(series)}`;
+    const statsRows = COMPANY_TYPES.map(t=>{
+      const st = simResults.byType[t.key];
+      const startP = simResults.params.startPrice;
+      const pct = startP>0 ? ((st.avgFinal-startP)/startP*100) : 0;
+      return `<tr>
+        <td>${esc(t.label)}</td>
+        <td class="money">${simFmtIndex(st.avgFinal)}</td>
+        <td class="money" style="color:${pct>=0?'#047857':'var(--brick)'};">${pct>=0?'+':''}${pct.toFixed(1)}%</td>
+        <td class="money">${simFmtIndex(st.minFinal)}</td>
+        <td class="money">${simFmtIndex(st.maxFinal)}</td>
+        <td>${st.collapsedCount>0 ? `⚠️ ${st.collapsedCount}/${st.trials.length}` : '—'}</td>
+      </tr>`;
+    }).join('');
+    return `
+    <div class="small" style="margin-bottom:8px;">Simulation de ${simResults.params.years} année(s) (${simResults.params.years*6} lancers), ${simResults.params.trialsPerType} essai(s) indépendant(s) par type, prix de départ ${simFmtIndex(simResults.params.startPrice)} pour tous.</div>
+    ${chartHtml}
+    <table style="margin-top:10px;">
+      <tr><th>Type</th><th>Prix final moyen</th><th>Variation moy.</th><th>Min observé</th><th>Max observé</th><th>Effondrements</th></tr>
+      ${statsRows}
+    </table>`;
+  })();
+
+  return `
+  <div class="section-title">Simulation — équilibrage du moteur boursier</div>
+  <div class="small" style="margin-bottom:10px;">Outil de test réservé au créateur de la partie. Simule des compagnies FICTIVES (jamais la partie en cours) sur plusieurs années de lancers de dés, pour comparer visuellement la trajectoire de prix des différents types de compagnie et ajuster les paramètres du moteur au besoin. Aucun changement ici n'affecte la partie réelle ni les autres appareils.</div>
+  <div class="section-title" style="margin-top:14px;font-size:0.95em;">Paramètres de simulation</div>
+  <table>
+    <tr><td>Années à simuler</td><td><input type="number" step="1" min="1" max="200" id="simYears" value="${p.years}" style="width:80px;"></td></tr>
+    <tr><td>Essais indépendants par type</td><td><input type="number" step="1" min="1" max="20" id="simTrials" value="${p.trialsPerType}" style="width:80px;"></td></tr>
+    <tr><td>Prix de départ (indice, identique pour tous)</td><td><input type="number" step="1" min="1" id="simStartPrice" value="${p.startPrice}" style="width:80px;"></td></tr>
+  </table>
+  <div class="section-title" style="margin-top:14px;font-size:0.95em;">Multiplicateur de volatilité par type (STOCK_TYPE_VOLATILITY)</div>
+  <div class="small" style="margin-bottom:6px;">Valeur réelle du moteur en jeu actuellement entre parenthèses dans le libellé du type. 1.0 = neutre, plus haut = plus volatil.</div>
+  <table>${typeVolatilityRows}</table>
+  <div class="section-title" style="margin-top:14px;font-size:0.95em;">Paramètres avancés du moteur</div>
+  <table>
+    <tr><td>Tirages par lancer — minimum</td><td><input type="number" step="1" min="1" id="simDrawsMin" value="${p.drawsMin}" style="width:80px;"></td></tr>
+    <tr><td>Tirages par lancer — maximum</td><td><input type="number" step="1" min="1" id="simDrawsMax" value="${p.drawsMax}" style="width:80px;"></td></tr>
+    <tr><td>Mouvement par tirage — minimum (%)</td><td><input type="number" step="0.1" min="0" id="simMoveMin" value="${p.moveMinPct}" style="width:80px;"></td></tr>
+    <tr><td>Mouvement par tirage — maximum (%)</td><td><input type="number" step="0.1" min="0" id="simMoveMax" value="${p.moveMaxPct}" style="width:80px;"></td></tr>
+    <tr><td>Seuil de fin de partie (% du prix de départ)</td><td><input type="number" step="0.1" min="0" max="100" id="simFloorPct" value="${p.floorPct}" style="width:80px;"></td></tr>
+    <tr><td>Probabilité tirage VERT (%)</td><td><input type="number" step="1" min="0" max="100" id="simGreenPct" value="${p.greenPct}" style="width:80px;"></td></tr>
+    <tr><td>Probabilité tirage ROUGE (%)</td><td><input type="number" step="1" min="0" max="100" id="simRedPct" value="${p.redPct}" style="width:80px;"></td></tr>
+    <tr><td>Probabilité tirage BLANC (déduite, sans effet)</td><td>${whitePct.toFixed(1)}%</td></tr>
+  </table>
+  <div class="row" style="gap:10px;margin:14px 0;">
+    <button class="btn btn-gold" id="simRunBtn">▶️ Lancer la simulation</button>
+    <button class="btn btn-ghost" id="simResetBtn">↺ Réinitialiser les valeurs par défaut</button>
+  </div>
+  <div class="section-title" style="margin-top:14px;font-size:0.95em;">Résultats</div>
+  ${resultsHtml}
+  <div id="modalHost"></div>`;
+}
+
+/* ========================================================================================================
    ---------- Options PUT/CALL (trading joueurs PHASE 4, DERNIÈRE phase du trading joueurs — voir
    RESUME_ET_REGLES.md section 131 et claude/DESIGN_TRADING_JOUEURS.md section 5, Project) ----------
    Pricing Black-Scholes, chaîne restreinte 3 échéances × 5 strikes, ouverture/écriture (nue, SANS
@@ -6172,7 +6564,9 @@ function blackScholesPremium(S, K, T, r, sigma, type){
    expiryRoll déjà dépassé retourne simplement l'intrinsèque pur via blackScholesPremium), r
    (state.settings.riskFreeRateAnnual — MÊME taux que le short/les bons, aucun nouveau réglage), σ
    (companyAnnualSigma). Applique ensuite le PLANCHER OPTION_PREMIUM_FLOOR_PCT×S sur le résultat — voir son
-   commentaire de déclaration: pas de paramètre de levier explicite, un plancher de prime à la place. */
+   commentaire de déclaration. Retourne TOUJOURS une prime PAR PART (jamais multipliée par
+   OPTION_CONTRACT_MULTIPLIER — c'est optionNotional(), pas cette fonction, qui applique le levier 100X, voir
+   section 145). */
 function optionPremiumFor(company, type, strike, expiryRoll){
   const S = company.stockPrice||0;
   const T = Math.max(0, (expiryRoll - state.gameClock.rollCount)/6);
@@ -6200,11 +6594,14 @@ function optionChainFor(company){
    peut PAS trader — acheter OU écrire — d'option sur SA PROPRE compagnie, délit d'initié intégré au jeu;
    partie pas terminée; garde IPO — companyPendingIpoShares<=0), + validations propres aux options
    (shares>0, type/side valides, strike>0, expiryRoll strictement après le rollCount courant — pas déjà
-   échu). `premium` = optionPremiumFor() au moment de l'ouverture, capturé dans premiumAtOpen.
-   side='long' (ACHAT): coût total = shares*premium — GARDE D'ENCAISSE (comme un achat d'action ordinaire,
-   c'est une DÉPENSE réelle): player.cash -= coût, state.bank.cash += coût (la banque encaisse la prime,
-   devient émettrice/contrepartie de l'option).
-   side='short' (ÉCRITURE): proceeds = shares*premium — AUCUNE GARDE D'ENCAISSE NI DE COUVERTURE (écriture
+   échu). `premium` = optionPremiumFor() au moment de l'ouverture, capturé dans premiumAtOpen. Section 145:
+   `shares` est désormais un nombre de CONTRATS (1 contrat = 100 parts du sous-jacent, levier 100X — voir
+   OPTION_CONTRACT_MULTIPLIER/optionNotional) — tous les montants ci-dessous passent donc par optionNotional
+   plutôt qu'un simple shares*premium.
+   side='long' (ACHAT): coût total = optionNotional(shares,premium) — GARDE D'ENCAISSE (comme un achat
+   d'action ordinaire, c'est une DÉPENSE réelle): player.cash -= coût, state.bank.cash += coût (la banque
+   encaisse la prime, devient émettrice/contrepartie de l'option).
+   side='short' (ÉCRITURE): proceeds = optionNotional(shares,premium) — AUCUNE GARDE D'ENCAISSE NI DE COUVERTURE (écriture
    NUE permise SANS restriction, demande explicite de l'utilisateur — DESIGN_TRADING_JOUEURS.md section 5:
    « écriture nue permise, sans restriction, confirmé par Julien »; même philosophie que closeShortPosition,
    qui n'a lui non plus aucune garde: c'est enforceMarginCalls, PAS l'ouverture, qui est le garde-fou —
@@ -6230,7 +6627,7 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
   if(!(strike>0)) return {ok:false, error:'Le prix d’exercice (strike) doit être positif.'};
   if(!(expiryRoll>state.gameClock.rollCount)) return {ok:false, error:'Cette échéance est déjà passée (ou en cours) — choisissez une échéance future.'};
   const premium = optionPremiumFor(company, type, strike, expiryRoll);
-  const notional = shares*premium;
+  const notional = optionNotional(shares, premium);
   const typeLabel = type==='call' ? 'CALL' : 'PUT';
   const entries = [];
   if(side==='long'){
@@ -6249,8 +6646,12 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
   if(!player.optionPositions) player.optionPositions = [];
   const existing = player.optionPositions.find(pos=>pos.companyId===company.id && pos.type===type && pos.side===side && Math.abs(pos.strike-strike)<1e-9 && pos.expiryRoll===expiryRoll);
   if(existing){
-    const oldNotional = existing.shares*existing.premiumAtOpen;
-    existing.premiumAtOpen = (oldNotional+notional)/(existing.shares+shares);
+    // Section 145: premiumAtOpen reste un prix PAR PART (jamais multiplié — voir optionPremiumFor) alors
+    // que `notional` ci-dessus EST multiplié par OPTION_CONTRACT_MULTIPLIER (optionNotional) — oldNotional
+    // doit donc passer par optionNotional() lui aussi, sinon la moyenne pondérée mélangerait des unités
+    // incompatibles (100× trop petit côté oldNotional) et fausserait premiumAtOpen après fusion.
+    const oldNotional = optionNotional(existing.shares, existing.premiumAtOpen);
+    existing.premiumAtOpen = (oldNotional+notional)/OPTION_CONTRACT_MULTIPLIER/(existing.shares+shares);
     existing.shares += shares;
     // openedRoll délibérément INCHANGÉ — voir le commentaire de la fonction ci-dessus
   } else {
@@ -6287,7 +6688,7 @@ function closeOptionPosition(player, positionId, shares, _bypassTradingWindow){
   let qty = shares;
   if(qty>pos.shares) qty = pos.shares; // plafonne — ne ferme jamais plus que la position réellement détenue
   const premium = optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll);
-  const notional = qty*premium;
+  const notional = optionNotional(qty, premium);
   const typeLabel = pos.type==='call' ? 'CALL' : 'PUT';
   const entries = [];
   if(pos.side==='long'){
@@ -6332,14 +6733,14 @@ function settleExpiredOptions(){
       const co = companyById(pos.companyId);
       const price = co ? (co.stockPrice||0) : 0;
       const intrinsic = pos.type==='call' ? Math.max(0, price-pos.strike) : Math.max(0, pos.strike-price);
-      const payoff = pos.shares*intrinsic;
+      const payoff = optionNotional(pos.shares, intrinsic);
       if(payoff>1e-9){
         if(pos.side==='long'){ p.cash += payoff; state.bank.cash -= payoff; }
         else { p.cash -= payoff; state.bank.cash += payoff; }
       }
       const typeLabel = pos.type==='call' ? 'CALL' : 'PUT';
       const sideLabel = pos.side==='long' ? 'longue' : 'écrite';
-      log(`⏱️ Règlement AUTOMATIQUE à l'échéance : l'option ${typeLabel} ${sideLabel} de ${p.name} sur ${co?co.name:'?'} (strike ${fmtPrice(pos.strike)}, ${pos.shares.toFixed(4)} part(s)) expire ${payoff>1e-9 ? `DANS LA MONNAIE — ${fmt(payoff)} ${pos.side==='long'?'crédité':'débité'} au règlement` : 'HORS-JEU, sans valeur'}, au prix de règlement de ${fmtPrice(price)}/part. Ce n'est PAS une fermeture volontaire du joueur.`);
+      log(`⏱️ Règlement AUTOMATIQUE à l'échéance : l'option ${typeLabel} ${sideLabel} de ${p.name} sur ${co?co.name:'?'} (strike ${fmtPrice(pos.strike)}, ${pos.shares.toFixed(4)} contrat(s) — levier 100X) expire ${payoff>1e-9 ? `DANS LA MONNAIE — ${fmt(payoff)} ${pos.side==='long'?'crédité':'débité'} au règlement` : 'HORS-JEU, sans valeur'}, au prix de règlement de ${fmtPrice(price)}/part. Ce n'est PAS une fermeture volontaire du joueur.`);
       p.optionPositions.splice(p.optionPositions.indexOf(pos), 1); // retiré TOUJOURS, payoff nul ou pas
     });
   });
@@ -6353,19 +6754,21 @@ function settleExpiredOptions(){
    calcul, ce qui SOUS-ESTIME légèrement la marge réellement exigée dans un scénario multi-positions
    construit exprès pour en abuser — documenté ici explicitement pour que ce ne soit jamais silencieusement
    « corrigé » sans re-décider consciemment du compromis simplicité/exactitude.
-   Call écrit: couvertes = min(pos.shares, parts RÉELLEMENT détenues par le joueur dans cette compagnie via
-   company.shareholders) — covered call classique.
-   Put écrit: couvertes = min(pos.shares, player.cash / pos.strike) — cash-secured put classique (le cash
-   nécessaire pour acheter les actions au strike si le put est exercé contre lui). */
+   Call écrit: couvertes (en CONTRATS, même unité que pos.shares) = min(pos.shares, parts RÉELLEMENT
+   détenues par le joueur dans cette compagnie via company.shareholders ÷ OPTION_CONTRACT_MULTIPLIER — un
+   contrat couvre 100 parts réelles, voir section 145/OPTION_CONTRACT_MULTIPLIER) — covered call classique.
+   Put écrit: couvertes = min(pos.shares, player.cash / (pos.strike × OPTION_CONTRACT_MULTIPLIER)) —
+   cash-secured put classique (le cash nécessaire pour acheter les 100 parts par contrat au strike si le put
+   est exercé contre lui). */
 function optionCoveredShares(player, pos){
   const co = companyById(pos.companyId);
   if(!co) return 0;
   if(pos.type==='call'){
     const stake = co.shareholders.find(s=>s.playerId===player.id);
     const held = stake ? stake.shares : 0;
-    return Math.min(pos.shares, Math.max(0, held));
+    return Math.min(pos.shares, Math.max(0, held/OPTION_CONTRACT_MULTIPLIER));
   } else {
-    const cashCovered = pos.strike>0 ? player.cash/pos.strike : 0;
+    const cashCovered = pos.strike>0 ? player.cash/(pos.strike*OPTION_CONTRACT_MULTIPLIER) : 0;
     return Math.min(pos.shares, Math.max(0, cashCovered));
   }
 }
@@ -7439,8 +7842,8 @@ function renderEtfDutchTranche(etf, tranche, isCreator){
     </div>`;
   }
   if(d.status==='running'){
-    const value = etfDutchCurrentValue(d);
-    const remainingMs = Math.max(0, d.durationMs - (Date.now()-d.startedAt));
+    const value = etfDutchCurrentValue(etf, tranche);
+    const remainingMs = Math.max(0, d.durationMs - etfDutchLocalElapsed(etf, tranche, d));
     const remainingS = Math.ceil(remainingMs/1000);
     // Étape 5/8, Bloc 4: un bouton par ENTREPRISE active (pas par joueur) — toujours cliqué par le CEO
     // pour SA propre entreprise, même logique de course au clic sur un appareil partagé qu'avant.
@@ -7505,7 +7908,7 @@ function renderEtfCard(etf, isCreator){
       <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:6px;align-items:flex-end;">
         <div><label>Acheteur (une autre entreprise — jamais la banque)</label><select id="etfSellBuyer_${etf.id}">${state.companies.filter(c=>c.id!==myCo.id).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
         <div><label>Pourcentage</label><input type="number" min="0.1" max="${myHeld}" step="0.1" id="etfSellPct_${etf.id}" value="${Math.min(1,myHeld)}" style="width:100px;"></div>
-        <div><label>Prix convenu</label><input type="number" min="0" step="0.01" id="etfSellPrice_${etf.id}" value="0" style="width:140px;"></div>
+        <div><label>Prix convenu (${esc(state.unit)})</label><input type="number" min="0" step="0.01" id="etfSellPrice_${etf.id}" value="0" style="width:140px;"></div>
         <div><button class="btn btn-ghost btn-sm" data-etf-sell="${etf.id}">Vendre</button></div>
       </div>
     ` : ''}
@@ -7824,14 +8227,26 @@ function tvSlideBoard(){
   let cells = '';
   for(let pos=0; pos<40; pos++){
     const sq = squares[pos];
-    const {row,col} = boardCellPosition(pos);
-    // Étape 5/8, Bloc 7: le pion porte les initiales de l'ENTREPRISE (acteur du plateau), couleur héritée
-    // de son CEO — voir renderBoard ci-dessus pour le même principe sur le plateau non-TV.
+    // Section 150 (voir RESUME_ET_REGLES.md): chemin en serpent (grille pleine 8×5) plutôt que le
+    // périmètre d'une grille 11×11 — voir boardCellPositionSnake ci-dessus pour la justification.
+    const {row,col} = boardCellPositionSnake(pos);
+    // Étape 5/8, Bloc 7: le pion porte le nom de l'ENTREPRISE (acteur du plateau), couleur héritée de
+    // son CEO. Section 150: les cases étant désormais beaucoup plus grandes (grille pleine plutôt que
+    // périmètre creux), le pion affiche le nom COMPLET de l'entreprise (tronqué seulement s'il dépasse
+    // 16 caractères) plutôt que ses 2 initiales — demande explicite de l'utilisateur (« des cases
+    // terrains plus gros et l'information plus gros aussi comme les nom complet des entreprise »).
     const tokens = state.companies.filter(co=>co.position===pos).map(co=>{
       const ceo = state.players.find(p=>p.id===co.ceoId);
-      const initials = esc(co.name.trim().slice(0,2).toUpperCase() || '?');
-      const label = ceo ? `${co.name} (CEO: ${ceo.name})` : co.name;
-      return `<span title="${esc(label)}" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:${ceo?ceo.color:'#888'};color:#fff;font-size:9px;font-weight:700;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);">${initials}</span>`;
+      const fullName = co.name.trim() || '?';
+      const displayName = esc(fullName.length>16 ? fullName.slice(0,15)+'…' : fullName);
+      // Section 150 (voir RESUME_ET_REGLES.md): le récapitulatif « Classement » (qui portait le statut
+      // « en jeu »/« enquêtée par l'AMF » de chaque entreprise) est retiré de cette diapositive — ce
+      // statut reste néanmoins visible directement SUR le pion lui-même (icône 🔍 + info-bulle), pour ne
+      // pas perdre cette information utile en supprimant le classement.
+      const jailIcon = co.inJail ? '🔍 ' : '';
+      const statusLabel = co.inJail ? ` — enquêtée par l'AMF (${co.jailTurnsLeft} tour(s))` : ' — en jeu';
+      const label = (ceo ? `${co.name} (CEO: ${ceo.name})` : co.name) + statusLabel;
+      return `<span title="${esc(label)}" style="display:inline-flex;align-items:center;justify-content:center;padding:3px 8px;border-radius:10px;background:${ceo?ceo.color:'#888'};color:#fff;font-size:13px;font-weight:700;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);white-space:nowrap;">${jailIcon}${displayName}</span>`;
     }).join('');
     let bandColor = '#8a8a8a', label, houseBadge = '';
     if(sq.kind==='property'){
@@ -7840,45 +8255,36 @@ function tvSlideBoard(){
       bandColor = g.color;
       label = prop.name;
       if(prop.type==='color' && prop.houses>0){
-        houseBadge = `<div style="font-size:8px;font-weight:700;color:var(--board);margin-top:1px;">${esc(houseLabel(prop.houses))}</div>`;
+        houseBadge = `<div style="font-size:13px;font-weight:700;color:var(--board);margin-top:2px;">${esc(houseLabel(prop.houses))}</div>`;
       }
     } else {
       label = sq.label;
     }
-    cells += `<div style="grid-row:${row};grid-column:${col};background:#fff;border-radius:3px;padding:3px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden;position:relative;min-height:0;">
-      <div style="position:absolute;top:0;left:0;right:0;height:6px;background:${bandColor};"></div>
-      <div style="margin-top:7px;font-size:8.5px;font-weight:700;line-height:1.05;color:var(--ink);">${esc(label)}</div>
+    cells += `<div style="grid-row:${row};grid-column:${col};background:#fff;border-radius:6px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden;position:relative;min-height:0;">
+      <div style="position:absolute;top:0;left:0;right:0;height:10px;background:${bandColor};"></div>
+      <div style="margin-top:12px;font-size:14px;font-weight:700;line-height:1.15;color:var(--ink);">${esc(label)}</div>
       ${houseBadge}
-      <div style="display:flex;gap:2px;flex-wrap:wrap;justify-content:center;margin-top:2px;">${tokens}</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center;margin-top:5px;">${tokens}</div>
     </div>`;
   }
-  // Étape 7/8 (2026-09-01, voir RESUME_ET_REGLES.md section 85): « refonte du Plateau vers le mode
-  // spectateur » — la diapositive plateau se limitait jusqu'ici au plateau lui-même. Ajout d'un
-  // récapitulatif en gros caractères sous le plateau, dans le même langage visuel que les autres
-  // diapositives spectateur (tv-row/tv-rank/tv-dot/tv-name/tv-value, voir tvSlideLeaderboard ci-dessus):
-  // chaque entreprise active, triée par valeur comptable décroissante (ce tri fait à la fois office de
-  // récapitulatif complet ET de classement rapide — les 3 premières lignes portent une médaille — sans
-  // ajouter une diapositive séparée ni dupliquer la liste).
-  const ranked = [...activeCompanies()].sort((a,b)=>companyValue(b)-companyValue(a));
-  const medals = ['🥇','🥈','🥉'];
-  const recapRows = ranked.map((co,i)=>{
-    const ceo = state.players.find(p=>p.id===co.ceoId);
-    const statusLabel = co.inJail ? `🔍 enquêtée par l'AMF (${co.jailTurnsLeft} tour(s))` : '✅ en jeu';
-    return `<div class="tv-row" style="font-size:19px;padding:9px 0;gap:12px;">
-      <span class="tv-rank" style="width:34px;">${medals[i]||('#'+(i+1))}</span>
-      <span class="tv-dot" style="width:16px;height:16px;background:${ceo?ceo.color:'#888'};"></span>
-      <span class="tv-name" style="font-size:19px;">${esc(co.name)}</span>
-      <span class="small" style="font-size:13px;white-space:nowrap;">${statusLabel}</span>
-      <span class="tv-value" style="font-size:19px;">${fmt(companyValue(co))}</span>
-    </div>`;
-  }).join('');
+  // Section 150 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « ne pas mettre le
+  // classement, cependant mettre la légende des pastilles des joueurs » — le récapitulatif/classement
+  // par valeur comptable (ranked/medals, ex-étape 7/8) est RETIRÉ de cette diapositive (le classement
+  // reste consultable via tvSlideLeaderboard, une diapositive séparée, sélectionnable indépendamment
+  // dans l'onglet Administration). À la place: une simple légende couleur→nom pour CHAQUE JOUEUR (pas
+  // les entreprises), pour que la couleur des pastilles sur le plateau reste lisible sans classement.
+  const legendItems = state.players.map(p=>`
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${p.color};border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.35);"></span>
+      <span style="font-size:15px;font-weight:600;color:var(--ink);">${esc(p.name)}</span>
+    </div>`).join('');
   return `
   <div class="tv-title">Plateau</div>
-  <div style="display:grid;grid-template-columns:repeat(11,1fr);grid-template-rows:repeat(11,1fr);gap:3px;aspect-ratio:1;background:var(--board-dark);padding:6px;border-radius:8px;">${cells}</div>
-  <div class="tv-sub" style="margin-top:14px;">Chaque pastille porte les initiales de l'entreprise sur sa case actuelle. Le niveau de construction (nombre de maisons ou hôtel) est affiché sous le nom de chaque terrain qui en compte au moins une.</div>
-  <div style="margin-top:26px;border-top:2px solid var(--line);padding-top:16px;">
-    <div style="font-family:inherit;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;font-size:20px;color:var(--ink);margin-bottom:8px;">Classement — valeur comptable</div>
-    ${ranked.length===0 ? '<div class="tv-event">Aucune entreprise fondée pour l’instant.</div>' : recapRows}
+  <div style="display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(5,1fr);gap:6px;aspect-ratio:8/5.4;background:var(--board-dark);padding:8px;border-radius:8px;">${cells}</div>
+  <div class="tv-sub" style="margin-top:14px;">Chaque pastille porte le nom de l'entreprise sur sa case actuelle, dans la couleur de son CEO. Le niveau de construction (nombre de maisons ou hôtel) est affiché sous le nom de chaque terrain qui en compte au moins une.</div>
+  <div style="margin-top:22px;border-top:2px solid var(--line);padding-top:14px;">
+    <div style="font-family:inherit;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;font-size:18px;color:var(--ink);margin-bottom:10px;">Légende — joueurs</div>
+    <div style="display:flex;flex-wrap:wrap;gap:16px 28px;">${legendItems || '<div class="tv-event">Aucun joueur pour l’instant.</div>'}</div>
   </div>
   `;
 }
@@ -7926,7 +8332,10 @@ function renderSpectatorView(){
   <div class="tv-wrap">
     <div class="tv-header">
       <div><span class="codebox">${esc(gameCode)}</span> <span class="small" style="color:rgba(244,239,226,0.7);">Mode spectateur</span></div>
-      <div class="small" style="color:rgba(244,239,226,0.7);cursor:pointer;text-decoration:underline;" id="exitSpectator">quitter le mode spectateur</div>
+      <div style="display:flex;gap:16px;align-items:center;">
+        <span class="small" style="color:rgba(244,239,226,0.7);cursor:pointer;text-decoration:underline;" id="exitSpectator">quitter le mode spectateur</span>
+        <span class="small" style="color:rgba(244,239,226,0.7);cursor:pointer;text-decoration:underline;" id="leaveGameSpectator">quitter la partie</span>
+      </div>
     </div>
     <div class="tv-slide">${slideHtml}</div>
   </div>`;
@@ -7936,6 +8345,11 @@ function renderSpectatorView(){
     await storageSet('lastspectator', '', false);
     render();
   });
+  // Section 150 (voir RESUME_ET_REGLES.md): « quitter la partie » (quitGame — réinitialise tout l'état
+  // client), distinct de « quitter le mode spectateur » ci-dessus (qui ne fait que revenir à la vue
+  // joueur normale, en restant dans la MÊME partie).
+  const leaveBtn = document.getElementById('leaveGameSpectator');
+  if(leaveBtn) leaveBtn.addEventListener('click', quitGame);
 }
 
 
@@ -8123,6 +8537,38 @@ function bindTabEvents(t){
       log(`Fenêtre de transactions annuelle ${state.stockMarket.tradingOpen?'ouverte':'fermée'} par le créateur de la partie.`);
       await saveGame(); render();
     });
+    // Section 146 (ALPHA test 2, voir RESUME_ET_REGLES.md) — item 5, demande explicite de l'utilisateur:
+    // « Mettre un bouton spécial dans l'onglet administrateur qui force le prochain tour même si les
+    // joueurs ne sont pas prêt ». Appelle directement performRollForAllCompanies() (le CORPS du lancer
+    // pour tous, voir sa définition — extrait tel quel à l'étape 8/8) plutôt que checkAllCompaniesReady(),
+    // qui exige justement que TOUT le monde soit prêt — c'est précisément la vérification qu'on veut
+    // court-circuiter ici. Confirmation demandée (action irréversible en un clic, comme un vrai lancer de
+    // dés pour tous) ; performRollForAllCompanies() gère déjà elle-même le cas « aucune entreprise ne peut
+    // lancer » (toutes enquêtées par l'AMF) et son propre saveGame()/render(), donc aucune duplication ici.
+    const forceNextTurnBtn = document.getElementById('forceNextTurnBtn');
+    if(forceNextTurnBtn) forceNextTurnBtn.addEventListener('click', async ()=>{
+      // Section 150 (voir RESUME_ET_REGLES.md) — bug signalé par l'utilisateur, verbatim: « Forcer le
+      // prochain tour n'a pas l'air de fonctionner correctement rien ne se passe ». La logique elle-même
+      // (performRollForAllCompanies, plus haut) était correcte, mais DEUX raisons pouvaient donner
+      // l'impression que « rien ne se passe »: (1) aucune exception n'était visible pour l'utilisateur —
+      // une erreur silencieuse aurait juste interrompu l'action sans aucun signe ; (2) même en cas de
+      // succès, l'onglet Administration n'affiche ni plateau ni résumé des lancers — l'action se produisait
+      // réellement (dés lancés, loyers/taxes réglés, horloge avancée) mais sans AUCUN retour visible pour
+      // qui reste sur cet onglet. Corrigé par un try/catch avec alert() explicite sur erreur, et un résumé
+      // visible (alert()) du résultat en cas de succès.
+      if(!confirm("Forcer le lancer de dés pour toutes les entreprises maintenant, même si certaines n'ont pas encore cliqué sur « Prêt » ? Le statut « Prêt » de toutes les entreprises sera quand même réinitialisé après ce lancer, comme pour un tour normal.")) return;
+      try{
+        log(`⏩ L'administrateur force le lancer de dés pour toutes les entreprises (sans attendre que toutes soient « Prêtes »).`);
+        const results = await performRollForAllCompanies();
+        if(results && results.length>0){
+          const summary = results.map(r=>`${r.companyName}: ${r.d1}+${r.d2}=${r.total} (case ${r.oldPos}→${r.jailed?30:r.newPos}${r.jailed?', enquête AMF':''}${r.passedGo?', passe par GO':''})`).join('\n');
+          alert(`Tour forcé — ${results.length} entreprise(s) ont lancé les dés :\n\n${summary}`);
+        }
+      }catch(err){
+        console.error('Erreur pendant "Forcer le prochain tour":', err);
+        alert(`Une erreur est survenue pendant « Forcer le prochain tour » et l'action a été interrompue : ${err && err.message ? err.message : err}\n\nAucune modification n'a peut-être été sauvegardée — vérifiez l'état de la partie avant de réessayer.`);
+      }
+    });
     const bankBtn = document.getElementById('adjustBank');
     if(bankBtn) bankBtn.addEventListener('click', modalAdjustBank);
     // Section 97 (2026-09-01, voir RESUME_ET_REGLES.md): « Ajuster l'encaisse » (modalAdjustPlayer,
@@ -8245,8 +8691,8 @@ function bindTabEvents(t){
       });
     }
     // Section 136 — point 6: cases à cocher du graphique comparatif — met à jour la variable de MODULE
-    // portefeuilleCompareCompanyIds (voir sa déclaration) puis re-rend, MÊME pattern que
-    // pfOptionsCompanySelect plus bas (aucun saveGame(), ce choix d'affichage n'a rien à synchroniser).
+    // portefeuilleCompareCompanyIds (voir sa déclaration) puis re-rend (aucun saveGame(), ce choix
+    // d'affichage n'a rien à synchroniser).
     document.querySelectorAll('[data-compare-company]').forEach(cb=>cb.addEventListener('change', ()=>{
       const id = cb.dataset.compareCompany;
       const idx = portefeuilleCompareCompanyIds.indexOf(id);
@@ -8281,16 +8727,16 @@ function bindTabEvents(t){
     if(openInvestBondsBtn) openInvestBondsBtn.addEventListener('click', ()=>modalBonds('invest'));
     const openWithdrawBondsBtn = document.getElementById('openWithdrawBondsBtn');
     if(openWithdrawBondsBtn) openWithdrawBondsBtn.addEventListener('click', ()=>modalBonds('withdraw'));
-    // Section 131 (voir RESUME_ET_REGLES.md) — trading joueurs PHASE 4, DERNIÈRE phase: sélecteur de
-    // compagnie de la chaîne d'options (met à jour portefeuilleOptionsCompanyId puis re-rend — MÊME pattern
-    // que pfSemesterSelect ci-dessus, aucun saveGame() puisque ce choix n'a rien à synchroniser), bouton
-    // « Nouvelle position d'option » (voir modalOptionTrade), boutons « Clôturer » par position (voir
+    // Section 131 (voir RESUME_ET_REGLES.md) — trading joueurs PHASE 4, DERNIÈRE phase: bouton « Nouvelle
+    // position d'option » (voir modalOptionTrade), boutons « Clôturer » par position (voir
     // renderPortefeuilleTrading/closeOptionPositionFromUi, MÊME pattern data-* que le reste de l'app).
-    const pfOptionsCompanySelect = document.getElementById('pfOptionsCompanySelect');
-    if(pfOptionsCompanySelect) pfOptionsCompanySelect.addEventListener('change', ()=>{
-      portefeuilleOptionsCompanyId = pfOptionsCompanySelect.value;
-      render();
-    });
+    // Section 146 (ALPHA test 2, voir RESUME_ET_REGLES.md) — item 1: le sélecteur de compagnie de la
+    // chaîne d'options (ex-#pfOptionsCompanySelect, câblé ici auparavant) vit désormais DANS la modale
+    // #mChainCompany (voir modalOptionChain, câblé à l'intérieur de cette fonction même — même pattern que
+    // les autres sélecteurs internes de modale de l'app, ex. mOptCompany dans modalOptionTrade) — la
+    // chaîne n'est plus affichée en permanence dans la page, donc son sélecteur n'a plus sa place ici.
+    const openOptionChainBtn = document.getElementById('openOptionChainBtn');
+    if(openOptionChainBtn) openOptionChainBtn.addEventListener('click', ()=>modalOptionChain());
     const openOptionTradeBtn = document.getElementById('openOptionTradeBtn');
     if(openOptionTradeBtn) openOptionTradeBtn.addEventListener('click', ()=>modalOptionTrade());
     document.querySelectorAll('[data-close-option]').forEach(b=>b.addEventListener('click', ()=>closeOptionPositionFromUi(b.dataset.closeOption)));
@@ -8329,6 +8775,38 @@ function bindTabEvents(t){
       const price = parseFloat(document.getElementById('etfSellPrice_'+id).value)||0;
       sellEtfUnits(id, myCo.id, buyerId, pct, price);
     }));
+  }
+  if(t==='simulation'){
+    // Section 147 (voir RESUME_ET_REGLES.md) — lit tous les champs du formulaire dans simParams (variable
+    // de MODULE, jamais dans `state` — voir le grand commentaire de section au-dessus de renderSimulation),
+    // PUIS lance runStockSimulation() et cache le résultat dans simResults avant de re-render — le calcul
+    // est synchrone (boucle JS pure, pas d'attente réseau), donc pas besoin d'async/await ici.
+    const readSimFormIntoParams = ()=>{
+      const num = (id, fallback)=>{ const el = document.getElementById(id); const v = el ? parseFloat(el.value) : NaN; return Number.isFinite(v) ? v : fallback; };
+      simParams.years = num('simYears', simParams.years);
+      simParams.trialsPerType = num('simTrials', simParams.trialsPerType);
+      simParams.startPrice = num('simStartPrice', simParams.startPrice);
+      simParams.drawsMin = num('simDrawsMin', simParams.drawsMin);
+      simParams.drawsMax = num('simDrawsMax', simParams.drawsMax);
+      simParams.moveMinPct = num('simMoveMin', simParams.moveMinPct);
+      simParams.moveMaxPct = num('simMoveMax', simParams.moveMaxPct);
+      simParams.floorPct = num('simFloorPct', simParams.floorPct);
+      simParams.greenPct = num('simGreenPct', simParams.greenPct);
+      simParams.redPct = num('simRedPct', simParams.redPct);
+      COMPANY_TYPES.forEach(t2=>{ simParams.typeVolatility[t2.key] = num('simVol_'+t2.key, simParams.typeVolatility[t2.key]); });
+    };
+    const runBtn = document.getElementById('simRunBtn');
+    if(runBtn) runBtn.addEventListener('click', ()=>{
+      readSimFormIntoParams();
+      simResults = runStockSimulation(simParams);
+      render();
+    });
+    const resetBtn = document.getElementById('simResetBtn');
+    if(resetBtn) resetBtn.addEventListener('click', ()=>{
+      simParams = simDefaultParams();
+      simResults = null;
+      render();
+    });
   }
 }
 
@@ -8447,7 +8925,7 @@ function modalAdjustCompany(companyId){
 function modalAdjustBank(){
   openModal(`
     <h3>Ajuster la banque</h3>
-    <label>Montant (+ pour crédit, - pour débit)</label>
+    <label>Montant (+ pour crédit, - pour débit, en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mAmount" value="0">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -8583,7 +9061,7 @@ function modalBuyShares(pid){
   openModal(`
     <h3>Acheter des parts — ${esc(p.name)}</h3>
     <div class="small">Prix de base: ${fmt(p.basePrice)}${wasSeized?` · Valeur intrinsèque (suggérée, terrain déjà possédé par le passé): ${fmt(suggestedPrice)}`:''} (max ${state.settings.maxOwners} entreprises copropriétaires simultanées — ${existingOwnerIds.length} actuellement)</div>
-    <label>Prix convenu (pour 100% du terrain)</label>
+    <label>Prix convenu (pour 100% du terrain, en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mPrice" value="${suggestedPrice}">
     <label>Répartition entre entreprises acheteuses (max ${cap}% rachetable à la banque${cap<100?` — le reste (${100-cap}%) est réservé en permanence à la banque, module ETF activé`:''})</label>
     <div id="mBuyerRows"></div>
@@ -8659,7 +9137,7 @@ function modalSellShare(pid){
     <label>Pourcentage vendu</label>
     <input type="number" min="1" max="100" id="mPct" value="100">
     ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque, sauf si vous vendez la TOTALITÉ de la part détenue par le vendeur choisi (même si elle est inférieure au minimum) — aucun minimum pour une vente à un autre joueur.</div>`:''}
-    <label>Prix convenu</label>
+    <label>Prix convenu (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mPrice" value="${p.basePrice}">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -9090,7 +9568,7 @@ function modalHouseCompensation(pid, sourceId){
     <h3>Compensation — ${esc(p.name)}</h3>
     <div class="small" style="margin-bottom:8px;">Maison prise dans la réserve de <b>${esc(source?source.name:'?')}</b>. Si une compensation a été négociée entre les copropriétaires, inscrivez le montant total à lui transférer — réparti au pro rata des parts des AUTRES copropriétaires (jamais la banque ni les ETF). Laissez à 0 si aucune compensation n'a été convenue.</div>
     ${payers.length===0 ? `<div class="small">Aucun autre copropriétaire sur ce terrain — aucune compensation possible.</div>` : `
-    <label>Montant total à transférer à ${esc(source?source.name:'?')}</label>
+    <label>Montant total à transférer à ${esc(source?source.name:'?')} (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" min="0" id="mCompAmount" value="0">
     <div class="small" id="mCompBreakdown" style="margin-top:6px;">${breakdown(0)}</div>
     `}
@@ -9184,7 +9662,7 @@ function modalIssueLoanAdmin(){
     <select id="mLoanLenderAdmin"><option value="BANK">Banque</option>${companies.map(c=>`<option value="${c.id}">${companyOptionLabel(c)}</option>`).join('')}</select>
     <label>Emprunteur</label>
     <select id="mLoanBorrowerAdmin">${activeCompanyOptions(myCo?myCo.id:null, null, true)}</select>
-    <label>Capital (max ${fmt(state.settings.loanMaxPrincipal)})</label>
+    <label>Capital (en ${esc(state.unit)}, max ${fmt(state.settings.loanMaxPrincipal)})</label>
     <input type="number" step="0.01" min="0" max="${state.settings.loanMaxPrincipal}" id="mLoanPrincipalAdmin" value="1">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -9217,7 +9695,7 @@ function modalSellMergedShare(mergeId){
     <label>Pourcentage vendu</label>
     <input type="number" min="1" max="100" id="mPct" value="100">
     ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque, sauf si vous vendez la TOTALITÉ de la part détenue par le vendeur choisi (même si elle est inférieure au minimum) — aucun minimum pour une vente à un autre joueur.</div>`:''}
-    <label>Prix convenu (pour tout le lot)</label>
+    <label>Prix convenu (pour tout le lot, en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mPrice" value="0">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -9388,10 +9866,15 @@ function modalMortgageCompany(){
     const key = e.merged ? `lot:${e.p.groupMergeId}` : `prop:${e.p.id}`;
     return `<div class="deed-actions" style="margin-bottom:6px;"><span class="small">${esc(label)} (max ${fmt(max)})</span><button class="btn btn-ghost btn-sm" data-mc-choice="${key}">Hypothéquer</button></div>`;
   }).join('');
+  // Section 148 (voir RESUME_ET_REGLES.md): montant à rembourser (m.principal — EXACTEMENT ce que
+  // repayMortgage/repayMortgageLot débitent, aucun recalcul) affiché à côté de chaque ligne « Déjà
+  // hypothéqués » — demande explicite de l'utilisateur, pour savoir combien coûtera le clic avant de le
+  // faire (remboursement toujours intégral en un clic, aucun montant partiel possible).
   const mortgagedRows = mortgaged.map(e=>{
     const label = e.merged ? `Lot ${GROUPS[e.p.group].label}` : e.p.name;
     const key = e.merged ? `lot:${e.p.groupMergeId}` : `prop:${e.p.id}`;
-    return `<div class="deed-actions" style="margin-bottom:6px;"><span class="small">${esc(label)}</span><button class="btn btn-gold btn-sm" data-mc-repay="${key}" ${state.stockMarket.tradingOpen?'':'disabled'}>Rembourser l'hypothèque</button></div>`;
+    const m = (e.host.mortgages||[]).find(x=>x.companyId===myCo.id);
+    return `<div class="deed-actions" style="margin-bottom:6px;"><span class="small">${esc(label)} (à rembourser: ${fmt(m?m.principal:0)})</span><button class="btn btn-gold btn-sm" data-mc-repay="${key}" ${state.stockMarket.tradingOpen?'':'disabled'}>Rembourser l'hypothèque</button></div>`;
   }).join('');
   openModal(`
     <h3>Hypothéquer un terrain — ${esc(myCo.name)}</h3>
@@ -9427,22 +9910,34 @@ function modalBuildHouseCompany(){
   if(!yearEndWindowOpen()){ alert(`La construction de maisons n'est possible qu'à la fin d'une année financière (dans ${rollsUntilYearEnd()} lancer(s)).`); return; }
   const myCo = myCompany();
   if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
-  const eligible = state.properties.filter(p=>p.type==='color' && p.groupMergeId && propertyOwnedShare(p, myCo.id)===100 && p.houses<hotelLevel());
+  // Section 145 (ALPHA test, voir RESUME_ET_REGLES.md): demande explicite de l'utilisateur — « il est
+  // possible de construire des maisons quand tu es en partenariat entre entreprise » — l'ancien filtre
+  // propertyOwnedShare(p, myCo.id)===100 excluait à tort les terrains en COPROPRIÉTÉ (lot regroupé
+  // possédé par plusieurs entreprises), alors que buildHouse()/modalHouseCompensation() gèrent déjà
+  // correctement ce cas depuis longtemps (coût réparti au pro rata des parts de TOUS les copropriétaires,
+  // compensation optionnelle versée aux AUTRES copropriétaires quand la maison vient de la réserve d'une
+  // entreprise tierce — voir buildHouse ci-dessus). Il suffit donc que ${esc('myCo')} détienne une part
+  // (>0%) du terrain, pas 100% — le flux « provenance de la maison → compensation » (modalBuildHouseSource/
+  // modalHouseCompensation, actif quand state.settings.features.houseSource l'est) répond déjà exactement
+  // à la demande « pop-up qui demande sur quel terrain bâtir, puis où prendre les droits, puis demande une
+  // compensation des autres propriétaires le cas échéant ».
+  const eligible = state.properties.filter(p=>p.type==='color' && p.groupMergeId && propertyOwnedShare(p, myCo.id)>0 && p.houses<hotelLevel());
   if(eligible.length===0){
     openModal(`
     <h3>Construire une maison</h3>
-    <div class="small">Aucun terrain éligible pour ${esc(myCo.name)} pour l'instant — il faut un terrain de couleur, en lot regroupé, possédé à 100% par votre entreprise, et pas encore au niveau maximal (hôtel).</div>
+    <div class="small">Aucun terrain éligible pour ${esc(myCo.name)} pour l'instant — il faut un terrain de couleur, en lot regroupé, dont votre entreprise détient au moins une part (seule ou en copropriété), et pas encore au niveau maximal (hôtel).</div>
     <div class="modal-actions"><button class="btn btn-ghost" id="mCancel">Fermer</button></div>`);
     document.getElementById('mCancel').addEventListener('click', closeModal);
     return;
   }
   const rows = eligible.map(p=>{
     const cost = p.houses<hotelLevel() ? (HOUSE_COST_BY_GROUP[p.group]||0) : null;
-    return `<div class="deed-actions" style="margin-bottom:6px;"><span class="small">${esc(p.name)} — ${houseLabel(p.houses)}${cost!=null?` (coût: ${fmt(cost)})`:''}</span><button class="btn btn-brick btn-sm" data-bhc-choice="${p.id}">Construire</button></div>`;
+    const myShare = propertyOwnedShare(p, myCo.id);
+    return `<div class="deed-actions" style="margin-bottom:6px;"><span class="small">${esc(p.name)} — ${houseLabel(p.houses)}${cost!=null?` (coût total: ${fmt(cost)}${myShare<100?`, votre part ${myShare}%: ${fmt(cost*myShare/100)}`:''})`:''}</span><button class="btn btn-brick btn-sm" data-bhc-choice="${p.id}">Construire</button></div>`;
   }).join('');
   openModal(`
     <h3>Construire une maison — ${esc(myCo.name)}</h3>
-    <div class="small" style="margin-bottom:8px;">Terrains possédés à 100% par ${esc(myCo.name)}, éligibles à une nouvelle construction.</div>
+    <div class="small" style="margin-bottom:8px;">Terrains dont ${esc(myCo.name)} détient au moins une part (seule ou en copropriété), éligibles à une nouvelle construction. En copropriété, le coût est réparti au pro rata des parts de TOUS les copropriétaires.</div>
     ${rows}
     <div class="modal-actions"><button class="btn btn-ghost" id="mCancel">Fermer</button></div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
@@ -9467,7 +9962,7 @@ function modalHouseBid(){
     <div class="small" style="margin-bottom:8px;">Maisons disponibles ce tour: <b>${state.houseAuction.availableHouses}</b>.</div>
     <label>Nombre de maisons souhaité</label>
     <input type="number" min="1" step="1" id="mHouseBidQty" value="${myBid?myBid.qty:1}">
-    <label>Prix prêt à payer par maison</label>
+    <label>Prix prêt à payer par maison (en ${esc(state.unit)})</label>
     <input type="number" min="0" step="0.01" id="mHouseBidPrice" value="${myBid?myBid.price:0}">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -9520,7 +10015,7 @@ function modalSellHouses(){
     <select id="mSellHousesBuyer">${activeCompanyOptions(null, myCo.id, true)}</select>
     <label>Nombre de maisons à vendre (max ${myCo.houseReserve})</label>
     <input type="number" min="1" max="${myCo.houseReserve}" step="1" id="mSellHousesQty" value="1">
-    <label>Prix par maison</label>
+    <label>Prix par maison (en ${esc(state.unit)})</label>
     <input type="number" min="0" step="0.01" id="mSellHousesPrice" value="0">
     <div class="small" id="mSellHousesTotal" style="margin-top:6px;font-weight:600;"></div>
     <div class="modal-actions">
@@ -9724,7 +10219,7 @@ function modalInsureBundle(claimMode, term){
   // state.currentDeductible comme insuranceQuote/taxInsuranceQuote) — plus de branchement isSub ici, à la
   // différence de claimModeFieldHtml juste au-dessus (le mode de sinistre, lui, ne s'applique toujours pas
   // au terme "sub" — un seul lancé couvert, rien à récurrer).
-  const deductibleFieldHtml = `<label>Franchise pour ce tour (identique pour tous les contrats signés ce tour-ci)</label>
+  const deductibleFieldHtml = `<label>Franchise pour ce tour (identique pour tous les contrats signés ce tour-ci, en ${esc(state.unit)})</label>
       <input type="number" step="0.01" id="mDeductibleGlobal" value="${state.currentDeductible||0}" style="margin-bottom:4px;">`;
   openModal(`
     <style>.modal{max-width:720px;}</style>
@@ -9830,8 +10325,8 @@ function modalAnnounceDividend(){
     <h3>Annoncer un dividende — ${esc(myCo.name)}</h3>
     <div class="small" style="margin-bottom:10px;">Annonce un montant total, immédiatement immobilisé (sorti) de la trésorerie de l'entreprise, versé au PROCHAIN semestre aux actionnaires RÉELS actuels (jamais la portion des parts encore détenue par la banque en attente d'introduction en bourse), au prorata de LEUR participation À CE MOMENT PRÉCIS. Pour toucher sa part, un actionnaire doit conserver AU MOINS le nombre de parts qu'il avait à l'annonce jusqu'au versement — une vente, même partielle, entre-temps fait perdre la totalité de sa part (aucune proratisation sur ce qu'il lui reste). C'est la RÉGULARITÉ des versements dans le temps, plus que le montant d'un seul versement, qui compte pour la confiance du marché.</div>
     <div class="small" style="margin-bottom:8px;">Trésorerie actuelle: <b>${fmt(myCo.cash)}</b></div>
-    <label>Montant total à annoncer</label>
-    <input type="number" step="0.01" min="0" max="${myCo.cash}" id="mDividendAmount" value="0">
+    <label>Montant total à annoncer (en ${esc(state.unit)})</label>
+    <input type="number" step="0.01" min="0" max="${myCo.cash}" id="mDividendAmount" value="${Math.max(0,myCo.cash||0).toFixed(2)}">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Annoncer</button>
@@ -9851,10 +10346,18 @@ function modalAnnounceDividend(){
     myCo.cash -= amount;
     logFin(myCo.id, 'dividend_payout', -amount);
     const payAtRoll = (Math.floor(state.gameClock.rollCount/3)+1)*3; // prochaine frontière de semestre, TOUJOURS strictement après
+    // Section 148 (voir RESUME_ET_REGLES.md): totalSharesAtAnnouncement = TOTAL des parts émises à ce
+    // moment (myCo.sharesIssued — par construction toujours égal à la somme de myCo.shareholders[].shares,
+    // BANK comprise), pas seulement la somme des actionnaires RÉELS (totalRealShares). C'est ce total
+    // complet qui sert de dénominateur au versement (voir advanceGameClock) — demande explicite de
+    // l'utilisateur: un dividende de 1M avec 50% CEO/30% Banque/20% Joueur A doit RÉELLEMENT verser 0,7M
+    // (50%+20% du total), pas 1M redistribué en gonflant la part de chacun pour compenser l'exclusion de la
+    // banque.
     state.dividendAnnouncements.push({
       id: uid(), companyId: myCo.id, amount,
       announcedAtRoll: state.gameClock.rollCount, payAtRoll,
       recordHolders: realHolders.map(h=>({playerId:h.playerId, shares:h.shares})),
+      totalSharesAtAnnouncement: myCo.sharesIssued,
     });
     const entries = [{label:`${myCo.name} (dividende annoncé — immobilisé)`, amount:-amount}];
     log(`${myCo.name} annonce un dividende total de ${fmt(amount)}, immobilisé et versé au prochain semestre (dans ${rollsUntilSemesterEnd()} lancer(s)) aux actionnaires actuels, au prorata de LEUR participation À CE MOMENT.`, entries);
@@ -9887,8 +10390,8 @@ function modalBuySellShares(direction){
     <label>Entreprise</label>
     <select id="mTradeCompany">${options}</select>
     <div class="small" id="mTradeInfo" style="margin-bottom:8px;"></div>
-    <label>Montant ($)</label>
-    <input type="number" step="0.01" min="0" id="mTradeAmount" value="0">
+    <label>Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
+    <input type="number" step="0.01" min="0" id="mTradeAmount" value="${direction==='buy' ? Math.max(0,me.cash||0).toFixed(2) : 0}">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">${dirLabel}</button>
@@ -9949,7 +10452,7 @@ function modalShortShares(mode){
     <label>Entreprise</label>
     <select id="mShortCompany">${options}</select>
     <div class="small" id="mShortInfo" style="margin-bottom:8px;"></div>
-    <label>Montant ($)</label>
+    <label>Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
     <input type="number" step="0.01" min="0" id="mShortAmount" value="0">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -9998,7 +10501,7 @@ function modalAnnounceCeoTrade(){
     <div class="small" style="margin-bottom:10px;">En tant que CEO, vous ne pouvez pas trader directement les parts de votre propre entreprise (délit d'initié intégré au jeu). Vous pouvez toutefois ANNONCER publiquement une intention d'achat ou de vente — exécutée AUTOMATIQUEMENT dans 1 AN (6 lancers), au prix COURANT à ce moment-là (pas celui d'aujourd'hui). Visible par tous les joueurs dès sa création. <b>Irrévocable</b> : aucune option d'annulation une fois l'annonce faite.</div>
     <label>Direction</label>
     <select id="mCeoAnnounceDir"><option value="buy">Achat</option><option value="sell">Vente</option></select>
-    <label>Montant ($)</label>
+    <label>Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
     <input type="number" step="0.01" min="0" id="mCeoAnnounceAmount" value="0">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -10038,8 +10541,8 @@ function modalBonds(mode){
   openModal(`
     <h3>${label}</h3>
     ${maxInfo}
-    <label>Montant ($)</label>
-    <input type="number" step="0.01" min="0" id="mBondAmount" value="0">
+    <label>Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
+    <input type="number" step="0.01" min="0" id="mBondAmount" value="${mode==='invest' ? Math.max(0,me.cash||0).toFixed(2) : 0}">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">${mode==='invest'?'Investir':'Retirer'}</button>
@@ -10065,6 +10568,66 @@ function modalBonds(mode){
    du strike sélectionné (un $ déjà calculé, capturé dans la balise <option>) est envoyée telle quelle à
    openOptionPosition, qui la FIGE dans la position créée (voir son commentaire — jamais recalculée
    ensuite). */
+/* Section 146 (ALPHA test 2, voir RESUME_ET_REGLES.md) — item 1, demande explicite de l'utilisateur:
+   « Possible de mettre aussi la chaîne d'option dans un pop-up qui est déclencher dans les actions pour
+   libéré visuellement » — la chaîne de primes (calls/puts, tous les strikes × toutes les échéances pour
+   une compagnie choisie), auparavant affichée EN PERMANENCE dans l'accordéon pf-options de
+   renderPortefeuilleTrading (donc toujours visible, prenant beaucoup de place verticale même sans
+   intention de trader), est déplacée dans cette modale dédiée, ouverte depuis le nouveau bouton
+   #openOptionChainBtn du menu ☰ Actions (groupe « Options », voir renderPortefeuilleTopBar). Reprend le
+   contenu de l'ancien bloc EXACTEMENT (même construction chainCo/chain/expiryHeaders/buildRows que
+   l'ancien code de renderPortefeuilleTrading), réutilise portefeuilleOptionsCompanyId (variable de module
+   déjà existante, partagée avec le reste de l'app) pour retenir la compagnie choisie d'un clic à l'autre —
+   même logique d'amorçage/nettoyage qu'avant (1re compagnie éligible si rien choisi, ou si l'ancien choix
+   ne correspond plus à aucune compagnie éligible). Le sélecteur de compagnie de la modale se re-render en
+   rappelant modalOptionChain() elle-même au changement (pattern le plus simple pour une modale sans
+   sous-état complexe — contrairement à modalOptionTrade qui reconstruit juste ses <select> sans tout
+   rouvrir, ici toute la modale est bon marché à reconstruire). */
+function modalOptionChain(){
+  const me = state.players.find(p=>p.id===myPlayerId);
+  if(!me) return;
+  const optionEligible = activeCompanies().filter(c=>companyPendingIpoShares(c)<=0 && c.ceoId!==me.id);
+  if(optionEligible.length===0){ alert('Aucune entreprise disponible pour la chaîne d’options pour le moment (introduction en bourse non financée, ou vous êtes CEO de toutes les entreprises actives).'); return; }
+  if(portefeuilleOptionsCompanyId===null || !optionEligible.some(c=>c.id===portefeuilleOptionsCompanyId)){
+    portefeuilleOptionsCompanyId = optionEligible[0].id;
+  }
+  const chainCo = companyById(portefeuilleOptionsCompanyId);
+  const chain = optionChainFor(chainCo);
+  // Section 150 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur (corrigée en cours de
+  // route, verbatim d'abord « call à droite les put à gauche et les strike au centre » puis « Oups les
+  // call a gauche les puts a droite ») : mise en page classique en 3 colonnes d'une chaîne d'options —
+  // calls à GAUCHE, strikes au CENTRE, puts à DROITE, une seule ligne par strike (au lieu de deux tables
+  // empilées, une par type). Les échéances restent en colonnes de chaque côté (autant de colonnes calls
+  // que de colonnes puts, symétriques autour de la colonne Strike).
+  const expiryHeaders = chain.expiries.map(e=>`<th>${e.semesters} sem.</th>`).join('');
+  const nExp = chain.expiries.length;
+  const chainRows = chain.strikes.map((strike,i)=>{
+    const callCells = chain.expiries.map(e=>`<td class="money">${fmtPrice(optionPremiumFor(chainCo, 'call', strike, e.rollTarget))}</td>`).join('');
+    const putCells = chain.expiries.map(e=>`<td class="money">${fmtPrice(optionPremiumFor(chainCo, 'put', strike, e.rollTarget))}</td>`).join('');
+    const pctLabel = `${OPTION_STRIKE_PCTS[i]>=0?'+':''}${(OPTION_STRIKE_PCTS[i]*100).toFixed(0)}%`;
+    return `<tr>${callCells}<td class="money" style="font-weight:700;background:rgba(180,83,9,0.08);">${fmtPrice(strike)} (${pctLabel})</td>${putCells}</tr>`;
+  }).join('');
+  openModal(`
+    <h3>Chaîne d'options</h3>
+    <label class="small" style="display:inline;margin:0;" for="mChainCompany">Entreprise</label><br>
+    <select id="mChainCompany">${optionEligible.map(c=>`<option value="${c.id}" ${c.id===portefeuilleOptionsCompanyId?' selected':''}>${companyOptionLabel(c)} — ${fmtPrice(c.stockPrice||0)}/part</option>`).join('')}</select>
+    <div class="small" style="margin:8px 0 2px;">Prix courant : ${fmtPrice(chainCo.stockPrice||0)}/part</div>
+    <div style="overflow-x:auto;">
+    <table>
+      <tr><th colspan="${nExp}" style="text-align:center;">Calls</th><th></th><th colspan="${nExp}" style="text-align:center;">Puts</th></tr>
+      <tr>${expiryHeaders}<th>Strike</th>${expiryHeaders}</tr>
+      ${chainRows}
+    </table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="mChainClose">Fermer</button>
+    </div>`);
+  document.getElementById('mChainCompany').addEventListener('change', (e)=>{
+    portefeuilleOptionsCompanyId = e.target.value;
+    modalOptionChain();
+  });
+  document.getElementById('mChainClose').addEventListener('click', closeModal);
+}
 function modalOptionTrade(){
   const me = state.players.find(p=>p.id===myPlayerId);
   if(!me) return;
@@ -10087,7 +10650,7 @@ function modalOptionTrade(){
     <select id="mOptStrike"></select>
     <label>Échéance</label>
     <select id="mOptExpiry"></select>
-    <label>Parts (contrats)</label>
+    <label>Contrats (levier 100X — 1 contrat = droit sur 100 parts du sous-jacent)</label>
     <input type="number" step="0.01" min="0" id="mOptShares" value="0">
     <div class="small" id="mOptInfo" style="margin-bottom:8px;"></div>
     <div class="modal-actions">
@@ -10113,7 +10676,13 @@ function modalOptionTrade(){
     const expiryRoll = parseInt(document.getElementById('mOptExpiry').value)||0;
     const shares = parseFloat(document.getElementById('mOptShares').value)||0;
     const premium = (co && strike>0 && expiryRoll>0) ? optionPremiumFor(co, type, strike, expiryRoll) : 0;
-    document.getElementById('mOptInfo').textContent = co ? `Prime unitaire courante: ${fmtPrice(premium)}/contrat — total pour cette position: ${fmt(premium*shares)}.` : '';
+    // Section 151 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: séparer le montant de
+    // la PRIME payée/encaissée (premium × 100 parts/contrat × contrats) de la valeur NOTIONNELLE de
+    // l'actif sous-jacent contrôlé par la position (strike × 100 parts/contrat × contrats) — deux montants
+    // très différents (la prime est le coût de la position, le notionnel est ce qu'elle "contrôle") qui
+    // étaient auparavant mélangés en une seule phrase, source de confusion.
+    const underlyingNotional = strike * OPTION_CONTRACT_MULTIPLIER * shares;
+    document.getElementById('mOptInfo').innerHTML = co ? `Prime ${fmtPrice(premium)}/part × 100 parts × ${shares} contrat(s) = ${fmt(optionNotional(shares, premium))}<br>Actif sous-jacent = ${fmtPrice(strike)} (strike) × 100 parts × ${shares} contrat(s) = ${fmt(underlyingNotional)}` : '';
   };
   refreshChainSelectors();
   refreshInfo();
@@ -10135,7 +10704,7 @@ function modalOptionTrade(){
     const res = openOptionPosition(co, me, type, side, strike, expiryRoll, shares);
     if(!res.ok){ alert(res.error); return; }
     const typeLabel = type==='call' ? 'CALL' : 'PUT';
-    log(`${me.name} ${side==='long'?'achète':'écrit'} une option ${typeLabel} sur ${co.name} (strike ${fmtPrice(strike)}, échéance au lancer ${expiryRoll}, ${res.qty.toFixed(4)} part(s)).`, res.entries);
+    log(`${me.name} ${side==='long'?'achète':'écrit'} une option ${typeLabel} sur ${co.name} (strike ${fmtPrice(strike)}, échéance au lancer ${expiryRoll}, ${res.qty.toFixed(4)} contrat(s) — levier 100X).`, res.entries);
     await saveGame(); closeModal(); render();
     showTransactionPopup(`Nouvelle position d'option — ${co.name}`, res.entries);
   });
@@ -10156,7 +10725,7 @@ async function closeOptionPositionFromUi(positionId){
   const res = closeOptionPosition(me, positionId, Number.MAX_SAFE_INTEGER);
   if(!res.ok){ alert(res.error); return; }
   const label = co ? co.name : '?';
-  log(`${me.name} clôture sa position d'option sur ${label} (${res.qty.toFixed(4)} part(s), au prix courant).`, res.entries);
+  log(`${me.name} clôture sa position d'option sur ${label} (${res.qty.toFixed(4)} contrat(s), au prix courant).`, res.entries);
   await saveGame(); render();
   showTransactionPopup(`Clôture d'option — ${label}`, res.entries);
 }
@@ -10182,7 +10751,7 @@ function modalInsureProperty(pid){
     <select id="mCompany">${activeCompanyOptions(defaultCoId)}</select>
     <div class="small" id="mRangeText">${rangeText(defaultCoId)}</div>
     <div class="small">Vendeur: <b>Banque</b> (seule option \u00e0 la signature \u2014 une autre entreprise peut reprendre ce contrat par la suite depuis l'onglet Mon Entreprise (section Marché des contrats))</div>
-    <label>Prime n\u00e9goci\u00e9e</label>
+    <label>Prime n\u00e9goci\u00e9e (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mPremium" value="${q.ceil.toFixed(2)}">
     <div class="small">Franchise appliqu\u00e9e (fix\u00e9e pour ce tour dans l'onglet Mon Entreprise): <b>${fmt(state.currentDeductible||0)}</b></div>
     <div class="modal-actions">
@@ -10273,7 +10842,7 @@ function modalIssueLoan(){
     <div class="small" style="margin-bottom:8px;"><b>Banque</b></div>
     <label>Emprunteur</label>
     <div class="small" style="margin-bottom:8px;"><b>${esc(myCo.name)}</b></div>
-    <label>Capital (max ${fmt(state.settings.loanMaxPrincipal)})</label>
+    <label>Capital (en ${esc(state.unit)}, max ${fmt(state.settings.loanMaxPrincipal)})</label>
     <input type="number" step="0.01" min="0" max="${state.settings.loanMaxPrincipal}" id="mLoanPrincipalModal" value="1">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -10305,7 +10874,7 @@ function modalProposeSwap(){
         <select id="mSwapPropA">${myTradableAssets.map(swapAssetOpt).join('')}</select>
       </div>
       <div>
-        <label>Plafond de vos revenus cédés (optionnel)</label>
+        <label>Plafond de vos revenus cédés (optionnel, en ${esc(state.unit)})</label>
         <input type="number" step="0.01" min="0" id="mSwapCapA" placeholder="illimité" style="width:120px;">
       </div>
       <div>
@@ -10317,7 +10886,7 @@ function modalProposeSwap(){
         <select id="mSwapPropB">${tradableAssets().map(swapAssetOpt).join('')}</select>
       </div>
       <div>
-        <label>Plafond de ses revenus cédés (optionnel)</label>
+        <label>Plafond de ses revenus cédés (optionnel, en ${esc(state.unit)})</label>
         <input type="number" step="0.01" min="0" id="mSwapCapB" placeholder="illimité" style="width:120px;">
       </div>
       <div>
@@ -10393,7 +10962,7 @@ function modalSubInsureProperty(pid){
     <select id="mCompany">${activeCompanyOptions(defaultCoId)}</select>
     <div class="small" id="mRangeText">${rangeText(defaultCoId)}</div>
     <div class="small">Vendeur: <b>Banque</b> (seule option \u00e0 la signature \u2014 une autre entreprise peut reprendre ce contrat par la suite depuis l'onglet Mon Entreprise (section Marché des contrats))</div>
-    <label>Prime n\u00e9goci\u00e9e</label>
+    <label>Prime n\u00e9goci\u00e9e (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mPremium" value="${q.ceil.toFixed(2)}">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -10482,31 +11051,31 @@ function renderSetup(){
       <label>Nombre maximal de copropriétaires simultanés par terrain</label>
       <input type="number" step="1" min="1" id="setupMaxOwners" value="3">
       <label>Pourcentage minimum que la banque accepte de racheter en une seule vente (0 = aucun minimum). Vendre à un autre joueur n'a jamais de minimum, peu importe cette valeur.</label>
-      <input type="number" step="1" min="0" max="100" id="setupBankMinSellPct" value="0"> %
+      <input type="number" step="1" min="0" max="100" id="setupBankMinSellPct" value="25"> %
       <label>Majoration de profit de la banque (fixe toute la partie — assurances et rachat de terrains)</label>
       <input type="number" step="1" id="setupMarkup" value="25"> %
       <label>Pénalité additionnelle de liquidation (appliquée seulement au rachat/liquidation par la banque, en plus de la majoration ci-dessus)</label>
-      <input type="number" step="1" id="setupLiquidationPenalty" value="0"> %
+      <input type="number" step="1" id="setupLiquidationPenalty" value="10"> %
       <label>Taux d'actualisation (valeur intrinsèque des terrains)</label>
       <input type="number" step="1" id="setupDiscount" value="10"> %
       <label>Croissance des loyers par tour</label>
       <input type="number" step="1" id="setupGrowth" value="2"> %
       <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-weight:400;color:var(--ink);margin-top:10px;">
-        <input type="checkbox" id="setupBankCollectsRent" checked style="width:auto;">
+        <input type="checkbox" id="setupBankCollectsRent" style="width:auto;">
         La banque perçoit un loyer sur sa propre part d'un terrain de couleur partiellement vendu (décochez pour qu'elle n'en perçoive jamais)
       </label>
       <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-weight:400;color:var(--ink);margin-top:10px;">
-        <input type="checkbox" id="setupLinearRent" style="width:auto;">
+        <input type="checkbox" id="setupLinearRent" checked style="width:auto;">
         Avoir une partie à loyer linéaire (terrains de couleur): au lieu de la progression exponentielle classique du loyer en bâtissant des maisons, le loyer croît linéairement — du loyer de base (aucune maison, minimum) au loyer de l'hôtel (maximum), réparti également sur chaque niveau de construction
       </label>
       <label>Nombre de maisons avant l'hôtel (mode loyer linéaire seulement — 4 dans le Monopoly classique, ex: 6 pour une progression plus graduelle)</label>
-      <input type="number" step="1" min="1" id="setupHousesBeforeHotel" value="4">
+      <input type="number" step="1" min="1" id="setupHousesBeforeHotel" value="10">
 
       <div class="setup-subhead">Hypothèques &amp; risque d'endettement</div>
       <label>Emprunt hypothécaire max (% du prix de base pour un terrain seul, % de la valeur intrinsèque pour un lot regroupé)</label>
       <input type="number" step="1" id="setupMortgageLTV" value="50"> %
       <label>Taux d'intérêt hypothécaire (élevé — la dette doit rester un pari favorable au prêteur)</label>
-      <input type="number" step="1" id="setupMortgageRate" value="17"> %
+      <input type="number" step="1" id="setupMortgageRate" value="15"> %
       <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-weight:400;color:var(--ink);margin-top:10px;">
         <input type="checkbox" id="setupMortgageRentContinues" style="width:auto;">
         Le loyer continue d'être payé sur un terrain hypothéqué (sinon, règle classique: aucun loyer tant que l'hypothèque est active)
@@ -10522,15 +11091,15 @@ function renderSetup(){
       <label>Taux d'escompte des subventions d'avance</label>
       <input type="number" step="1" id="setupGoRate" value="10"> %
       <label>Nombre maximal de subventions d'avance simultanées (non remboursées) par joueur — 0 = illimité</label>
-      <input type="number" step="1" min="0" id="setupGoAdvanceMax" value="5">
+      <input type="number" step="1" min="0" id="setupGoAdvanceMax" value="3">
 
       <div class="setup-subhead">Accords de compensation de loyer</div>
       <label>Frais de signature (par joueur, en M$ — ex: 0.25 = 250K$)</label>
-      <input type="number" step="0.01" min="0" id="setupRentCompFee" value="0.25">
+      <input type="number" step="0.01" min="0" id="setupRentCompFee" value="0.1">
 
       <div class="setup-subhead">Assurance sous-standard</div>
       <label>Majoration de la prime (bien plus élevée que la majoration normale ci-dessus — ne couvre qu'un seul lancé de dé)</label>
-      <input type="number" step="1" min="0" id="setupSubInsuranceMarkup" value="100"> %
+      <input type="number" step="1" min="0" id="setupSubInsuranceMarkup" value="45"> %
 
       <!-- Section 120 (voir RESUME_ET_REGLES.md): la sous-section « Rabais de volume — assurance normale
       seulement (jamais sous-standard) » (#setupInsuranceGroupDiscount2nd/3rd) est retirée d'ici avec tout
@@ -10541,13 +11110,13 @@ function renderSetup(){
       <label>% de tous les loyers reçus par l'emprunteur, retenu et versé automatiquement au prêteur</label>
       <input type="number" step="1" min="0" max="100" id="setupLoanPct" value="20"> %
       <label>Multiple du capital à rembourser (via les retenues) pour que celles-ci s'arrêtent</label>
-      <input type="number" step="0.1" min="1" id="setupLoanMultiple" value="1.5">
+      <input type="number" step="0.1" min="1" id="setupLoanMultiple" value="2">
       <label>Maximum empruntable par prêt (en M$ — ex: 5 = 5M$)</label>
       <input type="number" step="0.01" min="0" id="setupLoanMaxPrincipal" value="5">
 
       <div class="setup-subhead">ETF de terrains</div>
       <label>% de CHAQUE terrain réservé en permanence à la banque (jamais achetable directement — devient la matière première des ETF)</label>
-      <input type="number" step="1" min="0" max="99" id="setupEtfReservePct" value="10"> %
+      <input type="number" step="1" min="0" max="99" id="setupEtfReservePct" value="20"> %
       <label>% du fonds émis (mis en tranche, aux enchères) à chaque fin d'année financière, une fois les ETF ouverts</label>
       <input type="number" step="1" min="1" max="100" id="setupEtfIssuancePct" value="10"> %
 
@@ -10561,7 +11130,7 @@ function renderSetup(){
       <div id="featureChecks" style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
         ${FEATURE_LIST.map(f=>`
           <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-weight:400;color:var(--ink);margin:0;">
-            <input type="checkbox" id="feat_${f.key}" ${(f.key==='etf'||f.key==='houseSource')?'':'checked'} style="width:auto;">
+            <input type="checkbox" id="feat_${f.key}" checked style="width:auto;">
             ${esc(f.label)}
           </label>`).join('')}
       </div>

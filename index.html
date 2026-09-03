@@ -51,6 +51,11 @@ window.__FIREBASE_CONFIG__ = {
   --paper:rgba(255,255,255,0.92);
   --paper-solid:#FFFFFF;
   --gold:#B45309;
+  /* Section 170 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: le code de partie
+     (.codebox, --gold sur --board-dark) était illisible ("rouge sur noire") — --gold est un ambre FONCÉ
+     (#B45309), trop proche en luminosité de --board-dark (#1E293B) pour un texte de petite taille. --gold-pale
+     est une version claire du même accent doré, réservée aux textes affichés sur un fond sombre. */
+  --gold-pale:#FBBF24;
   --brick:#B91C1C;
   --success:#047857;
   --success-bg:#D1FAE5;
@@ -184,6 +189,18 @@ input[type=text],input[type=number],select{
 .btn-gold{background:var(--gold);color:#fff;}
 .btn-brick{background:var(--brick);color:#fff;}
 .btn-ghost{background:transparent;color:var(--board);border:1px solid var(--board);}
+/* Section 170 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: dans le menu « ☰ Actions »
+   de Mon Entreprise, certains boutons étaient en couleur SANS logique cohérente (ex: « Construire une
+   maison » en rouge btn-brick — aucun sens de danger réel — pendant que d'autres actions tout aussi ou
+   plus financières restaient neutres btn-ghost). Deux nouvelles variantes PÂLES (fond doux, texte foncé,
+   jamais le remplissage saturé de .btn-gold/.btn-brick) donnent un sens clair par catégorie : .btn-pale-gold
+   pour toute action qui déplace de l'argent via un PRODUIT FINANCIER de l'entreprise (prêt, dividende,
+   assurance, subvention d'avance) ; .btn-pale-success pour l'action de confirmation positive « Tour
+   Terminé ». Tout le reste (actions immobilières/de plateau/propositions) reste .btn-ghost, neutre.
+   Utilisées UNIQUEMENT dans ce menu — la palette saturée existante (btn-gold/btn-brick) reste inchangée
+   partout ailleurs dans l'application (banque, enchères, IPO, boutons « Refuser »/« Forcer le tour »...). */
+.btn-pale-gold{background:#FDECC8;color:#92400E;border:1px solid rgba(146,64,14,0.22);}
+.btn-pale-success{background:var(--success-bg);color:var(--success);border:1px solid rgba(4,120,87,0.22);}
 .btn-sm{padding:6px 10px;font-size:11px;}
 .btn-x{background:transparent;color:var(--brick);border:none;font-size:16px;cursor:pointer;padding:4px 8px;}
 .tabs{display:flex;flex-wrap:wrap;gap:4px 4px;margin:18px 0 14px;}
@@ -244,7 +261,7 @@ tr:last-child td{border-bottom:none;}
 .empty{color:var(--muted);font-size:13px;padding:14px 0;text-align:center;}
 .pillrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
 .small{font-size:11px;color:var(--muted);}
-.codebox{font-family:'IBM Plex Mono',monospace;background:var(--board-dark);color:var(--gold);padding:4px 10px;border-radius:8px;letter-spacing:3px;font-weight:700;}
+.codebox{font-family:'IBM Plex Mono',monospace;background:var(--board-dark);color:var(--gold-pale);padding:4px 10px;border-radius:8px;letter-spacing:3px;font-weight:700;}
 .board-wrap{max-width:520px;margin:0 auto 18px;}
 .board{display:grid;grid-template-columns:repeat(11,1fr);grid-template-rows:repeat(11,1fr);gap:2px;aspect-ratio:1;background:var(--board-dark);padding:4px;border-radius:var(--radius-md);}
 .sq{background:#fff;border-radius:3px;font-size:6.5px;line-height:1.1;padding:2px;overflow:hidden;cursor:pointer;position:relative;display:flex;flex-direction:column;color:var(--ink);text-align:center;justify-content:center;font-weight:600;}
@@ -545,7 +562,10 @@ const COMPANY_TYPE_GUIDELINES = {
 // Note universelle (indépendante du type choisi) — la spirale de détresse, section 160 : demande explicite
 // de l'utilisateur de bien préciser qu'elle est liée aux FONDAMENTAUX réels (dette/rentabilité), jamais au
 // prix de l'action ni au type. Affichée EN PLUS de la guide line spécifique au type, jamais à sa place.
-const COMPANY_TYPE_GUIDELINE_UNIVERSAL = `Peu importe le type choisi : une entreprise qui accumule les emprunts forcés sans jamais redevenir rentable s'enligne vers une véritable spirale de détresse, pouvant mener jusqu'à la faillite. Cet effondrement n'est jamais dû au type de compagnie ni à la malchance — toujours à sa santé financière réelle (endettement et profitabilité). Une gestion prudente de la dette et des dividendes reste donc essentielle, peu importe le type choisi.`;
+// Section 170 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: texte rendu plus concis
+// (même information: spirale de détresse liée aux emprunts forcés non résolus, jamais au type/malchance,
+// toujours à la santé financière réelle, gestion prudente de la dette/dividendes essentielle).
+const COMPANY_TYPE_GUIDELINE_UNIVERSAL = `Peu importe le type choisi : accumuler des emprunts forcés sans redevenir rentable mène à une spirale de détresse, jusqu'à la faillite possible — jamais à cause du type ou de la malchance, toujours de la santé financière réelle (endettement, profitabilité). Une gestion prudente de la dette et des dividendes reste donc essentielle.`;
 
 /* ---------- Aide stockage ----------
    Deux backends possibles, choisis automatiquement au premier appel:
@@ -751,6 +771,23 @@ function fmtPrice(n){
   const sign = n<0 ? '-' : '';
   const abs = Math.abs(n) * 1e6; // conversion M$ interne -> $ bruts
   return sign + abs.toFixed(2) + ' $';
+}
+// Section 171 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: uniformiser l'affichage des
+// quantités de PARTS (colonne « Parts » de « Mes positions boursières » dans Mon Portefeuille, et colonne
+// « Parts » de l'Actionnariat dans Mon Entreprise) au format « # ### ###.0000 » — séparateur de milliers +
+// toujours 4 décimales, pour rester lisible même pour de grandes quantités (des dizaines/centaines de
+// milliers de parts sont courantes avec companyTotalShares par défaut à 200000). Le séparateur de milliers
+// est une ESPACE INSÉCABLE (\xa0), pas une espace normale — convention typographique française pour les
+// séparateurs de milliers, avec l'avantage supplémentaire d'empêcher un nombre de se couper en plein milieu
+// en cas de retour à la ligne dans une cellule de tableau étroite.
+function fmtShares(n){
+  n = Number(n)||0;
+  const sign = n<0 ? '-' : '';
+  const abs = Math.abs(n);
+  const fixed = abs.toFixed(4);
+  const parts = fixed.split('.');
+  const withThousands = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return sign + withThousands + '.' + parts[1];
 }
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function nowLabel(){ const d=new Date(); return d.toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'}); }
@@ -1735,7 +1772,6 @@ function renderPortefeuille(){
   return `
   ${renderPortefeuilleTopBar(me, company)}
   <div class="section-title">Portefeuille de ${esc(me.name)}</div>
-  <div class="small" style="margin-bottom:10px;">Capital personnel et liquidités du joueur — visible uniquement par ${esc(me.name)} sur son propre appareil.</div>
   <table>
     <tr><td>Liquidités</td><td class="money">${fmt(me.cash)}</td></tr>
     <tr><td>Mon entreprise (CEO)</td><td>${company ? esc(company.name) : '—'}</td></tr>
@@ -1833,12 +1869,17 @@ function renderPortefeuilleTrading(me, company){
   // executeShareTrade/migrateState). P&L POSITIF si le prix a MONTÉ depuis l'achat (position LONGUE — sens
   // INVERSE d'une position à découvert, voir shortsRows plus bas), même style de coloration
   // (#047857/var(--brick), préfixe '+' si positif) que les tables shorts/options existantes.
+  // Section 171 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Dans mes positions
+  // boursière mettre une colonne pour le type d'entreprise (Dividende, croissance, etc). » Nouvelle colonne
+  // « Type », juste après « Entreprise », réutilisant le même libellé que partout ailleurs dans l'app
+  // (COMPANY_TYPES — voir son usage identique à la ligne d'identité de Mon Entreprise).
   const positionsRows = myPositions.map(({co,stake,shares})=>{
     const pnl = (shares && stake.avgCost!==undefined) ? (co.stockPrice-stake.avgCost)*shares : 0;
-    return `<tr><td>${esc(co.name)}</td><td>${shares.toFixed(4)}</td><td class="money">${fmtPrice(stake.avgCost!==undefined?stake.avgCost:0)}</td><td class="money">${fmtPrice(co.stockPrice||0)}</td><td class="money">${fmt(shares*(co.stockPrice||0))}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td></tr>`;
+    const posTypeLabel = (COMPANY_TYPES.find(t=>t.key===co.type)||{}).label || co.type;
+    return `<tr><td>${esc(co.name)}</td><td>${esc(posTypeLabel)}</td><td>${fmtShares(shares)}</td><td class="money">${fmtPrice(stake.avgCost!==undefined?stake.avgCost:0)}</td><td class="money">${fmtPrice(co.stockPrice||0)}</td><td class="money">${fmt(shares*(co.stockPrice||0))}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td></tr>`;
   }).join('');
   const positionsHtml = myPositions.length>0
-    ? `<table><tr><th>Entreprise</th><th>Parts</th><th>Coût moyen</th><th>Prix/part</th><th>Valeur de marché</th><th>P&amp;L latent</th></tr>${positionsRows}</table>`
+    ? `<table><tr><th>Entreprise</th><th>Type</th><th>Parts</th><th>Coût moyen</th><th>Prix/part</th><th>Valeur de marché</th><th>P&amp;L latent</th></tr>${positionsRows}</table>`
     : '<div class="empty">Aucune position boursière pour le moment.</div>';
   // Section 146 (ALPHA test 2, voir RESUME_ET_REGLES.md) — item 4, demande explicite de l'utilisateur:
   // « Mettre les annonces publics toute en haut de la page portefeuille (Dividendes annoncés et Annonce
@@ -2088,9 +2129,15 @@ function renderPortefeuilleTrading(me, company){
       <div class="small" style="margin-bottom:8px;">Consultez la chaîne de primes (calls/puts) depuis le menu ☰ Actions ci-dessus — « 📊 Voir la chaîne d'options ».</div>
       ${optionsPositionsHtml}`) : '',
     ];
+    // Section 171 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « La section instrument
+    // de trading ne pas l'afficher si il n'y a pas de produits à l'intérieur. » Auparavant, en l'absence de
+    // toute exposition (short/bons/prêts/options), le titre de section restait affiché avec un message de
+    // repli « Aucune position de trading... » — désormais la section ENTIÈRE (titre inclus) disparaît, même
+    // convention que « Produits financiers » dans Mon Entreprise (section 148: accordéon absent EN ENTIER
+    // quand tout est vide, jamais un titre suivi d'un message vide). Le menu ☰ Actions reste, comme avant,
+    // toujours accessible pour ouvrir une première position.
     if(!showShort && !showBons && !showLoans && !showOptions){
-      return `<div class="section-title" style="margin-top:16px;">Instruments de trading</div>
-      <div class="empty">Aucune position de trading pour le moment — utilisez le menu ☰ Actions ci-dessus pour en ouvrir une.</div>`;
+      return '';
     }
     return `<div class="section-title" style="margin-top:16px;">Instruments de trading</div>${blocks.join('')}`;
   })();
@@ -2125,7 +2172,7 @@ function renderPortefeuilleTrading(me, company){
     </div>
     <div style="flex:0.3;min-width:220px;">
     ${entrepriseAccordion('pf-secteur', 'Répartition sectorielle', `
-    <div class="small" style="margin-bottom:8px;">Proportion de la valeur de marché de vos positions boursières LONGUES (actions détenues au comptant — pas les positions à découvert ni les options), groupées par type d'entreprise, plus votre solde de bons gouvernementaux.</div>
+    <div class="small" style="margin-bottom:8px;">Proportion de la valeur de marché de vos positions boursières longues seulement.</div>
     ${sectorMixHtml}`)}
     </div>
   </div>`;
@@ -2204,9 +2251,18 @@ function renderPortefeuilleFinancials(){
   // le TITRE de l'accordéon lui-même (plus de section-title séparé, jamais dupliqué). Le sélecteur de
   // période (#pfSemesterSelect) reste volontairement VISIBLE EN DEHORS/AU-DESSUS de l'accordéon — demande
   // explicite: changer de période doit rester possible sans avoir à déplier le reste.
+  // Section 171 (voir RESUME_ET_REGLES.md) — 2 demandes explicites de l'utilisateur: (1) « Mettre plus
+  // d'espace entre la période des états financiers et le titre de section "États financiers par
+  // entreprise" » — le sélecteur (+ l'avertissement de période partielle, le cas échéant) est désormais
+  // enveloppé dans un conteneur avec une marge basse généreuse, plutôt que le margin-bottom:2px d'origine
+  // qui collait quasiment le sélecteur au titre de l'accordéon juste en dessous; (2) « Mettre un accent de
+  // couleur dans la liste déroulante des période pour l'état financier » — bordure dorée épaisse sur le
+  // <select>, cohérente avec la bordure dorée de la « carte » qui l'entoure (financialsCardOpen ci-dessous).
   const selectorHtml = `
-  <div style="margin-bottom:2px;"><label class="small" style="display:inline;margin:0;" for="pfSemesterSelect">Période</label><br><select id="pfSemesterSelect">${periodOptions}</select></div>
-  ${partialWarningHtml}`;
+  <div style="margin-bottom:16px;">
+    <div style="margin-bottom:2px;"><label class="small" style="display:inline;margin:0;" for="pfSemesterSelect">Période</label><br><select id="pfSemesterSelect" style="border:2px solid var(--gold);font-weight:600;">${periodOptions}</select></div>
+    ${partialWarningHtml}
+  </div>`;
   // Section 149 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Avoir une séparation
   // plus marquée pour les états financiers pour que ça sorte du reste. » L'ensemble de cette section
   // (sélecteur de période + accordéon) est désormais enveloppé dans une « carte » visuellement distincte —
@@ -2230,9 +2286,17 @@ function renderPortefeuilleFinancials(){
     bs: balanceSheetFor(c.id, semesterIndex),
   }));
   const colCount = statements.length + 1;
-  const headerRow = `<tr><th>Poste</th>${statements.map(s=>{
+  // Section 173 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Aligné aussi les
+  // chiffres des compagnies dans les états financiers de mon portefeuille. » Même correctif que
+  // renderEntrepriseFinancials (voir son commentaire détaillé): `table-layout:fixed` + largeurs de
+  // colonnes FIXES en px, réutilisées via `headerRow` pour les 3 tableaux, afin que les colonnes de
+  // compagnies tombent aux mêmes positions horizontales d'un tableau à l'autre.
+  const posteColWidth = '220px';
+  const dataColWidth = '140px';
+  const tableStyle = 'style="table-layout:fixed;"';
+  const headerRow = `<tr><th style="width:${posteColWidth};">Poste</th>${statements.map(s=>{
     const ceo = state.players.find(p=>p.id===s.company.ceoId);
-    return `<th>${esc(s.company.name)}${ceo?`<br><span class="small" style="font-weight:400;text-transform:none;letter-spacing:0;">${esc(ceo.name)}</span>`:''}</th>`;
+    return `<th style="width:${dataColWidth};">${esc(s.company.name)}${ceo?`<br><span class="small" style="font-weight:400;text-transform:none;letter-spacing:0;">${esc(ceo.name)}</span>`:''}</th>`;
   }).join('')}</tr>`;
   const finColor = n => n<0 ? 'var(--brick)' : '#047857';
   const finSigned = n => (n>=0?'+':'') + fmt(n); // fmt() porte déjà le signe '-' pour n<0
@@ -2259,7 +2323,7 @@ function renderPortefeuilleFinancials(){
   let bodyHtml = `
   <div class="section-title" style="margin-top:22px;">État des résultats</div>
   <div style="overflow-x:auto;">
-  <table>
+  <table ${tableStyle}>
     ${headerRow}
     ${totalRevRow}
     ${revRows}
@@ -2334,7 +2398,7 @@ function renderPortefeuilleFinancials(){
   bodyHtml += `
   <div class="section-title" style="margin-top:22px;">Bilan</div>
   <div style="overflow-x:auto;">
-  <table>
+  <table ${tableStyle}>
     ${headerRow}
     ${bsRowsHtml}
   </table>
@@ -2355,7 +2419,7 @@ function renderPortefeuilleFinancials(){
   bodyHtml += `
   <div class="section-title" style="margin-top:22px;">État des flux de trésorerie</div>
   <div style="overflow-x:auto;">
-  <table>
+  <table ${tableStyle}>
     ${headerRow}
     ${cfSection('operating', "Activités d'exploitation")}
     ${cfSection('investing', "Activités d'investissement")}
@@ -2391,6 +2455,154 @@ function entrepriseAccordion(key, titleHtml, bodyHtml){
   </details>`;
 }
 
+// Section 172 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Dans mon entreprise
+// est-ce possible juste en haut de la section historique de l'entreprise. D'ajouter les états financiers
+// de l'entreprise avec en colonne les périodes. Faire un encadrer autour pour bien distinguer. » Version
+// TRANSPOSÉE de renderPortefeuilleFinancials() ci-dessus: là-bas, UNE SEULE période choisie via un
+// sélecteur, une colonne par COMPAGNIE (pour comparer plusieurs entreprises entre elles à un instant
+// donné) ; ici, UNE SEULE compagnie (myCompany(), déjà fixée par le contexte de l'onglet Mon Entreprise),
+// une colonne par PÉRIODE — donc PAS de sélecteur de période, TOUTES les périodes jouées sont affichées
+// côte à côte, pour voir l'évolution de CETTE entreprise dans le temps d'un coup d'œil. Consomme
+// exactement la même couche de données de la section 121 (financialPeriods/incomeStatementFor/
+// cashFlowStatementFor/balanceSheetFor/FIN_CATEGORIES), non modifiée ici — seul l'axe des colonnes change
+// (période plutôt que compagnie). Une période antérieure à la fondation de l'entreprise affiche
+// naturellement des « – » partout (aucune écriture de grand livre, aucun instantané de bilan pour cette
+// compagnie à cette période) — aucun cas particulier à coder, incomeStatementFor/cashFlowStatementFor/
+// balanceSheetFor gèrent déjà cela nativement pour n'importe quelle compagnie/période.
+function renderEntrepriseFinancials(company){
+  const periods = financialPeriods();
+  if(periods.length===0){
+    return entrepriseAccordion('ent-etats-financiers', 'États financiers', '<div class="empty">Aucune période jouée pour l’instant.</div>');
+  }
+  const statements = periods.map(p=>({
+    period: p,
+    inc: incomeStatementFor(company.id, p.semesterIndex),
+    cf: cashFlowStatementFor(company.id, p.semesterIndex),
+    bs: balanceSheetFor(company.id, p.semesterIndex),
+  }));
+  const colCount = statements.length + 1;
+  // Section 173 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Aussi alignées les
+  // années pour que les chiffres sont droit d'un état à l'autre. » Les 3 tableaux ci-dessous (État des
+  // résultats/Bilan/État des flux de trésorerie) sont 3 <table> INDÉPENDANTS: sans largeur de colonne
+  // explicite, le navigateur dimensionne chacun selon son PROPRE contenu (ex.: la colonne « Poste » du
+  // Bilan, avec ses longs libellés « ↳ Prêts hypothécaires à recevoir », s'élargit bien plus que celle de
+  // l'État des résultats) — les colonnes de périodes ne tombent alors PAS aux mêmes positions horizontales
+  // d'un tableau à l'autre. Correctif: `table-layout:fixed` + largeurs de colonnes FIXES en px (mêmes
+  // valeurs, réutilisées via `headerRow`, identique pour les 3 tableaux) — chaque tableau a alors EXACTEMENT
+  // la même géométrie de colonnes, peu importe son propre contenu. Largeurs en PX (pas en %) pour que la
+  // largeur totale du tableau reste stable et que le débordement horizontal existant (`overflow-x:auto`)
+  // continue de gérer un grand nombre de périodes, plutôt que d'écraser des colonnes de plus en plus
+  // étroites et illisibles.
+  const posteColWidth = '220px';
+  const dataColWidth = '140px';
+  const tableStyle = 'style="table-layout:fixed;"';
+  const headerRow = `<tr><th style="width:${posteColWidth};">Poste</th>${statements.map(s=>`<th style="width:${dataColWidth};">${esc(s.period.label)}${s.period.isCurrent?` <span class="small" style="font-weight:400;text-transform:none;letter-spacing:0;">(courant)</span>`:''}</th>`).join('')}</tr>`;
+  const finColor = n => n<0 ? 'var(--brick)' : '#047857';
+  const finSigned = n => (n>=0?'+':'') + fmt(n); // fmt() porte déjà le signe '-' pour n<0
+  const posCell = v => (v===undefined || Math.abs(v)<1e-9) ? '<span class="small">–</span>' : `<span class="money">${fmt(v)}</span>`;
+  const signedCell = v => (v===undefined || Math.abs(v)<1e-9) ? '<span class="small">–</span>' : `<span class="money" style="color:${finColor(v)};">${finSigned(v)}</span>`;
+
+  // ---------- (a) État des résultats ----------
+  const revCats = Object.keys(FIN_CATEGORIES).filter(cat=>FIN_CATEGORIES[cat].bucket==='revenue' && statements.some(s=>Math.abs(s.inc.revenues[cat]||0)>1e-9));
+  const expCats = Object.keys(FIN_CATEGORIES).filter(cat=>FIN_CATEGORIES[cat].bucket==='expense' && statements.some(s=>Math.abs(s.inc.expenses[cat]||0)>1e-9));
+  const revRows = revCats.map(cat=>`<tr><td>${esc(FIN_CATEGORIES[cat].label)}</td>${statements.map(s=>`<td>${posCell(s.inc.revenues[cat])}</td>`).join('')}</tr>`).join('')
+    || `<tr><td colspan="${colCount}" class="small">Aucun revenu.</td></tr>`;
+  const expRows = expCats.map(cat=>`<tr><td>${esc(FIN_CATEGORIES[cat].label)}</td>${statements.map(s=>`<td>${posCell(s.inc.expenses[cat])}</td>`).join('')}</tr>`).join('')
+    || `<tr><td colspan="${colCount}" class="small">Aucune dépense.</td></tr>`;
+  const totalRevRow = `<tr style="font-weight:700;"><td>Total des revenus</td>${statements.map(s=>`<td class="money">${fmt(s.inc.totalRevenue)}</td>`).join('')}</tr>`;
+  const totalExpRow = `<tr style="font-weight:700;"><td>Total des dépenses</td>${statements.map(s=>`<td class="money">${fmt(s.inc.totalExpense)}</td>`).join('')}</tr>`;
+  const netIncomeRow = `<tr style="font-weight:700;"><td>Résultat net</td>${statements.map(s=>`<td class="money" style="color:${finColor(s.inc.netIncome)};">${finSigned(s.inc.netIncome)}</td>`).join('')}</tr>`;
+  const sepRow = `<tr><td colspan="${colCount}" style="border-top:2px solid var(--line);padding:0;"></td></tr>`;
+
+  let bodyHtml = `
+  <div class="section-title" style="margin-top:22px;">État des résultats</div>
+  <div style="overflow-x:auto;">
+  <table ${tableStyle}>
+    ${headerRow}
+    ${totalRevRow}
+    ${revRows}
+    ${sepRow}
+    ${totalExpRow}
+    ${expRows}
+    ${netIncomeRow}
+  </table>
+  </div>`;
+
+  // ---------- (b) Bilan ----------
+  const bsCell = (s, field) => !s.bs ? '<span class="small">–</span>' : `<span class="money">${fmt(s.bs[field])}</span>`;
+  const equityPerShareCell = s => (!s.bs || !(company.totalShares>0)) ? '<span class="small">–</span>' : `<span class="money">${fmtPrice(s.bs.equity/company.totalShares)}/action</span>`;
+  const sharesIssuedCell = s => {
+    if(!s.bs) return '<span class="small">–</span>';
+    const pend = companyPendingIpoShares(company);
+    return `<span class="small">${company.sharesIssued}/${company.totalShares} part(s)${pend>0?` · ${pend} en attente d'IPO`:''}</span>`;
+  };
+  const bsRowsHtml = `
+    <tr style="font-weight:700;"><td>Total des actifs</td>${statements.map(s=>`<td>${bsCell(s,'totalAssets')}</td>`).join('')}</tr>
+    <tr style="font-weight:600;"><td>Actifs court terme</td>${statements.map(s=>`<td>${bsCell(s,'assetsShortTerm')}</td>`).join('')}</tr>
+    <tr><td class="small">↳ Encaisse</td>${statements.map(s=>`<td>${bsCell(s,'cash')}</td>`).join('')}</tr>
+    <tr><td class="small">↳ Parts ETF</td>${statements.map(s=>`<td>${bsCell(s,'etf')}</td>`).join('')}</tr>
+    <tr><td class="small">↳ Prêts à recevoir</td>${statements.map(s=>`<td>${bsCell(s,'loanReceivable')}</td>`).join('')}</tr>
+    <tr style="font-weight:600;"><td>Actifs long terme</td>${statements.map(s=>`<td>${bsCell(s,'assetsLongTerm')}</td>`).join('')}</tr>
+    <tr><td class="small">↳ Terrains (valeur comptable)</td>${statements.map(s=>`<td>${bsCell(s,'realEstate')}</td>`).join('')}</tr>
+    <tr><td class="small">↳ Prêts hypothécaires à recevoir</td>${statements.map(s=>`<td>${bsCell(s,'mortgageReceivable')}</td>`).join('')}</tr>
+    ${sepRow}
+    <tr style="font-weight:700;"><td>Total du passif</td>${statements.map(s=>`<td>${bsCell(s,'totalLiabilities')}</td>`).join('')}</tr>
+    <tr><td>Passif court terme</td>${statements.map(s=>`<td>${bsCell(s,'liabilitiesShortTerm')}</td>`).join('')}</tr>
+    <tr><td>Passif long terme</td>${statements.map(s=>`<td>${bsCell(s,'liabilitiesLongTerm')}</td>`).join('')}</tr>
+    <tr style="font-weight:700;"><td>Équité</td>${statements.map(s=>`<td>${bsCell(s,'equity')}</td>`).join('')}</tr>
+    <tr><td class="small">↳ Équité par action</td>${statements.map(s=>`<td>${equityPerShareCell(s)}</td>`).join('')}</tr>
+    <tr><td class="small">↳ Parts émises / total</td>${statements.map(s=>`<td>${sharesIssuedCell(s)}</td>`).join('')}</tr>`;
+  const identityLines = statements.filter(s=>s.bs).map(s=>{
+    const delta = s.bs.totalAssets - (s.bs.totalLiabilities + s.bs.equity);
+    const ok = Math.abs(delta) < 0.01;
+    return `${esc(s.period.label)} : ${ok ? 'Actifs = Passifs + Équité ✓' : `⚠️ écart de ${fmt(delta)} entre Actifs et Passifs+Équité (ne devrait normalement jamais arriver)`}`;
+  }).join('<br>');
+
+  bodyHtml += `
+  <div class="section-title" style="margin-top:22px;">Bilan</div>
+  <div style="overflow-x:auto;">
+  <table ${tableStyle}>
+    ${headerRow}
+    ${bsRowsHtml}
+  </table>
+  </div>
+  ${identityLines ? `<div class="small" style="margin-top:4px;">${identityLines}</div>` : ''}`;
+
+  // ---------- (c) État des flux de trésorerie ----------
+  function cfSection(bucketKey, title){
+    const cats = Object.keys(FIN_CATEGORIES).filter(cat=>FIN_CATEGORIES[cat].cf===bucketKey && statements.some(s=>Math.abs((s.cf.buckets[bucketKey]||{})[cat]||0)>1e-9));
+    const rows = cats.map(cat=>`<tr><td>${esc(FIN_CATEGORIES[cat].label)}</td>${statements.map(s=>`<td>${signedCell(s.cf.buckets[bucketKey][cat])}</td>`).join('')}</tr>`).join('')
+      || `<tr><td colspan="${colCount}" class="small">Aucun mouvement.</td></tr>`;
+    const totalRow = `<tr style="font-weight:700;"><td>Total — ${title}</td>${statements.map(s=>`<td class="money" style="color:${finColor(s.cf.totals[bucketKey])};">${finSigned(s.cf.totals[bucketKey])}</td>`).join('')}</tr>`;
+    return `<tr><td colspan="${colCount}" style="font-weight:700;padding-top:14px;">${title}</td></tr>${totalRow}${rows}`;
+  }
+  const netChangeRow = `<tr style="font-weight:700;"><td>Variation nette de trésorerie</td>${statements.map(s=>`<td class="money" style="color:${finColor(s.cf.netChange)};">${finSigned(s.cf.netChange)}</td>`).join('')}</tr>`;
+
+  bodyHtml += `
+  <div class="section-title" style="margin-top:22px;">État des flux de trésorerie</div>
+  <div style="overflow-x:auto;">
+  <table ${tableStyle}>
+    ${headerRow}
+    ${cfSection('operating', "Activités d'exploitation")}
+    ${cfSection('investing', "Activités d'investissement")}
+    ${cfSection('financing', "Activités de financement")}
+    ${sepRow}
+    ${netChangeRow}
+  </table>
+  </div>`;
+
+  // Encadré dédié pour bien distinguer ce bloc du reste de l'onglet — même « carte » visuelle (fond plein,
+  // bordure dorée épaisse, coins arrondis, ombre douce) que la carte des états financiers de Mon
+  // Portefeuille (financialsCardOpen/Close, section 149) — demande explicite: « Faire un encadrer autour
+  // pour bien distinguer ». Section 173 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur:
+  // « Mettre de l'espace entre le bas des états financiers de mon entreprise et la section historique. »
+  // `margin-bottom` ajouté ici (la carte n'en avait aucun) pour créer un espacement visible avant
+  // l'accordéon « Historique de l'entreprise » qui suit immédiatement cette carte dans renderEntreprise().
+  const cardOpen = `<div style="margin-top:30px;margin-bottom:24px;padding:18px 20px 6px;background:var(--paper-solid);border:2px solid var(--gold);border-radius:var(--radius-lg);box-shadow:var(--shadow-soft);">`;
+  const cardClose = `</div>`;
+  return `${cardOpen}${entrepriseAccordion('ent-etats-financiers', 'États financiers', bodyHtml)}${cardClose}`;
+}
+
 function renderEntreprise(){
   const company = myCompany();
   if(!company) return '<div class="empty">Vous n’êtes CEO d’aucune entreprise.</div>';
@@ -2398,7 +2610,7 @@ function renderEntreprise(){
   const shareholderRows = company.shareholders.map(s=>{
     const name = s.playerId==='BANK' ? 'Banque (IPO)' : ((state.players.find(p=>p.id===s.playerId)||{}).name || '?');
     const pct = company.totalShares>0 ? (s.shares/company.totalShares*100) : 0;
-    return `<tr><td>${esc(name)}</td><td>${s.shares}</td><td>${pct.toFixed(1)}%</td></tr>`;
+    return `<tr><td>${esc(name)}</td><td>${fmtShares(s.shares)}</td><td>${pct.toFixed(1)}%</td></tr>`;
   }).join('');
 
   // Section 125 (voir RESUME_ET_REGLES.md): demande explicite de l'utilisateur — « Tu ajoutera dans mon
@@ -2493,6 +2705,19 @@ function renderEntreprise(){
     // valeur d'un lot regroupé (qui peut contenir plusieurs terrains, d'où le join(' / ')).
     const rentValues = lotProps.map(x=>x.type==='color' ? colorRentAt(x, x.houses) : expectedRentValue(x));
     const rentShareLabel = rentValues.map(v=>fmt(v*sh/100)).join(' / ');
+    // Section 175 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « mettre une colonne
+    // +1 étage dans cette colonne mettre ta part de loyer si tu ajoutais maintenant une maison ». Un
+    // terrain de couleur SEUL a un niveau de construction (`x.houses`); une case aéroport/service n'en a
+    // aucun (son loyer dépend du nombre d'aéroports/services possédés ou du jet de dés, jamais d'un
+    // niveau de construction) — « – » pour ces cases, comme déjà pour toute valeur non applicable ailleurs
+    // dans ce tableau. Un terrain déjà à l'hôtel (x.houses>=hotelLevel()) ne peut plus recevoir de
+    // construction supplémentaire — « – » également, plutôt qu'une valeur trompeuse identique au loyer
+    // actuel. Sinon: MÊME part `sh` (part de l'entreprise sur l'hôte du lot) appliquée à `colorRentAt(x,
+    // x.houses+1)` — le loyer qu'aurait CE terrain précis avec une maison de plus, à la part réelle de
+    // l'entreprise (jamais le loyer total) — cohérent avec `rentShareLabel` juste au-dessus (même
+    // convention de jointure ' / ' pour un lot regroupé, une valeur par terrain du lot, dans l'ordre).
+    const nextLevelParts = lotProps.map(x=> (x.type==='color' && x.houses<hotelLevel()) ? colorRentAt(x, x.houses+1)*sh/100 : null);
+    const nextLevelLabel = nextLevelParts.every(v=>v===null) ? '<span class="small">–</span>' : nextLevelParts.map(v=>v===null?'–':fmt(v)).join(' / ');
     const mortgaged = (host.mortgages||[]).some(m=>m.companyId===company.id);
     // Section 98 (voir RESUME_ET_REGLES.md): demande explicite de l'utilisateur — un lot regroupé
     // n'énumère plus chaque terrain individuel ici, juste le nom du GROUPE DE COULEUR (« Lot Brun »),
@@ -2507,7 +2732,26 @@ function renderEntreprise(){
     // EXACTEMENT les mêmes modales/fonctions métier qu'avant (modalSellShare/modalSellMergedShare/
     // modalMortgage/modalMortgageLot/repayMortgage/repayMortgageLot) — aucune logique réécrite. La
     // dernière colonne (autrefois ces deux boutons) n'a donc plus rien à afficher pour un terrain/lot.
-    return `<tr><td>${label}</td><td>${sh}%</td><td class="money">${fmt(iv!=null?iv:p.basePrice)}</td><td class="money">${rentShareLabel}</td><td class="small">${mortgaged?'🏦 hypothéquée':''}</td><td></td></tr>`;
+    //
+    // Section 174 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: 3 colonnes
+    // supplémentaires, à LA PART DE L'ENTREPRISE SEULEMENT (déjà le cas par construction — voir
+    // addRealEstateCapex/addRealEstateRevenue, alimentées avec des montants déjà individuels par
+    // entreprise, jamais des totaux tous propriétaires confondus) :
+    //  - Revenus  : cumul des loyers RÉELLEMENT collectés par cette entreprise sur ce terrain/lot depuis
+    //    le début de la partie (companyRealEstateRevenue) — un historique cumulatif, pas le loyer
+    //    attendu au prochain tour (déjà affiché juste à gauche, « Ma part de loyer »).
+    //  - CAPEX    : cumul de tout ce que cette entreprise a déboursé pour ce terrain/lot depuis le début
+    //    de la partie — coût d'acquisition (achat à la banque ou à une autre entreprise), coûts de
+    //    construction de maisons, et coûts de « droits de maison » (compensation payée pour une maison
+    //    prise dans la réserve d'une autre entreprise) — voir companyRealEstateCapex.
+    //  - Rentabilité : Revenus - CAPEX, coloré comme les autres montants signés de l'app (vert si
+    //    positif, brique si négatif).
+    const reKey = realEstateKeyFor(p);
+    const reRevenue = companyRealEstateRevenue(reKey, company.id);
+    const reCapex = companyRealEstateCapex(reKey, company.id);
+    const reProfit = reRevenue - reCapex;
+    const reProfitColor = reProfit<0 ? 'var(--brick)' : '#047857';
+    return `<tr><td>${label}</td><td>${sh}%</td><td class="money">${fmt(iv!=null?iv:p.basePrice)}</td><td class="money">${rentShareLabel}</td><td class="money">${nextLevelLabel}</td><td class="money">${fmt(reRevenue)}</td><td class="money">${fmt(reCapex)}</td><td class="money" style="color:${reProfitColor};">${fmt(reProfit)}</td><td class="small">${mortgaged?'🏦 hypothéquée':''}</td><td></td></tr>`;
   }).join('');
 
   // Section 112 (2026-09-01, voir RESUME_ET_REGLES.md — retrait de l'onglet Résumé): bloc « Cases
@@ -2574,7 +2818,9 @@ function renderEntreprise(){
     const totalIssued = e.unitsIssuedTotal||0;
     const etfValue = totalIssued>0 ? (e.fundCash + etfActivatedReserveValue(e)) * (held/totalIssued) : 0;
     const etfBadge = `<span style="background:var(--metal);color:#fff;padding:1px 7px;border-radius:4px;white-space:nowrap;">📊 ${esc(def?def.label:e.id)}</span>`;
-    return `<tr><td>${etfBadge}</td><td>${held.toFixed(2)} pt(s)</td><td class="money">${fmt(etfValue)}</td><td class="small">—</td><td class="small">—</td><td class="small">Achat/vente depuis l'onglet ETF</td></tr>`;
+    // Section 174/175: une part d'ETF n'est pas un terrain — aucun +1 étage/Revenus/CAPEX/Rentabilité
+    // suivi pour elle (mêmes « — » déjà utilisés pour Loyer/Hypothèque, cohérence de convention).
+    return `<tr><td>${etfBadge}</td><td>${held.toFixed(2)} pt(s)</td><td class="money">${fmt(etfValue)}</td><td class="small">—</td><td class="small">—</td><td class="small">—</td><td class="small">—</td><td class="small">—</td><td class="small">—</td><td class="small">Achat/vente depuis l'onglet ETF</td></tr>`;
   }).join('') : '';
 
   // Section 100 (2026-09-01, voir RESUME_ET_REGLES.md): les parts d'ETF détenues ne forment plus leur
@@ -2598,11 +2844,15 @@ function renderEntreprise(){
   // lever l'ambiguïté avec le bouton "💰 Prêt" (ex-"Émettre un prêt") tout juste à côté, qui désigne un
   // emprunt d'argent et n'a rien à voir avec ce bouton de fin de tour. Mécanique, attributs data-mark-ready/
   // data-cancel-ready et fonctions markCompanyReady/cancelCompanyReady strictement inchangés.
+  // Section 170 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: couleurs du menu « ☰
+  // Actions » remises à plat avec du sens (voir le commentaire CSS de .btn-pale-gold/.btn-pale-success) —
+  // « Tour Terminé » passe de btn-gold (saturé, sans rapport avec l'argent) à btn-pale-success (pâle,
+  // confirmation positive).
   const readyActionHtml = company.inJail
     ? `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`
     : (company.ready
         ? `<button class="btn btn-ghost btn-sm" data-cancel-ready="${company.id}">🔄 Annuler Tour Terminé</button>`
-        : `<button class="btn btn-gold btn-sm" data-mark-ready="${company.id}">✅ Tour Terminé</button>`);
+        : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}">✅ Tour Terminé</button>`);
 
   // --- Maisons: réserve (ajout) + soumission d'offre d'enchère (déplacée depuis l'ancien onglet Maisons). Section
   // 88: plus aucun bouton d'AJUSTEMENT MANUEL (+1/-1) ici — demande explicite de l'utilisateur (« les
@@ -2625,12 +2875,10 @@ function renderEntreprise(){
 
   // Point 1 de la demande utilisateur (voir RESUME_ET_REGLES.md, section 104): « Transférer "Enchère de
   // maisons - Suivi" dans mon entreprise juste avant transaction [Historique] ». Contenu et logique de
-  // calcul repris À L'IDENTIQUE depuis renderResume() (section 92) — seul le point d'affichage change (son
-  // propre accordéon `auctionSuivi`, juste avant `historique`, voir le gabarit du `return` plus bas). Le
-  // choix d'un accordéon dédié (plutôt que fusionné dans l'accordéon « Maisons » ou « Produits financiers »
-  // existants) suit le pattern déjà établi à la section 101 (une section de contenu = un accordéon) — ce
-  // suivi multi-entreprises (offres de TOUTES les entreprises + dernier résultat) est un contenu distinct
-  // de la réserve/l'action de CETTE entreprise déjà dans l'accordéon « Maisons ».
+  // calcul repris À L'IDENTIQUE depuis renderResume() (section 92). À l'origine affiché dans son propre
+  // accordéon `auctionSuivi`, juste avant `historique` — section 170 (voir RESUME_ET_REGLES.md): demande
+  // explicite de l'utilisateur de fusionner ce contenu DANS l'accordéon « Maisons » existant (juste après
+  // sa ligne « Réserve non placée », voir le gabarit du `return` plus bas) plutôt que de le garder à part.
   const houseAuctionSuiviRows = !auctionOn ? '' : activeCompanies().map(c=>{
     const b = state.houseAuction.bids.find(x=>x.companyId===c.id);
     const isMine = c.id===company.id;
@@ -2682,8 +2930,10 @@ function renderEntreprise(){
   const nextGoAdvanceTooltip = atMaxGo
     ? 'Maximum de subventions d\'avance simultanées atteint pour cette entreprise'
     : `Prochaine subvention d'avance disponible: ${fmt(goAdvanceAmount(company.goAdvancesOwed+1, company))} (taux ${(riskAdjustedRate(state.settings.goAdvanceRate,company)*100).toFixed(1)}%)`;
+  // Section 170: btn-pale-gold — vendre une subvention d'avance est un produit financier (avance de
+  // trésorerie contre remboursement futur), même famille que Prêt/Dividende/Assurance ci-dessous.
   const goAdvanceButtonHtml = (f.goAdvance && !company.inJail)
-    ? `<button class="btn btn-ghost btn-sm" data-go-advance="${company.id}" title="${esc(nextGoAdvanceTooltip)}" ${atMaxGo?'disabled':''}>💸 Vendre la prochaine subvention d'avance</button>`
+    ? `<button class="btn btn-pale-gold btn-sm" data-go-advance="${company.id}" title="${esc(nextGoAdvanceTooltip)}" ${atMaxGo?'disabled':''}>💸 Vendre la prochaine subvention d'avance</button>`
     : '';
   const loansAsBorrower = (state.loans||[]).filter(l=>l.borrowerId===company.id && l.repaidSoFar<l.totalDue-1e-9);
   const loansAsLender = (state.loans||[]).filter(l=>l.lenderId===company.id && l.repaidSoFar<l.totalDue-1e-9);
@@ -2729,8 +2979,9 @@ function renderEntreprise(){
   // Renommage de libellé: "💰 Émettre un prêt" -> "💰 Prêt", "🔄 Proposer un swap de loyers" -> "🔄 Swap",
   // "🤝 Proposer une compensation de loyer" -> "🤝 Accords de compensation" — texte raccourci seulement,
   // mêmes ids (openIssueLoanBtn/openProposeSwapBtn/openProposeCompBtn) et mêmes modales ouvertes.
+  // Section 170: btn-pale-gold — produit financier (emprunt).
   const issueLoanButtonHtml = f.loan
-    ? `<button class="btn btn-ghost btn-sm" id="openIssueLoanBtn" title="${esc(issueLoanTooltip)}" ${(loanCapExhausted && !openLoanRequest)?'disabled':''}>💰 Prêt${openLoanRequest?` (${openRequestOfferCount} offre${openRequestOfferCount===1?'':'s'})`:(activeLoansForCo.length>0?` (${activeLoansForCo.length} actif${activeLoansForCo.length===1?'':'s'})`:'')}</button>`
+    ? `<button class="btn btn-pale-gold btn-sm" id="openIssueLoanBtn" title="${esc(issueLoanTooltip)}" ${(loanCapExhausted && !openLoanRequest)?'disabled':''}>💰 Prêt${openLoanRequest?` (${openRequestOfferCount} offre${openRequestOfferCount===1?'':'s'})`:(activeLoansForCo.length>0?` (${activeLoansForCo.length} actif${activeLoansForCo.length===1?'':'s'})`:'')}</button>`
     : '';
   const proposeSwapButtonHtml = f.rentSwap
     ? `<button class="btn btn-ghost btn-sm" id="openProposeSwapBtn">🔄 Swap</button>`
@@ -2752,7 +3003,11 @@ function renderEntreprise(){
   const mortgageButtonHtml = f.mortgage
     ? `<button class="btn btn-ghost btn-sm" id="openMortgageBtn">🏦 Hypothéquer</button>`
     : '';
-  const buildHouseButtonHtml = `<button class="btn btn-brick btn-sm" id="openBuildHouseBtn">🏗️ Construire une maison</button>`;
+  // Section 170 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: btn-brick (rouge, réservé
+  // au danger/refus ailleurs dans l'app — ex. « Refuser », « Forcer le tour ») n'avait aucun sens ici,
+  // construire une maison n'étant ni dangereux ni négatif — ramené à btn-ghost, neutre, comme les autres
+  // actions immobilières (vendre une part, hypothéquer, enchère de maisons, vendre des maisons).
+  const buildHouseButtonHtml = `<button class="btn btn-ghost btn-sm" id="openBuildHouseBtn">🏗️ Construire une maison</button>`;
   // Renommage: icône dé (🎲) remplacée par une icône maison (🏠) — texte "Enchère de maisons" inchangé.
   const houseBidButtonHtml = auctionOn
     ? `<button class="btn btn-ghost btn-sm" id="openHouseBidBtn">🏠 Enchère de maisons${myBid?' (offre active)':''}</button>`
@@ -2778,8 +3033,10 @@ function renderEntreprise(){
   // (repris de sellHousesButtonHtml/goAdvanceButtonHtml à l'origine) est retiré — ce bouton reste
   // désormais actif en permanence, sous réserve des seules conditions déjà existantes (fondation d'une
   // entreprise, existence de risques assurables — vérifiées à l'intérieur de modalInsureBundle()).
+  // Section 170: btn-pale-gold (au lieu de btn-gold, saturé) — produit financier, même famille que
+  // Prêt/Dividende/Subvention d'avance ci-dessus/dessous.
   const insuranceBundleButtonHtml = (f.insurance||f.subInsurance)
-    ? `<button class="btn btn-gold btn-sm" id="openInsureBundleBtn">🛡️ Contrat d'assurance</button>`
+    ? `<button class="btn btn-pale-gold btn-sm" id="openInsureBundleBtn">🛡️ Contrat d'assurance</button>`
     : '';
   // Section 126 (2026-09-02, voir RESUME_ET_REGLES.md) — moteur boursier Phase C: bouton « Annoncer un
   // dividende » (RENOMMÉ depuis « Verser un dividende » à la section 134 — dividende désormais DIFFÉRÉ, pas
@@ -2791,7 +3048,8 @@ function renderEntreprise(){
   // (voir sa définition avec les autres modales), qui porte TOUTE la logique de validation/réservation
   // (aucune logique dupliquée ici). MÊME id `openPayDividendBtn` conservé (point d'entrée dans
   // bindTabEvents inchangé — seule la fonction câblée change, voir plus bas).
-  const payDividendButtonHtml = `<button class="btn btn-ghost btn-sm" id="openPayDividendBtn">💎 Annoncer un dividende</button>`;
+  // Section 170: btn-pale-gold — produit financier (distribution de valeur aux actionnaires).
+  const payDividendButtonHtml = `<button class="btn btn-pale-gold btn-sm" id="openPayDividendBtn">💎 Annoncer un dividende</button>`;
 
   // Section 160 (voir RESUME_ET_REGLES.md) — bouton « Sortie publique du CEO » (voir
   // pressPublicCeoStatement/modalPublicCeoStatement pour la logique/l'UI). Toujours affiché (même pattern
@@ -3203,6 +3461,24 @@ function renderEntreprise(){
     ? `<div style="background:var(--brick);color:#fff;padding:8px 14px;border-radius:var(--radius-md);margin-bottom:12px;font-weight:600;">⚠️ Encaisse négative (${fmt(company.cash)}) — remédiez à la situation dès que possible.</div>`
     : '';
 
+  // Section 170 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: emphase sur l'encaisse
+  // (gros caractères, comme un vrai chiffre-clé) et Actionnariat déplacé à DROITE, sur la même ligne
+  // visuelle — flex avec repli en colonne sur mobile. « Cours de l'action » reste à son emplacement
+  // ACTUEL, inchangé, juste après ce bloc (demande explicite: ne pas le déplacer). Attention: cette note
+  // reste un commentaire JS HORS du template littéral ci-dessous — un <!-- --> À L'INTÉRIEUR du HTML
+  // généré serait renvoyé tel quel par renderTab('entreprise') et fausserait tout comptage de occurrences
+  // de texte dans le HTML rendu (ex. smoke_test_step55_phase3_polish.js, Point 3).
+  //
+  // Section 170 également — demande explicite de l'utilisateur: « Possible de fusionner la section
+  // Maisons et enchères de maisons - suivi » (accordéons distincts 'maisons'/'auctionSuivi' depuis la
+  // section 104), dans l'ordre précis: Réserve non placée (gagnées aux enchères), Maisons disponibles ce
+  // tour pour enchère, Entreprise/Offre. L'ex-accordéon 'auctionSuivi' (voir son ancien commentaire de
+  // provenance ci-dessus, houseAuctionSuiviRows/houseAuctionSuiviLastHtml) disparaît: son contenu (le
+  // rappel « Maisons disponibles ce tour pour enchère », le tableau Entreprise/Offre, le rappel de
+  // soumission houseBidHintHtml, et le dernier résultat houseAuctionSuiviLastHtml) rejoint l'accordéon
+  // 'maisons' existant, juste après sa ligne « Réserve non placée » — visible seulement quand la
+  // fonctionnalité houseAuction (auctionOn) est active, exactement comme l'ex-accordéon séparé ne
+  // s'affichait déjà qu'à cette même condition.
   return `
   ${entActionsMenuHtml}
   ${negativeCashBannerHtml}
@@ -3210,15 +3486,20 @@ function renderEntreprise(){
 
   ${entrepriseAccordion('identite', `${esc(company.name)} <span class="small">(${esc(typeLabel)})</span>`, `
   ${company.description ? `<div class="small" style="margin-bottom:10px;">${esc(company.description)}</div>` : ''}
-  <table>
-    <tr><td>Trésorerie</td><td class="money">${fmt(company.cash)}${goAdvanceInline}</td></tr>
-  </table>
-
-  <div class="small" style="font-weight:600;margin-top:16px;">Actionnariat</div>
-  <table>
-    <tr><th>Actionnaire</th><th>Parts</th><th>%</th></tr>
-    ${shareholderRows}
-  </table>
+  <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+    <div style="flex:1 1 200px;">
+      <div class="small" style="font-weight:600;">Trésorerie</div>
+      <div class="money" style="font-size:28px;font-weight:800;margin-top:2px;">${fmt(company.cash)}</div>
+      ${goAdvanceInline ? `<div style="margin-top:2px;">${goAdvanceInline}</div>` : ''}
+    </div>
+    <div style="flex:1 1 240px;">
+      <div class="small" style="font-weight:600;margin-bottom:6px;">Actionnariat</div>
+      <table>
+        <tr><th>Actionnaire</th><th>Parts</th><th>%</th></tr>
+        ${shareholderRows}
+      </table>
+    </div>
+  </div>
 
   <div class="small" style="font-weight:600;margin-top:16px;">Cours de l'action</div>
   <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:6px 0 10px;">
@@ -3230,8 +3511,8 @@ function renderEntreprise(){
 
   ${entrepriseAccordion('terrains', `Terrains possédés (valeur totale: ${fmt(companyRealEstateValue(company))})`, `
   <table>
-    <tr><th>Terrain</th><th>Part</th><th>Valeur intrinsèque</th><th>Ma part de loyer</th><th>Hypothèque</th><th></th></tr>
-    ${(ownedProps.length===0 && !etfRowsForOwnedTable)?`<tr><td class="empty" colspan="6">Aucun terrain détenu.</td></tr>`:ownedPropsRows+etfRowsForOwnedTable}
+    <tr><th>Terrain</th><th>Part</th><th>Valeur intrinsèque</th><th>Ma part de loyer</th><th>+1 étage</th><th>Revenus</th><th>CAPEX</th><th>Rentabilité</th><th>Hypothèque</th><th></th></tr>
+    ${(ownedProps.length===0 && !etfRowsForOwnedTable)?`<tr><td class="empty" colspan="10">Aucun terrain détenu.</td></tr>`:ownedPropsRows+etfRowsForOwnedTable}
   </table>
   `)}
 
@@ -3245,7 +3526,15 @@ function renderEntreprise(){
   <table>
     <tr><td>Réserve non placée${auctionOn?' (gagnées aux enchères)':''}</td><td>${company.houseReserve}</td></tr>
   </table>
+  ${auctionOn ? `
+  <div class="small" style="margin-top:12px;margin-bottom:8px;">Maisons disponibles ce tour pour enchère: <b>${state.houseAuction.availableHouses}</b>.</div>
+  <table>
+    <tr><th>Entreprise</th><th>Offre</th></tr>
+    ${houseAuctionSuiviRows}
+  </table>
   ${houseBidHintHtml}
+  ${houseAuctionSuiviLastHtml}
+  ` : ''}
   `)}
 
   ${produitsFinanciersEmpty ? '' : entrepriseAccordion('produits', `Produits financiers`, `
@@ -3283,14 +3572,7 @@ function renderEntreprise(){
   ${becomeInsurerHtml}
   `)}
 
-  ${auctionOn ? entrepriseAccordion('auctionSuivi', `Enchère de maisons — suivi`, `
-  <div class="small" style="margin-bottom:8px;">Maisons disponibles ce tour: <b>${state.houseAuction.availableHouses}</b>.</div>
-  <table>
-    <tr><th>Entreprise</th><th>Offre</th></tr>
-    ${houseAuctionSuiviRows}
-  </table>
-  ${houseAuctionSuiviLastHtml}
-  `) : ''}
+  ${renderEntrepriseFinancials(company)}
 
   ${entrepriseAccordion('historique', `Historique de l'entreprise`, `
   <div class="loglist">
@@ -3336,7 +3618,6 @@ function renderLexique(){
 
   return `
   <div class="section-title">Lexique</div>
-  <div class="small" style="margin-bottom:10px;">Définitions et explications des mécaniques du jeu, regroupées par thème — pour comprendre le POURQUOI d'un chiffre ou d'un bouton vu ailleurs dans l'application, sans avoir à demander.</div>
 
   ${theme('Valeur d’une entreprise')}
   ${term('Valeur comptable', `Estimation comptable de ce que possède l'entreprise: <b>trésorerie + valeur intrinsèque de son immobilier + valeur de ses parts d'ETF</b>. Ce n'est PAS un « prix de l'action » — c'est une simple addition de ce qui est déjà au bilan, jamais influencée par l'offre et la demande.`)}
@@ -3425,7 +3706,11 @@ function renderCompanySetupGate(me){
         <span style="cursor:pointer;text-decoration:underline;" id="leaveGameSetup">quitter la partie</span>
       </div>
       <div class="section-title">Bienvenue, ${esc(me.name)} — fondez votre entreprise</div>
-      <div class="small" style="margin-bottom:14px;">Avant d'accéder à la partie, vous devez créer l'entreprise dont vous serez le CEO. Vous en achèterez automatiquement ${ceoShares}/${totalShares} parts (${ceoStartPctLabel}%) pour ${fmt(amount)} — soit ${ceoStartPctLabel}% de la valorisation de fondation FIXE de ${fmt(foundingValuation)}, la même pour toutes les entreprises quel que soit l'ordre d'arrivée. Cet argent devient la trésorerie de départ de l'entreprise. Le reste des parts (${100-ceoStartPctLabel}%) sera financé par la banque lors de l'introduction en bourse (IPO), au même prix par part, pour compléter la trésorerie jusqu'à ${fmt(foundingValuation)} au total.</div>
+      <!-- Section 170 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: texte rendu plus
+           concis, même information préservée (parts achetées/prix, valorisation FIXE identique pour
+           toutes les entreprises peu importe l'ordre d'arrivée, trésorerie de départ, financement du
+           reste par la banque à l'IPO au même prix par part). -->
+      <div class="small" style="margin-bottom:14px;">Pour rejoindre la partie, fondez l'entreprise dont vous serez le CEO. Vous achetez automatiquement ${ceoShares}/${totalShares} parts (${ceoStartPctLabel}%) pour ${fmt(amount)} — soit ${ceoStartPctLabel}% de la valorisation de fondation FIXE de ${fmt(foundingValuation)} (la même pour toutes les entreprises, peu importe l'ordre d'arrivée). Cet argent devient la trésorerie de départ ; le reste (${100-ceoStartPctLabel}%) sera financé par la banque à l'IPO, au même prix par part, jusqu'à ${fmt(foundingValuation)} au total.</div>
       <label>Nom de l'entreprise</label>
       <input type="text" id="cName" maxlength="60" placeholder="Ex: ${esc(me.name)} Holdings">
       <label>Description</label>
@@ -4214,14 +4499,16 @@ function visibleTabs(){
   // le grand commentaire au-dessus de renderPortefeuille()/renderEntreprise() pour le détail de la
   // garantie de visibilité stricte.
   if(myCompany()) tabs.push('entreprise');
+  // Section 171 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: réordonner les onglets
+  // dans l'ordre Portefeuille, Mon entreprise, ETF, Administration, Lexique, Simulation. Seul l'ORDRE des
+  // `tabs.push(...)` ci-dessous change dans cette section — aucune condition d'affichage n'est modifiée
+  // (mêmes gardes que précédemment: f.etf, myPlayerId===state.creatorId, etc.). ETF est donc désormais
+  // poussé ici, juste après Entreprise (auparavant après Administration/Simulation).
+  if(f.etf) tabs.push('etf');
   // Module Entreprises (refonte majeure, étape 2/8): onglet Administration, réservé au créateur de la
   // partie, centralisant les commandes et paramètres d'administration auparavant dispersés dans
   // d'autres onglets (voir renderAdmin) — demande explicite de l'utilisateur.
   if(myPlayerId===state.creatorId) tabs.push('admin');
-  // Section 147 (voir RESUME_ET_REGLES.md) — nouvel onglet Simulation (outil d'équilibrage du moteur
-  // boursier), réservé au créateur de la partie exactement comme 'admin' juste au-dessus (même condition,
-  // même raison: outil de test/calibration, pas une fonctionnalité de jeu pour les joueurs).
-  if(myPlayerId===state.creatorId) tabs.push('simulation');
   // Onglet 'banque' retiré complètement (voir RESUME_ET_REGLES.md section 26) — demande explicite de
   // l'utilisateur (« Onglet BANQUE va pouvoir être retiré complètement »). Son contenu (classement des
   // joueurs, marché des subventions d'avance, prêts) avait été relogé dans renderAdmin() — retiré à son
@@ -4251,8 +4538,9 @@ function visibleTabs(){
   // dupliquée dans Administration (ajustement manuel, section 88) — demande explicite de l'utilisateur.
   // Ce suivi a depuis déménagé une seconde fois (section 104) vers son propre accordéon `auctionSuivi`
   // dans renderEntreprise(), puis l'onglet Résumé qui l'hébergeait un temps a lui-même été retiré
-  // entièrement (section 112) — sans perte, ce suivi vit désormais uniquement là.
-  if(f.etf) tabs.push('etf');
+  // entièrement (section 112). Section 170 (voir RESUME_ET_REGLES.md): cet accordéon `auctionSuivi` a à
+  // son tour été fusionné DANS l'accordéon « Maisons » (demande explicite de l'utilisateur) — sans perte,
+  // ce suivi vit désormais dans « Maisons », toujours uniquement dans Mon Entreprise.
   // Onglet 'transactions' retiré (voir RESUME_ET_REGLES.md section 91): le journal complet et non
   // filtré qu'il affichait (renderTransactions) est désormais tout en bas de l'onglet Administration,
   // réservé au créateur de la partie — demande explicite de l'utilisateur.
@@ -4263,6 +4551,11 @@ function visibleTabs(){
   // maisons, etc.), retirées de là pour désencombrer l'onglet, plus d'autres définitions de mécanique de
   // jeu ajoutées au passage.
   tabs.push('lexique');
+  // Section 147 (voir RESUME_ET_REGLES.md) — nouvel onglet Simulation (outil d'équilibrage du moteur
+  // boursier), réservé au créateur de la partie exactement comme 'admin' plus haut (même condition, même
+  // raison: outil de test/calibration, pas une fonctionnalité de jeu pour les joueurs). Section 171: cet
+  // onglet est désormais poussé en TOUT DERNIER (après Lexique), conformément au nouvel ordre demandé.
+  if(myPlayerId===state.creatorId) tabs.push('simulation');
   return tabs;
 }
 
@@ -8295,6 +8588,9 @@ async function sellMergedShare(mergeId, sellerId, buyerId, pct, price){
     buyer.cash -= price; seller.cash += price;
     logFin(buyer.id, 'land_purchase', -price);
     logFin(seller.id, 'land_sale', price);
+    // Section 174: CAPEX (coût d'acquisition) attribué à l'ACHETEUR, sur la clé du LOT (une seule fois,
+    // pas par terrain du lot — voir realEstateKeyFor).
+    addRealEstateCapex(realEstateKeyFor(props[0]), buyer.id, price);
     if(buyerPl) buyerPl.stats.spentBuying += price; if(sellerPl) sellerPl.stats.salesRevenue += price;
     const existing = newOwners.find(o=>o.companyId===buyerId);
     if(existing) existing.share += pct; else newOwners.push({companyId:buyerId, share:pct});
@@ -8417,6 +8713,37 @@ function lotMortgageHost(mergeId){
 }
 function intrinsicValueLot(mergeId){
   return lotProperties(mergeId).reduce((s,p)=>{ const iv=intrinsicValue(p); return s+(iv!=null?iv:p.basePrice); }, 0);
+}
+// Section 174 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: dans « Terrains possédés »
+// (Mon Entreprise), ajouter Revenus/CAPEX/Rentabilité par terrain (ou par lot regroupé), à la part de
+// l'entreprise SEULEMENT. `realEstateKeyFor(p)` unifie la clé de suivi: un lot regroupé (plusieurs
+// `state.properties` partageant `groupMergeId`) est suivi comme UN SEUL actif (`'lot:'+mergeId`, même
+// principe que lotProperties/intrinsicValueLot ci-dessus), un terrain seul comme `'prop:'+p.id` — évite
+// tout double comptage quand une transaction (achat/vente/construction) porte sur un lot entier.
+// `state.realEstateCapex`/`state.realEstateRevenue` sont des cumuls VIVANTS depuis le début de la partie
+// (pas de notion de période/semestre ici, contrairement à finLedger — la demande porte sur un total, pas
+// une évolution dans le temps) — initialisés paresseusement (aucune migration nécessaire: absents =
+// équivalents à 0 partout, comme finLedgerStartedAtRoll en son temps pour une partie déjà en cours).
+function realEstateKeyFor(p){
+  return p.groupMergeId ? ('lot:'+p.groupMergeId) : ('prop:'+p.id);
+}
+function addRealEstateCapex(key, companyId, amount){
+  if(!(amount>0)) return;
+  if(!state.realEstateCapex) state.realEstateCapex = {};
+  if(!state.realEstateCapex[key]) state.realEstateCapex[key] = {};
+  state.realEstateCapex[key][companyId] = (state.realEstateCapex[key][companyId]||0) + amount;
+}
+function addRealEstateRevenue(key, companyId, amount){
+  if(!(amount>0)) return;
+  if(!state.realEstateRevenue) state.realEstateRevenue = {};
+  if(!state.realEstateRevenue[key]) state.realEstateRevenue[key] = {};
+  state.realEstateRevenue[key][companyId] = (state.realEstateRevenue[key][companyId]||0) + amount;
+}
+function companyRealEstateCapex(key, companyId){
+  return (state.realEstateCapex && state.realEstateCapex[key] && state.realEstateCapex[key][companyId]) || 0;
+}
+function companyRealEstateRevenue(key, companyId){
+  return (state.realEstateRevenue && state.realEstateRevenue[key] && state.realEstateRevenue[key][companyId]) || 0;
 }
 function buybackValueLot(mergeId){
   return lotProperties(mergeId).reduce((s,p)=>{ const bv=buybackValue(p); return s+(bv!=null?bv:p.basePrice); }, 0);
@@ -9592,13 +9919,22 @@ function renderSpectatorView(){
   // taille (véritable « maximisation », pas juste un plafond plus généreux).
   const wrapStyle = isBoard ? ' style="max-width:96vw;"' : '';
   const slideStyle = isBoard ? ' style="padding:36px 16px;"' : '';
+  // Section 171 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Dans l'écran spectateur
+  // le bouton "Quitter la partie" est en gris sur gris on ne le voit pas. » Les 3 libellés de cet en-tête
+  // portaient un `color:rgba(244,239,226,0.7)` (un blanc cassé/crème, pensé pour un fond sombre) alors que
+  // `.tv-header` s'affiche directement sur le fond de page clair (`--bg:#F3F4F6`) — d'où un texte presque
+  // invisible. Les 3 span portent déjà `class="small"`, dont le style par défaut (`color:var(--muted)`,
+  // gris foncé #4B5563) offre un contraste correct sur ce fond clair — retrait pur et simple du `color`
+  // codé en dur, qui masquait ce style par défaut déjà correct. Les 2 autres libellés partageant EXACTEMENT
+  // la même déclaration («Mode spectateur», « quitter le mode spectateur ») souffraient de la même racine
+  // du problème et sont corrigés en même temps, pour cohérence.
   app.innerHTML = `
   <div class="tv-wrap"${wrapStyle}>
     <div class="tv-header">
-      <div><span class="codebox">${esc(gameCode)}</span> <span class="small" style="color:rgba(244,239,226,0.7);">Mode spectateur</span></div>
+      <div><span class="codebox">${esc(gameCode)}</span> <span class="small">Mode spectateur</span></div>
       <div style="display:flex;gap:16px;align-items:center;">
-        <span class="small" style="color:rgba(244,239,226,0.7);cursor:pointer;text-decoration:underline;" id="exitSpectator">quitter le mode spectateur</span>
-        <span class="small" style="color:rgba(244,239,226,0.7);cursor:pointer;text-decoration:underline;" id="leaveGameSpectator">quitter la partie</span>
+        <span class="small" style="cursor:pointer;text-decoration:underline;" id="exitSpectator">quitter le mode spectateur</span>
+        <span class="small" style="cursor:pointer;text-decoration:underline;" id="leaveGameSpectator">quitter la partie</span>
       </div>
     </div>
     <div class="tv-slide"${slideStyle}>${slideHtml}</div>
@@ -9922,8 +10258,8 @@ function bindTabEvents(t){
   // n'avait besoin d'aucun binding — c'était une vue purement en lecture, comme l'était déjà cette partie
   // de l'ancien onglet Maisons. Il a depuis déménagé vers son propre accordéon `auctionSuivi` dans
   // renderEntreprise() (section 104), puis l'onglet Résumé qui l'hébergeait a lui-même été retiré
-  // entièrement (section 112) — reste une vue en lecture seule, sans binding requis, à son emplacement
-  // actuel.
+  // entièrement (section 112), puis cet accordéon a à son tour été fusionné dans « Maisons » (section
+  // 170) — reste une vue en lecture seule, sans binding requis, à son emplacement actuel.
   // Section 122 (2026-09-02, voir RESUME_ET_REGLES.md): sélecteur de période (#pfSemesterSelect) des états
   // financiers par compagnie de renderPortefeuille(). Met à jour UNIQUEMENT la variable de module
   // portefeuilleSelectedSemester (jamais state/saveGame — voir son commentaire de déclaration, même
@@ -10382,6 +10718,7 @@ function modalBuyShares(pid){
       const cost = price * (e.pct/100);
       buyerCo.cash -= cost;
       logFin(buyerCo.id, 'land_purchase', -cost);
+      addRealEstateCapex(realEstateKeyFor(p), buyerCo.id, cost); // Section 174: CAPEX d'acquisition
       const buyerPl = state.players.find(x=>x.id===buyerCo.ceoId); // stats.* restent portés par le joueur (pas d'équivalent company.stats — même convention que claimEtfDutchPct/sellMergedShare)
       if(buyerPl) buyerPl.stats.spentBuying += cost;
       state.bank.cash += cost;
@@ -10448,6 +10785,7 @@ function modalSellShare(pid){
       buyer.cash -= price; seller.cash += price;
       logFin(buyer.id, 'land_purchase', -price);
       logFin(seller.id, 'land_sale', price);
+      addRealEstateCapex(realEstateKeyFor(p), buyer.id, price); // Section 174: CAPEX d'acquisition
       if(buyerPl) buyerPl.stats.spentBuying += price;
       if(sellerPl) sellerPl.stats.salesRevenue += price;
       const existing = p.owners.find(o=>o.companyId===buyerId);
@@ -10644,6 +10982,7 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
       if(ownerPl) ownerPl.stats.rentReceived += c.amount; // loyer économiquement gagné, même si une part est retenue pour un prêt
       owner.cash += c.net;
       logFin(owner.id, 'rent_revenue', c.amount); // montant BRUT économiquement gagné, avant retenue de prêt
+      addRealEstateRevenue(realEstateKeyFor(p), owner.id, c.amount); // Section 174: Revenus par terrain/lot
       if(c.withheld>0) logFin(owner.id, 'loan_repayment_via_rent', -c.withheld); // net pour le propriétaire = c.amount - c.withheld = c.net
       entries.push({label:`${owner.name} (part${c.viaSwap?' via swap':''})`, amount:c.net});
       // Section 161 (voir RESUME_ET_REGLES.md): un élément par PRÊT effectivement touché (plusieurs prêts
@@ -10746,6 +11085,7 @@ async function buildHouse(pid, sourceCompanyId, compensationTotal){
       const part = cost*(o.share/100);
       owner.cash -= part;
       logFin(owner.id, 'house_construction', -part);
+      addRealEstateCapex(realEstateKeyFor(p), owner.id, part); // Section 174: CAPEX (construction)
       entries.push({label:`${owner.name} (${o.share}% construction)`, amount:-part});
     });
     // Réserve permanente de la banque (module ETF, voir section 31/32): elle ne paie RIEN en réalité
@@ -10782,6 +11122,7 @@ async function buildHouse(pid, sourceCompanyId, compensationTotal){
           const part = amount * (o.share/totalOwnersShare);
           payer.cash -= part; compTotal += part;
           logFin(payer.id, 'house_compensation_paid', -part);
+          addRealEstateCapex(realEstateKeyFor(p), payer.id, part); // Section 174: CAPEX (droits de maison)
           entries.push({label:`${payer.name} (compensation maison, ${o.share}% des parts, hors banque/ETF)`, amount:-part});
         });
         source.cash += compTotal;
@@ -12617,7 +12958,7 @@ function renderSetup(){
       <label>Encaisse de départ par joueur</label>
       <input type="number" step="0.01" id="startCash" value="20">
       <label>Encaisse de départ de la banque</label>
-      <input type="number" step="0.01" id="bankCash" value="500000000">
+      <input type="number" step="0.01" id="bankCash" value="500">
 
       <div class="setup-subhead">Terrains &amp; loyers</div>
       <label>Nombre maximal de copropriétaires simultanés par terrain</label>

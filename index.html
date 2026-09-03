@@ -1853,7 +1853,12 @@ function renderPortefeuilleTrading(me, company){
 function renderPortefeuilleHistory(me){
   const belongsToPlayer = label => label===me.name || label.indexOf(me.name+' (')===0;
   const historyRows = state.log.filter(l=>l.entries && l.entries.length && l.entries.some(e=>belongsToPlayer(e.label)));
-  return entrepriseAccordion('pf-historique', `Historique de ${esc(me.name)}`, `
+  // Section 153 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Donner un peu d'espace
+  // entre l'historique et les états financiers pour que ça respire. » renderPortefeuilleFinancials() (juste
+  // au-dessus dans renderPortefeuille()) se termine sans marge basse — et cet accordéon n'avait lui-même
+  // aucune marge haute, les deux blocs se touchaient donc directement. `margin-top` ajouté ici (même valeur
+  // que financialsCardOpen ci-dessus, 30px, pour une respiration visuelle cohérente entre les deux blocs).
+  return `<div style="margin-top:30px;">${entrepriseAccordion('pf-historique', `Historique de ${esc(me.name)}`, `
   <div class="loglist">
     ${historyRows.length===0?'<div class="empty">Aucune transaction enregistrée pour vous pour l’instant.</div>':''}
     ${historyRows.map(l=>`
@@ -1864,7 +1869,7 @@ function renderPortefeuilleHistory(me){
         </table>
       </div>`).join('')}
   </div>
-  `);
+  `)}</div>`;
 }
 /* Section 122 (2026-09-02, voir RESUME_ET_REGLES.md): les 3 états financiers par compagnie (État des
    résultats / Bilan / État des flux de trésorerie), une COLONNE PAR COMPAGNIE ACTIVE, comparés côte à côte
@@ -1886,12 +1891,18 @@ function renderPortefeuilleFinancials(){
   // Semestre sélectionné: reste sur le choix de l'utilisateur (portefeuilleSelectedSemester) tant qu'il
   // correspond toujours à une période listée (ex: pas un vieux choix orphelin après un reset de partie) —
   // sinon (ou si `null`, jamais choisi) retombe sur le semestre COURANT (isCurrent), comme demandé.
+  // Section 153 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: option de période
+  // « Depuis le début » (semesterIndex==='all', sentinelle string — jamais un index de semestre valide,
+  // donc jamais confondue avec l'un des `periods` numériques ci-dessus). Validée à part du `.some(...)`
+  // ci-dessous (sinon un choix 'all' valide serait à tort considéré comme orphelin et retomberait sur le
+  // semestre courant).
   let semesterIndex = portefeuilleSelectedSemester;
-  if(semesterIndex===null || !periods.some(p=>p.semesterIndex===semesterIndex)){
+  if(semesterIndex===null || (semesterIndex!=='all' && !periods.some(p=>p.semesterIndex===semesterIndex))){
     const cur = periods.find(p=>p.isCurrent);
     semesterIndex = cur ? cur.semesterIndex : (periods.length ? periods[periods.length-1].semesterIndex : 0);
   }
-  const periodOptions = periods.map(p=>`<option value="${p.semesterIndex}" ${p.semesterIndex===semesterIndex?' selected':''}>${esc(p.label)}</option>`).join('');
+  const allOption = `<option value="all" ${semesterIndex==='all'?' selected':''}>Depuis le début</option>`;
+  const periodOptions = allOption + periods.map(p=>`<option value="${p.semesterIndex}" ${p.semesterIndex===semesterIndex?' selected':''}>${esc(p.label)}</option>`).join('');
   // Avertissement uniquement quand le tout premier semestre listé est potentiellement PARTIEL — le suivi
   // catégorisé (state.finLedger) a démarré en cours de ce semestre plutôt qu'à son tout début (partie déjà
   // en cours au moment de la migration, voir finLedgerStartedAtRoll/financialPeriods, section 121).
@@ -2000,6 +2011,13 @@ function renderPortefeuilleFinancials(){
     return `${esc(s.company.name)} : ${ok ? 'Actifs = Passifs + Équité ✓' : `⚠️ écart de ${fmt(delta)} entre Actifs et Passifs+Équité (ne devrait normalement jamais arriver)`}`;
   }).join('<br>');
 
+  // Section 153: pour « Depuis le début », le Bilan affiché est celui du semestre COURANT (voir
+  // balanceSheetFor) — un bilan est déjà une position cumulative depuis la fondation, pas une valeur à
+  // sommer entre semestres comme l'état des résultats/les flux de trésorerie ci-dessus. Note explicative
+  // pour éviter toute confusion sur pourquoi ce tableau ne change pas quand on choisit « Depuis le début ».
+  const allPeriodBsNoteHtml = semesterIndex==='all'
+    ? `<div class="small" style="margin-top:4px;">Le bilan reflète déjà la position cumulative de l'entreprise depuis sa fondation — affiché ici au semestre courant.</div>`
+    : '';
   bodyHtml += `
   <div class="section-title" style="margin-top:22px;">Bilan</div>
   <div style="overflow-x:auto;">
@@ -2008,6 +2026,7 @@ function renderPortefeuilleFinancials(){
     ${bsRowsHtml}
   </table>
   </div>
+  ${allPeriodBsNoteHtml}
   ${identityLines ? `<div class="small" style="margin-top:4px;">${identityLines}</div>` : ''}`;
 
   // ---------- (c) État des flux de trésorerie ----------
@@ -5377,7 +5396,15 @@ function executeCeoAnnouncement(ann){
 const FIN_CATEGORIES = {
   // --- Revenus (état des résultats + flux d'opérations) ---
   rent_revenue:              {bucket:'revenue', cf:'operating', label:'Loyers reçus'},
-  go_salary_revenue:         {bucket:'revenue', cf:'operating', label:'Salaire GO'},
+  // Section 153 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: dans les états
+  // financiers spécifiquement, le poste doit être libellé « Subvention » (pas « Salaire GO ») — reste
+  // néanmoins DISTINCT de go_advance_proceeds ci-dessous (« Subventions d'avance GO reçues », le PRODUIT
+  // financier vendu par anticipation), qui garde son libellé propre. Ce renommage est scopé au SEUL
+  // libellé affiché dans les états financiers (FIN_CATEGORIES.label) — le reste de l'app (journal de
+  // transactions, log de applyPassGoEffect, etc.) continue de dire « salaire GO » (décision documentée à
+  // la section 103 : seul le PRODUIT « avance » a été renommé « subvention d'avance », pas le salaire de
+  // base lui-même) — non modifié ici, hors du périmètre demandé.
+  go_salary_revenue:         {bucket:'revenue', cf:'operating', label:'Subvention'},
   insurance_claim_revenue:   {bucket:'revenue', cf:'operating', label:'Indemnités d’assurance reçues'},
   insurance_premium_revenue: {bucket:'revenue', cf:'operating', label:'Primes d’assurance vendues'},
   insurance_refund_revenue:  {bucket:'revenue', cf:'operating', label:'Remboursements de primes reçus'},
@@ -5528,9 +5555,15 @@ function financialPeriods(){
   }
   return periods;
 }
-// État des résultats d'UNE compagnie pour UN semestre (accumule le grand livre filtré companyId+semesterIndex).
+// État des résultats d'UNE compagnie pour UN semestre (accumule le grand livre filtré companyId+semesterIndex),
+// OU pour l'intégralité de l'historique suivi si semesterIndex==='all' (section 153 — option de période
+// « Depuis le début », voir financialPeriods/renderPortefeuilleFinancials) : même agrégation, simplement
+// SANS le filtre semesterIndex, cumulant donc l'ENSEMBLE des écritures du grand livre de cette compagnie
+// depuis state.finLedgerStartedAtRoll.
 function incomeStatementFor(companyId, semesterIndex){
-  const entries = state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex);
+  const entries = semesterIndex==='all'
+    ? state.finLedger.filter(e=>e.companyId===companyId)
+    : state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex);
   const revenues = {}, expenses = {};
   let totalRevenue=0, totalExpense=0;
   entries.forEach(e=>{
@@ -5541,9 +5574,13 @@ function incomeStatementFor(companyId, semesterIndex){
   });
   return {companyId, semesterIndex, revenues, expenses, totalRevenue, totalExpense, netIncome: totalRevenue-totalExpense};
 }
-// Flux de trésorerie d'UNE compagnie pour UN semestre, regroupé par catégorie CF (operating/investing/financing).
+// Flux de trésorerie d'UNE compagnie pour UN semestre, regroupé par catégorie CF (operating/investing/financing),
+// OU cumulé sur l'intégralité de l'historique suivi si semesterIndex==='all' (section 153, même principe
+// que incomeStatementFor ci-dessus).
 function cashFlowStatementFor(companyId, semesterIndex){
-  const entries = state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex);
+  const entries = semesterIndex==='all'
+    ? state.finLedger.filter(e=>e.companyId===companyId)
+    : state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex);
   const buckets = {operating:{}, investing:{}, financing:{}};
   const totals = {operating:0, investing:0, financing:0};
   entries.forEach(e=>{
@@ -5559,6 +5596,12 @@ function cashFlowStatementFor(companyId, semesterIndex){
 // le semestre courant (pas encore clôturé) — null (« Données non disponibles ») pour tout autre semestre
 // sans instantané, notamment un semestre antérieur à state.finLedgerStartedAtRoll (décision (3) ci-dessus).
 function balanceSheetFor(companyId, semesterIndex){
+  // Section 153 — option de période « Depuis le début » (semesterIndex==='all') : un bilan n'est PAS une
+  // valeur qui s'additionne d'un semestre à l'autre (contrairement à l'état des résultats/aux flux de
+  // trésorerie) — il représente déjà, par nature, la position CUMULATIVE de l'entreprise à un instant T,
+  // depuis sa fondation. « Depuis le début » retombe donc simplement sur le bilan du semestre COURANT (le
+  // plus à jour), plutôt que de tenter une somme dénuée de sens.
+  if(semesterIndex==='all') return balanceSheetFor(companyId, Math.floor(state.gameClock.rollCount/3));
   const stored = state.balanceSheetSnapshots.find(s=>s.companyId===companyId && s.semesterIndex===semesterIndex);
   if(stored) return stored;
   const current = Math.floor(state.gameClock.rollCount/3);
@@ -6706,22 +6749,106 @@ function closeOptionPosition(player, positionId, shares, _bypassTradingWindow){
   if(pos.shares<=1e-9) player.optionPositions.splice(player.optionPositions.indexOf(pos), 1); // nettoyage: jamais d'entrée à ~0 qui traîne
   return {ok:true, entries, qty};
 }
-/* Règlement AUTOMATIQUE en CASH de TOUTE position d'option arrivée à échéance (rollCount>=expiryRoll),
-   appelée depuis advanceGameClock — voir son emplacement exact (JUSTE AVANT l'exécution des annonces CEO,
-   APRÈS les frais/intérêts par-lancer) documenté dans son commentaire. Pour CHAQUE position de CHAQUE
-   joueur: intrinsic = max(0, stockPrice-strike) pour un call, max(0, strike-stockPrice) pour un put — au
-   prix COURANT à l'échéance (co.stockPrice, PAS optionPremiumFor: à T=0 les deux coïncident de toute façon,
-   voir blackScholesPremium, mais le calcul est fait DIRECTEMENT ici pour rester lisible et indépendant d'un
-   éventuel changement futur du plancher de prime). payoff = shares*intrinsic.
-   side='long': player.cash += payoff, state.bank.cash -= payoff (si intrinsic===0: AUCUN mouvement — l'
-   option expire simplement sans valeur, la prime déjà payée à l'ouverture reste acquise à la banque, c'est
-   le fonctionnement NORMAL d'une option hors-jeu à l'échéance, pas un bug).
-   side='short': player.cash -= payoff, state.bank.cash += payoff — AUCUNE GARDE (même philosophie que
-   partout ailleurs dans ce document: un solde négatif est possible, rattrapé par le PROCHAIN
-   enforceMarginCalls sur SES AUTRES positions s'il en a).
-   Retire TOUJOURS l'entrée de player.optionPositions après règlement (payoff nul ou pas). Une entrée log()
-   DISTINCTE par position réglée, mentionnant EXPLICITEMENT « règlement automatique à l'échéance » — jamais
-   confondue avec une fermeture anticipée volontaire (closeOptionPosition ci-dessus), même esprit que
+/* Exercice/assignation PHYSIQUE d'une option ARRIVÉE À ÉCHÉANCE et DANS LA MONNAIE — section 152 (voir
+   RESUME_ET_REGLES.md), demande explicite de l'utilisateur : « Quand le PUT vendu fini ITM le joueur doit
+   être forcé d'acheter les actions 100Xcontrats au strike price. Même chose pour l'achat de CALL. Aussi à
+   l'inverse un achat de put et un call vendu force la vente des parts. » Décisions confirmées par
+   l'utilisateur : (1) aucun règlement en cash — remplace ENTIÈREMENT l'ancien payoff cash ci-dessous pour
+   toute option ITM ; (2) si le joueur ne peut pas honorer la transaction (encaisse insuffisante pour un
+   achat forcé, parts insuffisantes pour une vente forcée), on FORCE le découvert — encaisse négative pour
+   un achat (même convention que partout ailleurs dans ce document : jamais un frein), position à découvert
+   RÉELLE (player.shortPositions) pour la portion de vente non couverte par des parts réellement détenues ;
+   (3) la position qui en résulte (parts détenues en plus, ou position à découvert) est une position
+   NORMALE, indiscernable d'une position ouverte volontairement par un achat/une vente/un short ordinaire —
+   donc toujours négociable ensuite exactement de la même façon.
+
+   direction = 'buy' pour {call, long} et {put, short} (le détenteur/l'assigné DOIT acheter au strike) ;
+   direction = 'sell' pour {put, long} et {call, short} (DOIT vendre au strike). qty = pos.shares (contrats)
+   × OPTION_CONTRACT_MULTIPLIER (100) = nombre RÉEL de parts sous-jacentes. Toute la transaction se fait AU
+   PRIX DU STRIKE (pos.strike), jamais au cours courant — c'est le prix contractuel de l'exercice, exactement
+   comme une vraie option.
+
+   'buy' : réplique la logique d'achat d'executeShareTrade (coût moyen pondéré recalculé AVANT
+   incrémentation, bankEntry.shares -= qty côté banque — peut devenir négatif, voulu), SAUF qu'il n'y a
+   AUCUNE garde d'encaisse (executeShareTrade bloque un achat volontaire si l'encaisse est insuffisante ;
+   ici l'exercice est FORCÉ, donc player.cash peut passer sous zéro, décision (2) ci-dessus).
+
+   'sell' : les parts RÉELLEMENT détenues sont vendues en premier (jusqu'à concurrence de qty) ; toute
+   quantité restante (qty moins ce qui était réellement détenu) devient — ou s'ajoute à — une position à
+   découvert (même mécanique de moyenne pondérée qu'openShortPosition, mais au prix du strike). Les DEUX
+   portions créditent player.cash au prix du strike (vendre des parts détenues et ouvrir un découvert sont
+   tous deux, du point de vue de l'encaisse, une vente — seule la comptabilité par-parts diffère), donc le
+   total crédité reste toujours qty×strike, qu'il s'agisse d'une vente normale, d'un découvert forcé, ou
+   d'un mélange des deux.
+
+   Cube injecté comme une transaction de marché normale (vert pour un achat, rouge pour une vente/un
+   découvert) — l'exercice déplace réellement le marché, exactement comme un vrai trade. Retourne un texte
+   descriptif pour le log() appelant. */
+function settleOptionExercise(player, pos, company){
+  const qty = pos.shares * OPTION_CONTRACT_MULTIPLIER;
+  const price = pos.strike;
+  const notional = qty * price;
+  const isBuy = (pos.type==='call' && pos.side==='long') || (pos.type==='put' && pos.side==='short');
+  if(isBuy){
+    let bankEntry = company.shareholders.find(s=>s.playerId==='BANK');
+    if(!bankEntry){ bankEntry = {playerId:'BANK', shares:0}; company.shareholders.push(bankEntry); }
+    bankEntry.shares -= qty; // peut devenir négatif — voulu, même convention que partout ailleurs
+    let myEntry = company.shareholders.find(s=>s.playerId===player.id);
+    if(!myEntry){ myEntry = {playerId:player.id, shares:0}; company.shareholders.push(myEntry); }
+    const newAvgCost = ((myEntry.shares*(myEntry.avgCost||price)) + (qty*price)) / (myEntry.shares+qty);
+    myEntry.shares += qty;
+    myEntry.avgCost = newAvgCost;
+    player.cash -= notional; // AUCUNE garde — exercice forcé, découvert d'encaisse possible (décision 2)
+    state.bank.cash += notional;
+    injectStockCube(company, 'green', STOCK_TRIGGER_TRADE_MIN, STOCK_TRIGGER_TRADE_MAX);
+    return `ACHAT FORCÉ de ${qty.toFixed(2)} part(s) au strike ${fmtPrice(price)} (${fmt(notional)} débité)`;
+  } else {
+    let myEntry = company.shareholders.find(s=>s.playerId===player.id);
+    const ownedQty = myEntry ? myEntry.shares : 0;
+    const soldFromHoldings = Math.min(ownedQty, qty);
+    const shortfall = qty - soldFromHoldings;
+    let bankEntry = company.shareholders.find(s=>s.playerId==='BANK');
+    if(!bankEntry){ bankEntry = {playerId:'BANK', shares:0}; company.shareholders.push(bankEntry); }
+    if(soldFromHoldings>1e-9){
+      myEntry.shares -= soldFromHoldings;
+      if(myEntry.shares<=1e-9) company.shareholders.splice(company.shareholders.indexOf(myEntry), 1); // nettoyage
+      bankEntry.shares += soldFromHoldings;
+    }
+    if(shortfall>1e-9){
+      bankEntry.shares -= shortfall; // emprunté à la banque — même convention qu'openShortPosition
+      if(!player.shortPositions) player.shortPositions = {};
+      const existing = player.shortPositions[company.id];
+      if(existing){
+        const oldNotional = existing.shares*existing.avgOpenPrice;
+        const newNotional = shortfall*price;
+        existing.avgOpenPrice = (oldNotional+newNotional)/(existing.shares+shortfall);
+        existing.shares += shortfall;
+      } else {
+        player.shortPositions[company.id] = {shares: shortfall, avgOpenPrice: price, openedRoll: state.gameClock.rollCount};
+      }
+    }
+    player.cash += notional; // qty×strike au total, que ce soit une vente réelle, un découvert, ou un mélange
+    state.bank.cash -= notional;
+    injectStockCube(company, 'red', STOCK_TRIGGER_TRADE_MIN, STOCK_TRIGGER_TRADE_MAX);
+    const shortLabel = shortfall>1e-9 ? ` dont ${shortfall.toFixed(2)} à découvert (parts non détenues)` : '';
+    return `VENTE FORCÉE de ${qty.toFixed(2)} part(s) au strike ${fmtPrice(price)} (${fmt(notional)} crédité)${shortLabel}`;
+  }
+}
+/* Règlement AUTOMATIQUE de TOUTE position d'option arrivée à échéance (rollCount>=expiryRoll), appelée
+   depuis advanceGameClock — voir son emplacement exact (JUSTE AVANT l'exécution des annonces CEO, APRÈS
+   les frais/intérêts par-lancer) documenté dans son commentaire. Section 152 (voir RESUME_ET_REGLES.md) :
+   remplace l'ancien règlement 100% cash par un EXERCICE/ASSIGNATION PHYSIQUE (voir settleOptionExercise
+   ci-dessus) pour toute position ITM — plus AUCUN paiement de la simple différence en cash, demande
+   explicite de l'utilisateur. intrinsic = max(0, stockPrice-strike) pour un call, max(0, strike-stockPrice)
+   pour un put — au prix COURANT à l'échéance (co.stockPrice), qui détermine SEULEMENT si l'option est
+   ITM/OOM ; le PRIX DE LA TRANSACTION elle-même, une fois ITM, est toujours le strike (voir
+   settleOptionExercise). OOM (intrinsic===0) : AUCUN mouvement — l'option expire simplement sans valeur, la
+   prime déjà payée à l'ouverture reste acquise à la banque, fonctionnement NORMAL d'une option hors-jeu,
+   pas un bug.
+   Retire TOUJOURS l'entrée de player.optionPositions après règlement (exercée ou expirée sans valeur). Une
+   entrée log() DISTINCTE par position réglée, mentionnant EXPLICITEMENT « règlement automatique à
+   l'échéance » — jamais confondue avec une fermeture anticipée volontaire (closeOptionPosition ci-dessus,
+   INCHANGÉE — reste cash-réglée, une clôture anticipée volontaire n'est pas un exercice), même esprit que
    executeCeoAnnouncement qui distingue toujours l'exécution différée d'une transaction spontanée. Itère sur
    une COPIE (slice) de player.optionPositions car cette boucle retire des entrées du tableau original en
    cours de route. */
@@ -6733,15 +6860,11 @@ function settleExpiredOptions(){
       const co = companyById(pos.companyId);
       const price = co ? (co.stockPrice||0) : 0;
       const intrinsic = pos.type==='call' ? Math.max(0, price-pos.strike) : Math.max(0, pos.strike-price);
-      const payoff = optionNotional(pos.shares, intrinsic);
-      if(payoff>1e-9){
-        if(pos.side==='long'){ p.cash += payoff; state.bank.cash -= payoff; }
-        else { p.cash -= payoff; state.bank.cash += payoff; }
-      }
       const typeLabel = pos.type==='call' ? 'CALL' : 'PUT';
       const sideLabel = pos.side==='long' ? 'longue' : 'écrite';
-      log(`⏱️ Règlement AUTOMATIQUE à l'échéance : l'option ${typeLabel} ${sideLabel} de ${p.name} sur ${co?co.name:'?'} (strike ${fmtPrice(pos.strike)}, ${pos.shares.toFixed(4)} contrat(s) — levier 100X) expire ${payoff>1e-9 ? `DANS LA MONNAIE — ${fmt(payoff)} ${pos.side==='long'?'crédité':'débité'} au règlement` : 'HORS-JEU, sans valeur'}, au prix de règlement de ${fmtPrice(price)}/part. Ce n'est PAS une fermeture volontaire du joueur.`);
-      p.optionPositions.splice(p.optionPositions.indexOf(pos), 1); // retiré TOUJOURS, payoff nul ou pas
+      const exerciseLabel = (intrinsic>1e-9 && co) ? settleOptionExercise(p, pos, co) : null;
+      log(`⏱️ Règlement AUTOMATIQUE à l'échéance : l'option ${typeLabel} ${sideLabel} de ${p.name} sur ${co?co.name:'?'} (strike ${fmtPrice(pos.strike)}, ${pos.shares.toFixed(4)} contrat(s) — levier 100X) expire ${exerciseLabel ? `DANS LA MONNAIE — ${exerciseLabel}` : 'HORS-JEU, sans valeur'}, au prix de règlement de ${fmtPrice(price)}/part. Ce n'est PAS une fermeture volontaire du joueur.`);
+      p.optionPositions.splice(p.optionPositions.indexOf(pos), 1); // retiré TOUJOURS, exercée ou pas
     });
   });
 }
@@ -8258,7 +8381,21 @@ function tvSlideBoard(){
         houseBadge = `<div style="font-size:13px;font-weight:700;color:var(--board);margin-top:2px;">${esc(houseLabel(prop.houses))}</div>`;
       }
     } else {
-      label = sq.label;
+      // Section 153 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Même sur le
+      // plateau de la vue spectateur, la case GO doit être Subvention, la case taxe doit être TPS/TVQ et
+      // la case prison Enquête de l'AMF. » Relabellage PUREMENT D'AFFICHAGE, local à cette diapositive —
+      // SPECIAL_SQUARES/TAX_SQUARES (source unique de vérité utilisée PARTOUT ailleurs: logs, cotations
+      // d'assurance, taxSquareCost, etc.) restent intacts, cohérent avec la décision de la section 103 qui
+      // gardait délibérément le nom des cases elles-mêmes inchangé — cette fois-ci l'utilisateur demande
+      // explicitement le contraire, mais UNIQUEMENT pour ce plateau visuel, pas pour le reste de l'app.
+      // Case taxe: utilise le libellé SPÉCIFIQUE de TAX_SQUARES (« Impôt sur le revenu » à la case 4,
+      // « TPS/TVQ » à la case 38 — déjà la terminologie établie ailleurs dans l'app, section 78) plutôt
+      // que le libellé générique « Taxes »/« Taxe » de SPECIAL_SQUARES, jusqu'ici inutilisé sur ce plateau.
+      if(sq.kind==='go') label = 'Subvention';
+      else if(sq.kind==='jail') label = "Enquête de l'AMF";
+      else if(sq.kind==='gotojail') label = "→ Enquête de l'AMF";
+      else if(sq.kind==='tax') label = (TAX_SQUARES.find(t=>t.pos===pos)||{}).label || sq.label;
+      else label = sq.label;
     }
     cells += `<div style="grid-row:${row};grid-column:${col};background:#fff;border-radius:6px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden;position:relative;min-height:0;">
       <div style="position:absolute;top:0;left:0;right:0;height:10px;background:${bandColor};"></div>
@@ -8327,9 +8464,21 @@ function tvSlideCompanyShowcase(companyId){
    (indicateur de progression de rotation) n'a plus de sens sans rotation — retiré. */
 function renderSpectatorView(){
   const display = (state.tvDisplay && state.tvDisplay.mode) ? state.tvDisplay : {mode:'jeu'};
+  const isBoard = display.mode!=='company';
   const slideHtml = display.mode==='company' ? tvSlideCompanyShowcase(display.companyId) : tvSlideBoard();
+  // Section 153 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Pour le plateau prendre
+  // encore plus de largeur sur les côtés maximiser l'espace. » .tv-wrap/.tv-slide (styles CSS partagés par
+  // TOUTES les diapositives spectateur) plafonnent la largeur à 1100px avec 44px de padding horizontal —
+  // suffisant pour la diapositive « présentation d'entreprise » (texte centré, son propre max-width interne
+  // de 720px) mais ça laisse le plateau (grille 8×5 pleine, section 150) inutilement à l'étroit. Élargi ICI,
+  // en ligne (l'inline style ne remplace QUE la propriété ciblée — le reste du style `.tv-slide`/`.tv-wrap`,
+  // fond/bordure/ombre, reste appliqué), UNIQUEMENT pour la diapositive plateau — `max-width:96vw` plutôt
+  // qu'une valeur fixe en px, pour occuper la quasi-totalité de la largeur de l'écran quelle que soit sa
+  // taille (véritable « maximisation », pas juste un plafond plus généreux).
+  const wrapStyle = isBoard ? ' style="max-width:96vw;"' : '';
+  const slideStyle = isBoard ? ' style="padding:36px 16px;"' : '';
   app.innerHTML = `
-  <div class="tv-wrap">
+  <div class="tv-wrap"${wrapStyle}>
     <div class="tv-header">
       <div><span class="codebox">${esc(gameCode)}</span> <span class="small" style="color:rgba(244,239,226,0.7);">Mode spectateur</span></div>
       <div style="display:flex;gap:16px;align-items:center;">
@@ -8337,7 +8486,7 @@ function renderSpectatorView(){
         <span class="small" style="color:rgba(244,239,226,0.7);cursor:pointer;text-decoration:underline;" id="leaveGameSpectator">quitter la partie</span>
       </div>
     </div>
-    <div class="tv-slide">${slideHtml}</div>
+    <div class="tv-slide"${slideStyle}>${slideHtml}</div>
   </div>`;
   const exitBtn = document.getElementById('exitSpectator');
   if(exitBtn) exitBtn.addEventListener('click', async ()=>{
@@ -8702,6 +8851,9 @@ function bindTabEvents(t){
     }));
     const semSelect = document.getElementById('pfSemesterSelect');
     if(semSelect) semSelect.addEventListener('change', ()=>{
+      // Section 153: 'all' (« Depuis le début ») est une sentinelle STRING, à préserver telle quelle —
+      // seule une valeur numérique (semestre précis) passe par parseInt ci-dessous.
+      if(semSelect.value==='all'){ portefeuilleSelectedSemester = 'all'; render(); return; }
       const v = parseInt(semSelect.value);
       portefeuilleSelectedSemester = Number.isNaN(v) ? null : v;
       render();

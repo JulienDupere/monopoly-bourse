@@ -683,6 +683,7 @@ function etfDutchLocalElapsed(etf, tranche, dutch, nowMs){
   return Math.max(0, nowMs - anchor.localObservedAt);
 }
 let lastDiceResult = null; // dernier lancer de dés affiché (éphémère, propre à ce navigateur — jamais synchronisé)
+let lastNeutralPawnResults = []; // section 192 — même convention que lastDiceResults juste en dessous, éphémère.
 let lastDiceResults = null; // dernier lancer « pour tous » (tableau de résultats, un par joueur) — éphémère, idem
 // Section 101 (2026-09-01, voir RESUME_ET_REGLES.md): état ouvert/fermé des accordéons de sections
 // de renderEntreprise() (<details>/<summary>) — demande explicite de l'utilisateur (« Faire des
@@ -887,6 +888,14 @@ const DEFAULT_SETTINGS = {
   loanOfferMultipleMin: 1, loanOfferMultipleMax: 2.5, loanMaxPrincipal: 5, subInsuranceMarkup: 1.00,
   stockInitialGreen: 10, stockInitialRed: 10, stockInitialWhite: 8,
   riskFreeRateAnnual: 0.03, bondShortMax: 5, companyCeoStartPct: 0.30,
+  dividendPayoutRatioMin: 0.15, dividendPayoutRatioFull: 0.25, dividendLossPauseMax: 2,
+  // Section 192 (voir RESUME_ET_REGLES.md) — fin de partie alternative à durée cachée: bornes (en années
+  // financières, même compteur que l'affichage « Année : X » — voir currentGameYear()) d'une plage dans
+  // laquelle la durée RÉELLE de la partie est tirée au hasard une seule fois, à la création, et jamais
+  // révélée aux joueurs avant la fin. 0/0 = désactivé (aucune limite de durée, comportement historique).
+  // maxGameYearsMin peut être égal à maxGameYearsMax (durée fixe mais tout de même cachée) — voir
+  // migrateState()/createGame() pour le tirage et RESUME_ET_REGLES.md pour la décision de conception.
+  maxGameYearsMin: 0, maxGameYearsMax: 0,
 };
 
 function migrateState(s){
@@ -986,6 +995,35 @@ function migrateState(s){
   // partie migrée n'a de toute façon aucune entreprise pas-encore-fondée à laquelle ce réglage pourrait
   // s'appliquer rétroactivement (les entreprises déjà fondées gardent leurs parts existantes, inchangées).
   if(s.settings.companyCeoStartPct===undefined) s.settings.companyCeoStartPct = DEFAULT_SETTINGS.companyCeoStartPct;
+  // Section 190 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Verser un minuscule
+  // dividende mais constant, ne devrait pas être une stratégie gagnante pour dividende. Peut-être regarder
+  // avec le ratio de distribution ou autre métrique. » Puis, en précisant la mécanique: « Possible de faire
+  // qu'entre 15% et 25% il n'y a pas de bonus mais il n'est pas perdu, non plus. Donc ta suite n'est pas
+  // perdu juste mise en pause. » et « mettre le range de 15% et 25% dans les paramètres de départ ». Ces
+  // deux bornes gouvernent désormais dividendStreak (voir advanceGameClock): sous dividendPayoutRatioMin,
+  // la séquence est brisée (dividende trop dérisoire par rapport au bénéfice du semestre); entre les deux
+  // bornes, la séquence est simplement gelée (ni cassée ni récompensée ce semestre); à partir de
+  // dividendPayoutRatioFull, la croissance de séquence et la récompense verte s'appliquent comme avant.
+  if(s.settings.dividendPayoutRatioMin===undefined) s.settings.dividendPayoutRatioMin = DEFAULT_SETTINGS.dividendPayoutRatioMin;
+  if(s.settings.dividendPayoutRatioFull===undefined) s.settings.dividendPayoutRatioFull = DEFAULT_SETTINGS.dividendPayoutRatioFull;
+  // Section 190bis (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: un dividende versé
+  // sur un semestre à bénéfice nul/négatif (financé par l'épargne) gèle désormais la séquence au lieu de
+  // la briser (« un ou 2 semestres malchanceux » ne doivent plus coûter la séquence) — MAIS seulement de
+  // façon sporadique: « C'est comme emprunter pour verser un dividende sporadiquement c'est ok mais pas si
+  // c'est une tendance ancré, nuance. » `dividendLossPauseMax` plafonne le nombre de semestres CONSÉCUTIFS
+  // à bénéfice non positif tolérés en pause (voir co.dividendLossStreak dans advanceGameClock) — au-delà,
+  // la séquence est BRISÉE comme avant ce correctif (une dépendance ancrée au déficit n'est plus une
+  // « malchance passagère »).
+  if(s.settings.dividendLossPauseMax===undefined) s.settings.dividendLossPauseMax = DEFAULT_SETTINGS.dividendLossPauseMax;
+  // Section 192 (voir RESUME_ET_REGLES.md) — pions neutres (injection de liquidités) + fin de partie à
+  // durée cachée. Une ancienne sauvegarde n'a par définition jamais eu de pions neutres ni de durée
+  // cachée tirée à sa création — s.neutralPawns reste donc simplement vide, et
+  // hiddenGameLengthTargetYear reste null (désactivé), plutôt que de tirer rétroactivement une durée qui
+  // pourrait déjà être dépassée par la partie en cours.
+  if(s.settings.maxGameYearsMin===undefined) s.settings.maxGameYearsMin = DEFAULT_SETTINGS.maxGameYearsMin;
+  if(s.settings.maxGameYearsMax===undefined) s.settings.maxGameYearsMax = DEFAULT_SETTINGS.maxGameYearsMax;
+  if(!Array.isArray(s.neutralPawns)) s.neutralPawns = [];
+  if(s.hiddenGameLengthTargetYear===undefined) s.hiddenGameLengthTargetYear = null;
   // insuranceGroupDiscount2nd/insuranceGroupDiscount3rd (rabais de volume assureur sur l'assurance
   // NORMALE groupée) retirés à la section 120 — voir RESUME_ET_REGLES.md — demande explicite de
   // l'utilisateur, verbatim: « Rabais de volume — assurance normale seulement (jamais sous-standard).
@@ -1453,7 +1491,7 @@ function showTransactionPopup(title, entries){
 }
 
 /* ---------- Création / jonction ---------- */
-async function createGame(names, startCash, bankCash, unit, settings){
+async function createGame(names, startCash, bankCash, unit, settings, neutralPawnNames){
   const code = Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*24)]).join('');
   // sharesPerPlayer/riskFreeRate/stockStartingCash/marginMultiple et features.stock (ancienne Bourse
   // joueur-contre-joueur) retirés à l'étape 5/8, Bloc 6 — voir RESUME_ET_REGLES.md section 84.
@@ -1483,6 +1521,35 @@ async function createGame(names, startCash, bankCash, unit, settings){
   // désormais l'unique source pour tous les réglages plats — seul `features` (objet imbriqué, déjà géré par
   // son propre mécanisme de migration par clé) reste défini ici séparément.
   const mergedSettings = Object.assign({}, DEFAULT_SETTINGS, {features:{insurance:true,houseAuction:true,goAdvance:true,mortgage:true,rentSwap:true,rentCompensation:true,loan:true,etf:false,subInsurance:true,houseSource:false}}, settings||{});
+  // Section 192 (voir RESUME_ET_REGLES.md) — pions neutres: injectent des liquidités dans la partie en
+  // tournant sur le plateau comme des entreprises, mais sans y participer (voir
+  // corePerformNeutralPawnRoll/settleNeutralPawnRent plus bas) — demande explicite de l'utilisateur, verbatim:
+  // « Mettre des pions neutres qui tourne autour du plateau comme des compagnies. Il ne collecte pas GO,
+  // quand ils sont en enquête ils reste les 3 tours sans jouer. Il ne paie pas d'impôt ni de taxes. Il ne
+  // collecte pas de loyer, ne participe à aucun mécanisme du jeu, mais paie des loyers quand il tombe sur
+  // les cases terrains. Leur argent est celle de la banque » + « Dans les paramètres mettre un emplacement
+  // pour les nommer pour flavor ». neutralPawnNames est la liste (potentiellement vide — « possible de
+  // mettre 0 ») saisie dans le formulaire de création (voir renderSetup/setupNeutralPawns) — sa LONGUEUR
+  // est le nombre de pions, un nom vide reçoit un nom par défaut. Objet volontairement minimal (aucun
+  // champ `cash` — leur argent est directement celui de la banque, jamais un solde propre à suivre).
+  const neutralPawns = (neutralPawnNames||[]).map((n,i)=>({id:uid(), name:(n&&n.trim())||`Pion neutre ${i+1}`, position:0, inJail:false, jailTurnsLeft:0}));
+  // Fin de partie alternative à durée cachée (section 192) — demande explicite de l'utilisateur, verbatim:
+  // « Ajouter aussi une fin alternative dans la paramètre de début. Un range défini en paramètre par
+  // exemple 8-10 qui signifie que la partie prend fin quelque part entre à la fin de l'année financière
+  // 8, 9 ou 10. Déterminer aléatoirement et inconnu des joueurs. » Tiré UNE SEULE FOIS ici, à la création
+  // (jamais recalculé ensuite), et gardé HORS de `settings` à dessein: `settings` reste consultable par
+  // certains écrans (ex. un futur écran de récap des règles choisies) alors que cette valeur ne doit
+  // JAMAIS être affichée à qui que ce soit avant la fin de la partie (voir advanceGameClock pour le
+  // déclenchement et renderGameEndedScreen pour la seule révélation, après coup). null = désactivé
+  // (maxGameYearsMax<=0, comportement historique, aucune limite de durée). Bornes défensivement permutées
+  // si saisies à l'envers; maxGameYearsMin peut être égal à maxGameYearsMax (durée fixe mais tout de même
+  // cachée des joueurs pendant la partie).
+  let hiddenGameLengthTargetYear = null;
+  if(mergedSettings.maxGameYearsMax>0){
+    let lo = Math.max(0, mergedSettings.maxGameYearsMin||0), hi = mergedSettings.maxGameYearsMax;
+    if(lo>hi){ const t=lo; lo=hi; hi=t; }
+    hiddenGameLengthTargetYear = lo + Math.floor(Math.random()*(hi-lo+1));
+  }
   // Étape 5/8 (2026-09-01): position/inJail/jailTurnsLeft/goAdvancesOwed/etfHoldings/houseReserve ne
   // sont plus initialisés ici — ces champs n'existent plus sur le joueur, ils naissent sur SON
   // entreprise au moment de sa fondation (voir createCompany). Un joueur sans entreprise n'a de toute
@@ -1550,6 +1617,8 @@ async function createGame(names, startCash, bankCash, unit, settings){
     etfs: ETF_DEFS.map(d=>({id:d.key, opened:false, unitsIssuedTotal:0, pendingTranchePct:0, fundCash:0, tranches:[]})),
     bank:{cash:bankCash},
     players,
+    neutralPawns, // section 192 — voir commentaire plus haut
+    hiddenGameLengthTargetYear, // section 192 — JAMAIS affiché avant la fin de partie, voir son commentaire
     companies: [], // module Entreprises (refonte majeure) — voir createCompany/renderCompanySetupGate
     properties: freshProperties(mergedSettings),
     auctions: [],
@@ -1655,6 +1724,13 @@ function myCompany(){
 }
 function companyById(id){
   return state.companies.find(c=>c.id===id) || null;
+}
+// Section 192 (voir RESUME_ET_REGLES.md) — pions neutres: DÉLIBÉRÉMENT PAS dans state.companies (voir le
+// commentaire de state.neutralPawns dans createGame) — un lookup séparé plutôt que de les faire résoudre
+// par companyById(), pour ne jamais les faire apparaître dans les écrans/mécaniques réservés aux
+// entreprises (banque, IPO, dividendes, cubes boursiers...).
+function neutralPawnById(id){
+  return (state.neutralPawns||[]).find(pw=>pw.id===id) || null;
 }
 function companyOfPlayer(playerId){
   const p = state.players.find(x=>x.id===playerId);
@@ -4896,8 +4972,17 @@ function renderGameEndedScreen(){
       <td class="money">${fmtPrice(row.stockPrice)}</td>
       <td>${row.ratio.toFixed(2)}×</td>
     </tr>`).join('');
+  // Section 192 (voir RESUME_ET_REGLES.md) — 3e raison de fin de partie possible: durée maximale (cachée)
+  // atteinte. Demande explicite de l'utilisateur sur la révélation: « Révéler, en fait le mode spectateur
+  // la télé, cesserait d'afficher le plateau et montrerait les rankings. Avec en haut la raison de fin de
+  // partie. Soit une compagnie 5% de valeur initiale, soit délai expiration avec compagnie 100% banque
+  // atteint ou durer maximale atteint à X tour de jeu » — comme les deux autres raisons, seul le lancer de
+  // dés (#X) est cité; la plage min/max ni l'année cible elle-même ne sont JAMAIS affichées, ni avant ni
+  // après (voir hiddenGameLengthTargetYear dans createGame pour le raisonnement complet).
   const reasonMessage = reason==='bankOwnsAll'
     ? `La banque possède désormais <b>100%</b> des parts de l'entreprise <b>${esc(r.companyName)}</b> — plus aucun joueur ni son CEO n'y détient de position longue (lancer de dés #${r.roll}) — la partie se termine immédiatement pour tout le monde, comme convenu.`
+    : reason==='maxDuration'
+    ? `La partie a atteint sa <b>durée maximale</b> (lancer de dés #${r.roll}) — la partie se termine immédiatement pour tout le monde, comme convenu.`
     : `L'entreprise <b>${esc(r.companyName)}</b> a vu le cours de son action tomber à 0 en bourse (lancer de dés #${r.roll}) — la partie se termine immédiatement pour tout le monde, comme convenu.`;
   app.innerHTML = `
   <div class="card pad" style="max-width:640px;margin:60px auto;text-align:center;">
@@ -5055,8 +5140,11 @@ function render(){
   // Section 123 (voir RESUME_ET_REGLES.md) — moteur boursier Phase A: rappel visible en permanence dans
   // l'en-tête (dont en mode "consulter quand même", __gameEndedReviewMode — voir renderGameEndedScreen)
   // que la partie est terminée, même une fois qu'on a quitté l'écran de fin de partie pour naviguer.
+  // Section 192 (voir RESUME_ET_REGLES.md): rendue consciente des 3 raisons possibles désormais (au lieu
+  // de toujours supposer un companyId — 'maxDuration' n'en a pas), même esprit que la reasonMessage
+  // détaillée de renderGameEndedScreen mais condensée pour cet en-tête compact.
   const gameEndedHeaderHtml = state.gameEndedReason
-    ? `&nbsp;|&nbsp; <b style="color:var(--brick,#C0392B);">🏁 Partie terminée (${esc(state.gameEndedReason.companyName)} à 0)</b>`
+    ? `&nbsp;|&nbsp; <b style="color:var(--brick,#C0392B);">🏁 Partie terminée (${state.gameEndedReason.reason==='maxDuration' ? 'durée maximale atteinte' : `${esc(state.gameEndedReason.companyName)}${state.gameEndedReason.reason==='bankOwnsAll' ? ' à 100% banque' : ' à 0'}`})</b>`
     : '';
   // Section 182 (voir RESUME_ET_REGLES.md) — avertissement VISIBLE en permanence dans l'en-tête (même
   // esprit que gameEndedHeaderHtml juste au-dessus) pendant tout délai de grâce actif (voir
@@ -6289,6 +6377,19 @@ function advanceGameClock(){
   const after = currentGameYear();
   const semesterAfter = Math.floor(state.gameClock.rollCount/3);
   if(after>before) processYearEnd(after);
+  // Section 192 (voir RESUME_ET_REGLES.md) — fin de partie alternative à durée cachée: se déclenche au
+  // moment où l'année financière CIBLE (tirée au hasard à la création, jamais révélée avant coup — voir
+  // createGame) vient de se terminer intégralement, c.-à-d. à la transition VERS l'année SUIVANTE
+  // (after === target+1), pas à l'entrée dans l'année cible elle-même — pour que la partie joue bien
+  // l'année cible en entier avant de s'arrêter (demande explicite de l'utilisateur: « la partie prend fin
+  // quelque part entre à la fin de l'année financière 8, 9 ou 10 »). `after>target` plutôt que
+  // `after===target+1` par robustesse (couvre un saut hypothétique de plusieurs années d'un coup, même si
+  // rollCount n'avance jamais que d'une unité à la fois en pratique). Comme les deux autres conditions de
+  // fin de partie (stockFloor/bankOwnsAll), gardée par `!state.gameEndedReason`: la première condition
+  // atteinte l'emporte, jamais écrasée par une autre ensuite.
+  if(!state.gameEndedReason && state.hiddenGameLengthTargetYear!=null && after>state.hiddenGameLengthTargetYear){
+    state.gameEndedReason = {reason:'maxDuration', roll: state.gameClock.rollCount, year: state.hiddenGameLengthTargetYear};
+  }
   // Instantané de bilan par compagnie à CHAQUE transition de semestre (3 lancers) — voir
   // snapshotBalanceSheets ci-dessous, section « États financiers ». Une transition d'année est TOUJOURS
   // aussi une transition de semestre (6 est un multiple de 3), donc cette seule condition couvre les deux
@@ -6439,35 +6540,131 @@ function advanceGameClock(){
       // (4) Section 126 (voir RESUME_ET_REGLES.md) — moteur boursier Phase C: dividende, 4e vérification
       // "de fond" du groupe A — voir DESIGN_MOTEUR_BOURSIER.md, section C. Contrairement aux 3
       // vérifications ci-dessus, AUCUNE pénalité rouge ici (décision explicite du design): un dividende
-      // manqué ou en baisse casse simplement la séquence (dividendStreak retombe à 0), sans injection d'
-      // aucune couleur — seule une séquence STABLE/CROISSANTE de versements récompense en vert.
+      // manqué ou insuffisant casse ou gèle simplement la séquence (dividendStreak), sans injection d'
+      // aucune couleur — seule une séquence dont chaque versement respecte le plancher de ratio récompense
+      // en vert.
+      // Section 190 (voir RESUME_ET_REGLES.md) — CORRECTIF, demande explicite de l'utilisateur: « Verser
+      // un minuscule dividende mais constant, ne devrait pas être une stratégie gagnante pour dividende.
+      // Peut-être regarder avec le ratio de distribution ou autre métrique. » L'ancienne comparaison
+      // thisSem>=prevSem (montant NOMINAL) était contournable par un dividende dérisoire mais constant
+      // (ex: 0,01M$ chaque semestre — toujours "stable", donc toujours récompensé). Remplacée par un ratio
+      // dividende/bénéfice DU SEMESTRE (`is.netIncome`, déjà calculé ci-dessus en (2) pour cette même
+      // compagnie/semestre — même référence que isBadDividend dans modalAnnounceDividend). Puis, précision
+      // du même utilisateur: « Possible de faire qu'entre 15% et 25% il n'y a pas de bonus mais il n'est
+      // pas perdu, non plus. Donc ta suite n'est pas perdu juste mise en pause. » et « mettre le range de
+      // 15% et 25% dans les paramètres de départ » — d'où les 3 paliers ci-dessous, bornés par
+      // state.settings.dividendPayoutRatioMin/Full (réglables, défauts 15%/25%).
+      // Section 190bis (voir RESUME_ET_REGLES.md) — CORRECTIF, demande explicite de l'utilisateur, après
+      // avoir vu qu'un bénéfice nul/négatif forçait un ratio nul (donc TOUJOURS sous le plancher — séquence
+      // BRISÉE, jamais seulement gelée): « Semestre déficitaire ou à bénéfice nul → ratio forcé à 0, donc
+      // séquence brisée, quel que soit le montant versé. Un dividende versé sur un semestre en perte ne
+      // gèle pas la séquence : il la casse. C'est pas très fair. Techniquement l'entreprise devrait pas
+      // être pénalisé aussitôt qu'elle est négative un semestre. Elle pourrait utiliser son épargne et
+      // juste avoir un ou 2 semestres malchanceux non? » Un bénéfice non positif rend le RATIO
+      // mathématiquement absurde (rien à distribuer) — mais l'entreprise qui verse quand même, en piochant
+      // dans ses réserves, ne « joue » pas le système comme le dividende dérisoire visé plus haut (ce
+      // versement est déjà séparément sanctionné par isBadDividend, voir modalAnnounceDividend). Ce cas
+      // rejoint donc la zone de PAUSE (co.dividendStreak inchangé), pas la zone BRISÉE — un ou deux
+      // semestres malchanceux, payés grâce à l'épargne, n'annulent plus une séquence déjà construite.
+      // NUANCE du même utilisateur, immédiatement après: « C'est comme emprunter pour verser un dividendes
+      // sponradiquement c'est ok mais pas si c'est une tendance ancré. » La pause ci-dessus ne doit donc
+      // PAS être un blanc-seing illimité — `co.dividendLossStreak` compte les semestres CONSÉCUTIFS à
+      // bénéfice non positif où un dividende est quand même versé; au-delà de
+      // `dividendLossPauseMax` (défaut 2 — « un ou 2 semestres »), la séquence est BRISÉE, pas gelée: une
+      // dépendance ancrée au déficit pour maintenir la séquence n'est plus tolérée. Le compteur repart à 0
+      // dès que la compagnie renoue avec un bénéfice réellement positif (quel que soit le palier atteint
+      // ensuite) — la « malchance passagère » se mesure semestre par semestre, jamais cumulée sur toute la
+      // partie.
+      // Section 191 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur, à partir du tableau
+      // récapitulatif par type de RESUME_CALIBRATION_4TYPES.md (Project): « Enlevé l'aspect de série pour
+      // Momentum et Croissance. Cubes verts versé si dividendes versé au dessus du % [...] Mais pas de
+      // série pour eux. GARP: Série (pas de changement). Dividende: Série avec bonus (pas de changement). »
+      // Croissance/Momentum perdent donc ENTIÈREMENT la mécanique de séquence ci-dessus: chaque semestre
+      // est évalué de façon indépendante, sur un seul seuil binaire (dividendPayoutRatioMin, PAS
+      // dividendPayoutRatioFull — la zone de pause à 25% n'a plus de sens sans séquence à geler), sans
+      // aucune escalade ni bonus de palier. GARP et Dividende gardent la mécanique de séquence complète
+      // (190/190bis) EXACTEMENT comme avant CE correctif — sauf un point précisé par le même utilisateur en
+      // clarifiant le comportement voulu (exemple inventé, paliers fictifs — « EXEMPLE SEULEMENT PAS LES
+      // VRAIS CHIFFRE »): « Si la compagnie verse 30% elle passe au stade 2, le tour d'après elle verse 15%
+      // elle reste au stade 2 et reçoit les cubes du stade 2. » Contrairement à l'ancien comportement de la
+      // zone de pause "ratio" (190: aucun cube), un versement dans la zone 15%-25% insère désormais un cube
+      // au lieu de zéro cube — voir injectDividendReward ci-dessous. Section 191bis (question directe "bonne
+      // idée ou pas" + proposition de l'utilisateur "si c'est trop fort... réduire le pallier de série de 1
+      // mais quand même verser"): le palier N'EST PLUS figé pendant la pause — il RECULE de 1 (plancher 0) à
+      // chaque semestre passé dans cette zone, et c'est ce palier réduit qui détermine le cube. Raisonnement:
+      // contrairement à la pause "perte" (vraie incapacité de payer), la pause "ratio" est un CHOIX de verser
+      // modérément malgré un vrai bénéfice — un gel aurait permis de coaster indéfiniment au palier maximal
+      // sans jamais revenir à 25%+. La pause "perte" (bénéfice non positif, ci-dessus) reste volontairement
+      // SANS cube ET sans dégradation du palier tant que la tolérance dividendLossPauseMax n'est pas dépassée
+      // — un versement financé par les réserves plutôt que par un vrai bénéfice ne semble pas mériter la
+      // même reconnaissance boursière qu'un versement modeste mais réellement rentable, mais ne mérite pas
+      // non plus d'éroder l'acquis puisque l'entreprise n'avait aucune capacité de faire mieux.
       const thisSem = dividendPaidInSemester(co.id, semesterBefore);
-      const prevSem = dividendPaidInSemester(co.id, semesterBefore-1);
-      if(thisSem<=0){
-        // Rien versé ce semestre: séquence brisée, aucune récompense (ni pénalité).
-        co.dividendStreak = 0;
-      } else if(prevSem<=0 || thisSem>=prevSem){
-        // 1er versement de la séquence (pas d'historique: prevSem<=0), OU versement stable/croissant par
-        // rapport au précédent: la séquence continue (ou démarre) — palier croissant plafonné à 5 crans
-        // au-delà du 1er (voir STOCK_TRIGGER_DIVIDEND_BASE_MIN/MAX).
-        co.dividendStreak = (co.dividendStreak||0) + 1;
-        const bonus = Math.min(co.dividendStreak-1, 5);
+      const payoutRatioMin = state.settings.dividendPayoutRatioMin!==undefined ? state.settings.dividendPayoutRatioMin : DEFAULT_SETTINGS.dividendPayoutRatioMin;
+      const payoutRatioFull = state.settings.dividendPayoutRatioFull!==undefined ? state.settings.dividendPayoutRatioFull : DEFAULT_SETTINGS.dividendPayoutRatioFull;
+      const lossPauseMax = state.settings.dividendLossPauseMax!==undefined ? state.settings.dividendLossPauseMax : DEFAULT_SETTINGS.dividendLossPauseMax;
+      // Bonus type Dividende: récompense le respect de l'engagement de type (sans exclure les autres types
+      // de cette vérification, qui reste ouverte à tous) — facteur multiplicatif aléatoire 1.5-2× sur la
+      // quantité DÉJÀ tirée par le cube de base, ajouté par un second appel à injectStockCube (même couleur
+      // verte, fourchette figée à la quantité extra calculée: qtyMin===qtyMax force injectStockCube à
+      // injecter exactement ce montant). Minimum 1 cube extra pour que le bonus reste toujours perceptible.
+      // Factorisée ici (Section 191): appelée à la fois par le palier plein (croissance normale) ET,
+      // désormais, par la zone de pause "ratio" (même palier, non incrémenté) — voir commentaire ci-dessus.
+      function injectDividendReward(streakForBonus){
+        const bonus = Math.min(Math.max(streakForBonus-1, 0), 5);
         const qtyMin = STOCK_TRIGGER_DIVIDEND_BASE_MIN + bonus, qtyMax = STOCK_TRIGGER_DIVIDEND_BASE_MAX + bonus;
         let qty = injectStockCube(co, 'green', qtyMin, qtyMax);
-        // Bonus type Dividende: récompense le respect de l'engagement de type (sans exclure les autres
-        // types de cette vérification, qui reste ouverte à tous) — facteur multiplicatif aléatoire
-        // 1.5-2× sur la quantité DÉJÀ tirée ci-dessus, ajouté par un second appel à injectStockCube (même
-        // couleur verte, fourchette figée à la quantité extra calculée: qtyMin===qtyMax force
-        // injectStockCube à injecter exactement ce montant, cohérent avec son contrat qui tolère qtyMin===
-        // qtyMax). Minimum 1 cube extra pour que le bonus reste toujours perceptible.
         if(co.type==='dividende' && qty>0){
           const factor = STOCK_TRIGGER_DIVIDEND_TYPE_BONUS_MIN + Math.random()*(STOCK_TRIGGER_DIVIDEND_TYPE_BONUS_MAX-STOCK_TRIGGER_DIVIDEND_TYPE_BONUS_MIN);
           const extraQty = Math.max(1, Math.round(qty*factor));
           injectStockCube(co, 'green', extraQty, extraQty);
         }
-      } else {
-        // Versé, mais EN BAISSE par rapport au semestre précédent: séquence brisée, aucune récompense.
+      }
+      if(co.type==='croissance' || co.type==='momentum'){
+        // Section 191: SANS série — un seul seuil binaire, aucune escalade, aucun état à casser/geler.
+        if(thisSem>0 && is.netIncome>1e-9 && (thisSem/is.netIncome) >= payoutRatioMin){
+          injectStockCube(co, 'green', STOCK_TRIGGER_DIVIDEND_BASE_MIN, STOCK_TRIGGER_DIVIDEND_BASE_MAX);
+        }
+      } else if(thisSem<=0){
+        // Rien versé ce semestre: séquence brisée, aucune récompense (ni pénalité). Sort aussi du compteur
+        // de semestres déficitaires consécutifs (rien versé n'est pas "financé par l'épargne").
         co.dividendStreak = 0;
+        co.dividendLossStreak = 0;
+      } else if(is.netIncome<=1e-9){
+        // Versé quand même malgré un bénéfice nul/négatif (financé par l'épargne).
+        co.dividendLossStreak = (co.dividendLossStreak||0) + 1;
+        if(co.dividendLossStreak <= lossPauseMax){
+          // Encore dans la tolérance "malchance passagère" (voir dividendLossPauseMax ci-dessus): zone de
+          // PAUSE, pas de rupture — co.dividendStreak reste INCHANGÉ. Aucun cube (choix non explicitement
+          // tranché par l'utilisateur, voir le commentaire Section 191 ci-dessus) — déjà pénalisé ailleurs
+          // par isBadDividend si excessif, inutile de le pénaliser 2 fois.
+        } else {
+          // Tendance ANCRÉE (plus de semestres déficitaires consécutifs que la tolérance): séquence brisée,
+          // comme si rien n'avait été versé — la pause n'était jamais un blanc-seing illimité.
+          co.dividendStreak = 0;
+        }
+      } else if((thisSem/is.netIncome) < payoutRatioMin){
+        // Versé, bénéfice positif, mais dérisoire par rapport à ce bénéfice (sous le plancher): séquence
+        // brisée, exactement comme un semestre sans versement — c'est le cas visé par la demande initiale.
+        co.dividendStreak = 0;
+        co.dividendLossStreak = 0; // bénéfice positif ce semestre: renoue avec la tolérance complète
+      } else if((thisSem/is.netIncome) < payoutRatioFull){
+        // Zone intermédiaire ("mise en pause"): CHOIX d'un versement modéré (pas une incapacité comme la
+        // pause "perte" ci-dessus) — donc pas de blanc-seing illimité. Section 191bis (suite à la question
+        // "bonne idée ou pas" / proposition de l'utilisateur "réduire le pallier de série de 1... mais
+        // quand même verser"): le palier RECULE de 1 (plancher 0) à chaque semestre passé dans cette zone,
+        // au lieu de rester figé — sinon une compagnie ayant atteint le palier maximal pourrait y coaster
+        // indéfiniment à 20% sans jamais revenir à 25%+. Le cube est quand même inséré, au NOUVEAU palier
+        // (réduit) — jamais zéro cube, juste un palier qui s'érode si la pause se répète.
+        co.dividendLossStreak = 0; // bénéfice positif ce semestre: renoue avec la tolérance complète
+        co.dividendStreak = Math.max(0, (co.dividendStreak||0) - 1);
+        injectDividendReward(co.dividendStreak);
+      } else {
+        // Ratio plein atteint: la séquence continue (ou démarre) — palier croissant plafonné à 5 crans
+        // au-delà du 1er (voir STOCK_TRIGGER_DIVIDEND_BASE_MIN/MAX).
+        co.dividendLossStreak = 0; // bénéfice positif ce semestre: renoue avec la tolérance complète
+        co.dividendStreak = (co.dividendStreak||0) + 1;
+        injectDividendReward(co.dividendStreak);
       }
       // (5) Section 160 — spirale de détresse UNIVERSELLE (indépendante du type): endettement RÉEL
       // persistant (companyDebtRatio — ne peut monter que via de vrais emprunts/hypothèques déjà câblés,
@@ -8838,6 +9035,54 @@ async function corePerformDiceRoll(co){
   // plus bas, et la correction de la section 89 dans RESUME_ET_REGLES.md pour le détail du changement.
   return {d1, d2, total, oldPos, newPos: co.position, passedGo, jailed, goEntries, taxEntries, rentEntries, rentPropertyName};
 }
+/* Section 192 (voir RESUME_ET_REGLES.md) — pendant de corePerformDiceRoll() pour un PION NEUTRE, mais
+   délibérément beaucoup plus court: demande explicite de l'utilisateur, verbatim — « Il ne collecte pas
+   GO, quand ils sont en enquête ils reste les 3 tours sans jouer. Il ne paie pas d'impôt ni de taxes. Il
+   ne collecte pas de loyer, ne participe à aucun mécanisme du jeu, mais paie des loyers quand il tombe sur
+   les cases terrains. » Concrètement: aucun appel à applyPassGoEffect() (même en passant par GO) ni à
+   payTax() (case taxe simplement ignorée) — la fonction ne les appelle tout simplement jamais, aucun
+   bypass à écrire. La durée d'enquête réutilise state.settings.jailTurns (comme les entreprises — « 3
+   tours » dans la demande correspond au défaut actuel de ce réglage, voir DEFAULT_SETTINGS), pas une
+   constante séparée, pour rester cohérent si ce réglage change. Aucune injection de cube boursier (
+   applySendToJailEffect() en fait un pour les entreprises — un pion n'a ni type ni sac de tirage, donc pas
+   d'équivalent ici) ni possibilité de règlement anticipé (payBail() est réservée aux entreprises, qui ont
+   un `cash` propre à débiter — un pion n'en a pas). */
+async function corePerformNeutralPawnRoll(pawn){
+  const d1 = 1 + Math.floor(Math.random()*6);
+  const d2 = 1 + Math.floor(Math.random()*6);
+  const total = d1 + d2;
+  const oldPos = pawn.position;
+  const newPos = (oldPos + total) % 40;
+  pawn.position = newPos;
+  let jailed = false;
+  const sq = SPECIAL_SQUARES[pawn.position];
+  if(sq && sq.kind==='gotojail'){
+    pawn.position = 10;
+    pawn.inJail = true;
+    pawn.jailTurnsLeft = state.settings.jailTurns;
+    jailed = true;
+  }
+  log(`${pawn.name} avance: ${d1} + ${d2} = ${total}. Déplacement case ${oldPos} → case ${jailed?30:pawn.position}${jailed?", mise sous enquête de l'AMF":''}.`);
+  let rentEntries = null, rentPropertyName = null;
+  if(!jailed){
+    const landedSq = SPECIAL_SQUARES[pawn.position];
+    if(landedSq && landedSq.kind==='tax'){
+      // Case taxe: aucune action pour un pion neutre — payTax() n'est délibérément jamais appelée (« Il
+      // ne paie pas d'impôt ni de taxes »).
+    } else {
+      // Comme corePerformDiceRoll: aucune property n'existe jamais aux positions GO/parking/prison
+      // (visite simple), donc landedProp reste naturellement null pour ces cases — pas besoin d'une
+      // vérification de kind supplémentaire ici.
+      const landedProp = state.properties.find(x=>x.pos===pawn.position);
+      const ownedByAnyone = landedProp && landedProp.owners && landedProp.owners.length>0;
+      if(ownedByAnyone){
+        rentPropertyName = landedProp.name;
+        rentEntries = await settleNeutralPawnRent(landedProp, pawn.id, total, {skipSave:true});
+      }
+    }
+  }
+  return {d1, d2, total, oldPos, newPos: pawn.position, jailed, rentEntries, rentPropertyName};
+}
 async function rollDiceAndMove(companyId){
   // Section 123 (voir RESUME_ET_REGLES.md) — moteur boursier Phase A: une fois state.gameEndedReason posé
   // (une compagnie a touché 0 en bourse), plus AUCUN nouveau lancer de dés n'est permis, peu importe le
@@ -8847,8 +9092,12 @@ async function rollDiceAndMove(companyId){
   // faux quand la partie s'est terminée parce que la banque possède 100% des parts (bankOwnsAll).
   if(state.gameEndedReason){
     const r = state.gameEndedReason;
-    const why = r.reason==='bankOwnsAll' ? `la banque possède désormais 100% de ses parts` : `a atteint 0 en bourse`;
-    alert(`La partie est terminée (${r.companyName} ${why}) — plus aucun lancer de dés n'est possible.`);
+    // Section 192 (voir RESUME_ET_REGLES.md) — 3e raison possible (maxDuration): pas de companyName pour
+    // celle-ci, phrase autonome plutôt que le gabarit "${r.companyName} ${why}" des deux autres raisons.
+    const alertMsg = r.reason==='maxDuration'
+      ? `La partie est terminée (durée maximale atteinte) — plus aucun lancer de dés n'est possible.`
+      : `La partie est terminée (${r.companyName} ${r.reason==='bankOwnsAll' ? `la banque possède désormais 100% de ses parts` : `a atteint 0 en bourse`}) — plus aucun lancer de dés n'est possible.`;
+    alert(alertMsg);
     return null;
   }
   const co = companyById(companyId);
@@ -8889,8 +9138,12 @@ async function performRollForAllCompanies(){
   // Section 183 — même correction reason-aware que rollDiceAndMove ci-dessus.
   if(state.gameEndedReason){
     const r = state.gameEndedReason;
-    const why = r.reason==='bankOwnsAll' ? `la banque possède désormais 100% de ses parts` : `a atteint 0 en bourse`;
-    alert(`La partie est terminée (${r.companyName} ${why}) — plus aucun lancer de dés n'est possible.`);
+    // Section 192 (voir RESUME_ET_REGLES.md) — 3e raison possible (maxDuration): pas de companyName pour
+    // celle-ci, phrase autonome plutôt que le gabarit "${r.companyName} ${why}" des deux autres raisons.
+    const alertMsg = r.reason==='maxDuration'
+      ? `La partie est terminée (durée maximale atteinte) — plus aucun lancer de dés n'est possible.`
+      : `La partie est terminée (${r.companyName} ${r.reason==='bankOwnsAll' ? `la banque possède désormais 100% de ses parts` : `a atteint 0 en bourse`}) — plus aucun lancer de dés n'est possible.`;
+    alert(alertMsg);
     return null;
   }
   // Section 169 (voir RESUME_ET_REGLES.md) — capturée AVANT la boucle de lancer ci-dessous, qui peut
@@ -8899,11 +9152,25 @@ async function performRollForAllCompanies(){
   // seules les entreprises DÉJÀ enquêtées avant ce tour comptent ici.
   const alreadyJailedBeforeThisTurn = activeCompanies().filter(c=>c.inJail);
   const rollers = activeCompanies().filter(c=>!c.inJail);
-  if(rollers.length===0 && alreadyJailedBeforeThisTurn.length===0){ alert("Aucune entreprise active pour lancer les dés."); return null; }
+  // Section 192 (voir RESUME_ET_REGLES.md) — pions neutres: participent au MÊME événement de lancer que
+  // les entreprises (un pion ne justifie pas un bouton dédié — « ne participe à aucun mécanisme du jeu »
+  // veut dire aucune action manuelle possible pour eux, pas qu'ils restent immobiles), mais chacun lance
+  // SES PROPRES dés indépendamment (sinon ils resteraient toujours groupés sur la même case, à l'opposé
+  // du but « injecter des liquidités » sur des terrains variés). Même convention de capture AVANT la
+  // boucle que pour les entreprises ci-dessus (section 169): un pion tout juste envoyé en prison CE tour
+  // ne voit pas son compte à rebours entamé le même tour.
+  const alreadyJailedPawnsBeforeThisTurn = (state.neutralPawns||[]).filter(pw=>pw.inJail);
+  const pawnRollers = (state.neutralPawns||[]).filter(pw=>!pw.inJail);
+  if(rollers.length===0 && alreadyJailedBeforeThisTurn.length===0 && pawnRollers.length===0 && alreadyJailedPawnsBeforeThisTurn.length===0){ alert("Aucune entreprise active pour lancer les dés."); return null; }
   const results = [];
   for(const co of rollers){
     const r = await corePerformDiceRoll(co);
     results.push(Object.assign({companyId: co.id, companyName: co.name}, r));
+  }
+  const neutralPawnResults = [];
+  for(const pw of pawnRollers){
+    const r = await corePerformNeutralPawnRoll(pw);
+    neutralPawnResults.push(Object.assign({neutralPawnId: pw.id, neutralPawnName: pw.name}, r));
   }
   // Section 169 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « L'enquête de l'AMF tu
   // ne devrais pas avoir un bouton poursuivre l'enquête 1 tour. C'est soit tu règles soit ça réduit d'un
@@ -8924,6 +9191,18 @@ async function performRollForAllCompanies(){
       log(`${co.name} : l'enquête de l'AMF se poursuit (${co.jailTurnsLeft} tour(s) restant(s)).`);
     }
   });
+  // Section 192 — même décompte automatique que pour les entreprises ci-dessus, aucun geste manuel
+  // équivalent à payBail() pour un pion neutre (« ne participe à aucun mécanisme du jeu » — pas de
+  // règlement anticipé possible, il attend simplement ses 3 tours).
+  alreadyJailedPawnsBeforeThisTurn.forEach(pw=>{
+    pw.jailTurnsLeft = Math.max(0, pw.jailTurnsLeft-1);
+    if(pw.jailTurnsLeft<=0){
+      pw.inJail = false;
+      log(`${pw.name} a laissé l'enquête de l'AMF suivre son cours — l'enquête est close.`);
+    } else {
+      log(`${pw.name} : l'enquête de l'AMF se poursuit (${pw.jailTurnsLeft} tour(s) restant(s)).`);
+    }
+  });
   // Horloge de partie (section 89, corrigée le même jour — clarification utilisateur, verbatim: « si
   // nous sommes 8 entreprises à lancer un dé, c'est considéré comme 1 lancé [...] chaque fois que tout
   // le monde est "Prêt" les lancés de dé sont effectués et ça compte pour 1/3 de semestre »): TOUTES les
@@ -8934,9 +9213,11 @@ async function performRollForAllCompanies(){
   // événement) pour que tout consommateur de `results[i].yearJustEnded` reste valide.
   const yearJustEnded = advanceGameClock();
   results.forEach(r=>{ r.yearJustEnded = yearJustEnded; });
+  neutralPawnResults.forEach(r=>{ r.yearJustEnded = yearJustEnded; });
   lastDiceResults = results; // conservée pour compatibilité (aucun rendu ne l'affiche plus depuis le
   // retrait de l'onglet Plateau, section 90 — voir smoke_test_step8_ready_button.js qui vérifie encore
   // sa longueur), que le déclenchement soit venu du dernier clic « Prêt » ou d'un appel direct (tests).
+  lastNeutralPawnResults = neutralPawnResults; // section 192 — même convention, pour d'éventuels tests/appels directs.
   // Réinitialise TOUS les statuts « prêt » — y compris ceux des entreprises en prison, qui n'en avaient
   // de toute façon pas — pour repartir propre au tour suivant (demande explicite de l'utilisateur).
   state.companies.forEach(c=>{ c.ready = false; });
@@ -10171,9 +10452,33 @@ function triggerLastResortLoan(companyId){
   if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucune action possible.'};
   if(!(company.cash<0)) return {ok:false, error:'Un prêt de dernier recours n’est possible que si l’encaisse de l’entreprise est négative.'};
   const principal = LAST_RESORT_LOAN_AMOUNT;
-  const totalDue = principal * LAST_RESORT_LOAN_MULTIPLE;
-  const loan = {id:uid(), lenderId:'BANK', lenderKind:'bank', borrowerId:company.id, principal, totalDue, repaidSoFar:0, withholdingPct:LAST_RESORT_LOAN_WITHHOLDING_PCT, multiple:LAST_RESORT_LOAN_MULTIPLE, createdAt:nowLabel(), lastResort:true};
-  state.loans.push(loan);
+  const addedDue = principal * LAST_RESORT_LOAN_MULTIPLE;
+  // Section 189 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: un 2e (ou 3e…) prêt de
+  // dernier recours ne doit PAS faire grimper la retenue totale sur les loyers au-delà de 50% — « Ça reste
+  // 50% c'est juste la dette qui grossit ». AVANT cette section, chaque appel créait un NOUVEL
+  // enregistrement `state.loans` séparé (même withholdingPct=50%) — applyLoanWithholding() traite alors
+  // plusieurs prêts d'une même entreprise en CASCADE (chacun prélève son propre % du loyer RESTANT après
+  // le(s) prêt(s) précédent(s) — comportement DÉLIBÉRÉ et documenté pour le marché de prêts NORMAL entre
+  // PLUSIEURS prêteurs différents, section 161, volontairement inchangé ici), ce qui poussait la retenue
+  // combinée de plusieurs prêts de dernier recours vers 75%, 87.5%, etc. Un prêt de dernier recours vient
+  // TOUJOURS de la même prêteuse (la banque), à un taux FIXE jamais négocié — les emprunts successifs sont
+  // donc désormais FUSIONNÉS dans le MÊME enregistrement (principal/totalDue grandissent, withholdingPct
+  // reste 50%, appliqué UNE SEULE FOIS par applyLoanWithholding peu importe le nombre de prêts de dernier
+  // recours cumulés). Un NOUVEL enregistrement n'est créé que si l'entreprise n'a plus aucun prêt de
+  // dernier recours ACTIF (le(s) précédent(s) déjà intégralement remboursé(s)) — un nouveau cycle
+  // d'emprunt, pas un cumul du même prêt en cours.
+  const existing = state.loans.find(l=>l.borrowerId===company.id && l.lastResort && l.repaidSoFar < l.totalDue - 1e-9);
+  let loan, totalDue;
+  if(existing){
+    existing.principal += principal;
+    existing.totalDue += addedDue;
+    loan = existing;
+    totalDue = existing.totalDue;
+  } else {
+    totalDue = addedDue;
+    loan = {id:uid(), lenderId:'BANK', lenderKind:'bank', borrowerId:company.id, principal, totalDue, repaidSoFar:0, withholdingPct:LAST_RESORT_LOAN_WITHHOLDING_PCT, multiple:LAST_RESORT_LOAN_MULTIPLE, createdAt:nowLabel(), lastResort:true};
+    state.loans.push(loan);
+  }
   state.bank.cash -= principal;
   company.cash += principal;
   logFin(company.id, 'loan_proceeds', principal);
@@ -10695,6 +11000,16 @@ function tvSlideBoard(){
       const label = (ceo ? `${co.name} (CEO: ${ceo.name})` : co.name) + statusLabel;
       return `<span title="${esc(label)}" style="display:inline-flex;align-items:center;justify-content:center;padding:3px 8px;border-radius:10px;background:${ceo?ceo.color:'#888'};color:#fff;font-size:13px;font-weight:700;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);white-space:nowrap;">${jailIcon}${displayName}</span>`;
     }).join('');
+    // Section 192 (voir RESUME_ET_REGLES.md) — pions neutres: même style de pastille que les entreprises,
+    // mais couleur GRISE FIXE (pas de CEO/couleur propre — « leur argent est celle de la banque », aucune
+    // identité de joueur) pour rester visuellement distincts d'un coup d'œil. Même icône d'enquête AMF que
+    // les entreprises, mais sans mention CEO (n'en ont pas) dans l'info-bulle.
+    const pawnTokens = (state.neutralPawns||[]).filter(pw=>pw.position===pos).map(pw=>{
+      const displayName = esc(pw.name.length>16 ? pw.name.slice(0,15)+'…' : pw.name);
+      const jailIcon2 = pw.inJail ? '🔍 ' : '';
+      const label2 = pw.name + (pw.inJail ? ` — enquêté par l'AMF (${pw.jailTurnsLeft} tour(s))` : ' — pion neutre');
+      return `<span title="${esc(label2)}" style="display:inline-flex;align-items:center;justify-content:center;padding:3px 8px;border-radius:10px;background:#6b7280;color:#fff;font-size:13px;font-weight:700;border:2px dashed #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);white-space:nowrap;">${jailIcon2}${displayName}</span>`;
+    }).join('');
     let bandColor = '#8a8a8a', label, houseBadge = '';
     if(sq.kind==='property'){
       const prop = state.properties.find(x=>x.id===sq.propId);
@@ -10725,7 +11040,7 @@ function tvSlideBoard(){
       <div style="position:absolute;top:0;left:0;right:0;height:10px;background:${bandColor};"></div>
       <div style="margin-top:12px;font-size:14px;font-weight:700;line-height:1.15;color:var(--ink);">${esc(label)}</div>
       ${houseBadge}
-      <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center;margin-top:5px;">${tokens}</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center;margin-top:5px;">${tokens}${pawnTokens}</div>
     </div>`;
   }
   // Section 150 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « ne pas mettre le
@@ -12039,6 +12354,125 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
         ? `${visitor.name} (copropriétaire à ${visitorShare}%) a payé ${payable.toFixed(2)} de loyer pour ${p.name} aux autres ayants droit.`
         : `${visitor.name} a payé ${payable.toFixed(2)} de loyer pour ${p.name}.`, entries);
     }
+  if(!skipSave){ await saveGame(); render(); }
+  return entries;
+}
+
+/* Section 192 (voir RESUME_ET_REGLES.md) — pion neutre atterrissant sur un terrain possédé: PAS un cas
+   spécial de settlePropertyRent() (délibérément — voir la discussion de conception) mais une fonction
+   DÉDIÉE, plus simple, qui réutilise directement les mêmes briques de CALCUL du loyer (colorRentAt/
+   groupRentSettlement/propertyOwnedShare/mortgagedCompanyIds/jailedCompanyIds/swapSplit/
+   applyLoanWithholding/etfReservedFloorPct/etfReservedCollectedPct/creditEtfFloorRent/
+   purchasableBankShare — toutes déjà agnostiques du VISITEUR, jamais besoin que celui-ci soit résolvable
+   par companyById) mais débite `state.bank.cash` plutôt que `visitor.cash` — demande explicite de
+   l'utilisateur: « Leur argent est celle de la banque ». Pourquoi une fonction séparée plutôt qu'un cas
+   spécial dans settlePropertyRent: celle-ci débite `visitor.cash` directement (`visitor =
+   companyById(visitorId)`, qui retournerait `null` pour un pion — jamais dans state.companies, à dessein,
+   voir neutralPawnById) et est profondément imbriquée avec l'assurance/les swaps/les compensations de
+   loyer/les prêts — un pion neutre ne peut JAMAIS être partie à aucun de ces trois premiers mécanismes
+   (jamais assuré, jamais partie à un swap/une compensation puisque ces contrats se créent uniquement entre
+   VRAIES entreprises choisies dans l'interface), donc les reproduire ici n'aurait servi à rien; SEULS le
+   swap côté PROPRIÉTAIRE (qui peut légitimement rediriger une partie du loyer vers son partenaire, peu
+   importe qui visite) et la retenue de prêt côté propriétaire restent pertinents et sont bien réutilisés
+   ci-dessous. « ne participe à aucun mécanisme du jeu » (demande de l'utilisateur) est donc satisfait par
+   CONSTRUCTION plutôt que par des vérifications explicites — le pion n'apparaît simplement dans AUCUN
+   registre (assurance/swap/compensation/prêt) qui pourrait le concerner. */
+async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
+  const skipSave = opts && opts.skipSave;
+  const needDice = p.type==='service';
+  const pawn = neutralPawnById(pawnId);
+  const entries = [];
+  let rentTotal, payable, distributionCuts;
+  let reservedCutAmount = 0;
+  const mortgagedIds = state.settings.mortgageRentContinues ? [] : mortgagedCompanyIds(p);
+  const jailedIds = jailedCompanyIds();
+  if(p.type==='airport' || p.type==='service'){
+    const dice = needDice ? (diceTotal||0) : null;
+    const settlement = groupRentSettlement(p, pawnId, dice);
+    distributionCuts = settlement.cuts.filter(c=>!mortgagedIds.includes(c.companyId) && !jailedIds.includes(c.companyId));
+    payable = distributionCuts.reduce((s,c)=>s+c.amount,0);
+    const reservedCollectedPct = etfReservedCollectedPct(p);
+    if(reservedCollectedPct>0){
+      const floorRate = etfFloorAirportServiceRate(p) * (p.type==='service' ? (dice||0) : 1);
+      reservedCutAmount = floorRate * (reservedCollectedPct/100);
+      payable += reservedCutAmount;
+    }
+    rentTotal = payable;
+  } else {
+    rentTotal = colorRentAt(p, p.houses);
+    let payableShare = 1; // un pion neutre ne possède jamais de part — payableShare=1-0
+    p.owners.forEach(o=>{ if(mortgagedIds.includes(o.companyId) || jailedIds.includes(o.companyId)) payableShare -= o.share/100; });
+    const reservedPct = etfReservedFloorPct(p);
+    const reservedCollectedPct = etfReservedCollectedPct(p);
+    const reservedUncollectedPct = reservedPct - reservedCollectedPct;
+    if(reservedUncollectedPct>0) payableShare -= reservedUncollectedPct/100;
+    payableShare = Math.max(0, payableShare);
+    payable = rentTotal * payableShare;
+    distributionCuts = p.owners.filter(o=>!mortgagedIds.includes(o.companyId) && !jailedIds.includes(o.companyId))
+      .map(o=>({companyId:o.companyId, amount:rentTotal*(o.share/100)}));
+    if(reservedCollectedPct>0) reservedCutAmount = rentTotal * (reservedCollectedPct/100);
+  }
+  if(payable<=1e-9){
+    if(!skipSave){ await saveGame(); render(); }
+    return entries;
+  }
+  // Swap côté propriétaire: légitime même pour un visiteur pion (voir le commentaire plus haut) — un
+  // pion ne peut jamais être lui-même owner NI partenaire, donc l'exemption `visitorId===ownerId ||
+  // visitorId===partnerId` de swapSplit ne s'applique simplement jamais ici (toujours "toOwner"/"toPartner"
+  // calculé normalement, jamais court-circuité).
+  const splitCuts = [];
+  distributionCuts.forEach(c=>{
+    const split = swapSplit(p.id, c.companyId, pawnId, c.amount);
+    if(split.toOwner>0) splitCuts.push({companyId:c.companyId, amount:split.toOwner, viaSwap:false});
+    if(split.toPartner>0) splitCuts.push({companyId:split.partnerId, amount:split.toPartner, viaSwap:true});
+  });
+  distributionCuts = splitCuts;
+  const cutResults = distributionCuts.map(c=>{
+    const r = state.settings.features.loan ? applyLoanWithholding(c.companyId, c.amount) : {net:c.amount, totalWithheld:0, withholdings:[]};
+    return Object.assign({}, c, {net:r.net, withheld:r.totalWithheld, withholdings:r.withholdings});
+  });
+  // Débit: la banque paie le loyer PLEIN, exactement comme un vrai visiteur le ferait — c'est ICI que la
+  // liquidité entre réellement dans la partie (demande explicite: « injecter des liquidités dans le jeu »).
+  state.bank.cash -= payable;
+  entries.push({label:`${pawn?pawn.name:'Pion neutre'} (loyer, versé par la banque)`, amount:-payable});
+  cutResults.forEach(c=>{
+    const owner = companyById(c.companyId);
+    if(!owner) return; // filet défensif — ne devrait normalement jamais arriver (owners toujours des companyId valides)
+    const ownerPl = state.players.find(x=>x.id===owner.ceoId);
+    if(ownerPl) ownerPl.stats.rentReceived += c.amount;
+    owner.cash += c.net;
+    logFin(owner.id, 'rent_revenue', c.amount);
+    addRealEstateRevenue(realEstateKeyFor(p), owner.id, c.amount);
+    if(c.withheld>0) logFin(owner.id, 'loan_repayment_via_rent', -c.withheld);
+    entries.push({label:`${owner.name} (part${c.viaSwap?' via swap':''})`, amount:c.net});
+    c.withholdings.forEach(w=>{
+      const lenderKind = w.loan.lenderKind || (!w.loan.lenderId || w.loan.lenderId==='BANK' ? 'bank' : 'company');
+      if(lenderKind==='player'){
+        const lenderPl = state.players.find(x=>x.id===w.loan.lenderId);
+        if(lenderPl) lenderPl.cash += w.withheld;
+      } else if(lenderKind==='company'){
+        const lenderCo = companyById(w.loan.lenderId);
+        if(lenderCo){ lenderCo.cash += w.withheld; logFin(lenderCo.id, 'loan_investment_recovery', w.withheld); }
+      } else {
+        state.bank.cash += w.withheld;
+      }
+      entries.push({label:`${loanLenderLabel(w.loan)} (retenue prêt ${Math.round(w.loan.withholdingPct*100)}% sur ${owner.name})`, amount: w.withheld});
+    });
+  });
+  if(p.type==='color'){
+    const ordinaryBshare = purchasableBankShare(p);
+    if(state.settings.bankCollectsRent && ordinaryBshare>0){
+      state.bank.cash += rentTotal * (ordinaryBshare/100);
+      entries.push({label:`Banque (${ordinaryBshare}% part)`, amount:rentTotal*(ordinaryBshare/100)});
+    }
+  }
+  if(reservedCutAmount>0){
+    const creditLabel = creditEtfFloorRent(p, reservedCutAmount);
+    if(creditLabel) entries.push({label:creditLabel, amount:reservedCutAmount});
+  }
+  p.rentCollected += payable;
+  p.timesLanded += 1;
+  log(`${pawn?pawn.name:'Pion neutre'} a atterri sur ${p.name} — la banque a versé ${payable.toFixed(2)} de loyer à sa place (injection de liquidités).`, entries);
   if(!skipSave){ await saveGame(); render(); }
   return entries;
 }
@@ -14170,6 +14604,11 @@ async function expireSubInsurance(pid){
 
 /* ---------- Écran de configuration ---------- */
 let setupPlayers = ['',''];
+// Section 192 (voir RESUME_ET_REGLES.md) — pions neutres: liste vide par défaut (« possible de mettre 0
+// »), même pattern « + Ajouter » que setupPlayers/renderPlayerLines ci-dessous — la LONGUEUR de la liste
+// EST le nombre de pions choisi, pas un champ numérique séparé. Un nom laissé vide reçoit un nom par
+// défaut à la création (voir createGame).
+let setupNeutralPawns = [];
 function renderSetup(){
   app.innerHTML = `
   <div class="setup-grid">
@@ -14296,6 +14735,44 @@ function renderSetup(){
       <label>Valorisation totale de fondation d'une entreprise (100% des parts, en M$ — fixe, identique pour toutes). Le CEO en investit sa part proportionnelle (ce montant × le % ci-dessus), la banque finance le reste via l'IPO</label>
       <input type="number" step="0.01" min="0.01" id="setupCompanyInvestment" value="20">
 
+      <!-- Section 190 (voir RESUME_ET_REGLES.md): demande explicite de l'utilisateur — un dividende
+      dérisoire mais versé chaque semestre ne doit pas, à lui seul, entretenir la séquence verte
+      (dividendStreak, voir advanceGameClock). Le ratio dividende/bénéfice du semestre écoulé détermine
+      désormais l'effet: sous le seuil plancher, la séquence est brisée; entre les deux seuils, elle est
+      gelée (ni brisée ni récompensée — « mise en pause »); à partir du seuil plein, elle croît et récompense
+      normalement. -->
+      <div class="setup-subhead">Séquence de dividendes (bonus vert — voir dividendStreak)</div>
+      <label>Ratio dividende/bénéfice — plancher (sous ce seuil, la séquence est brisée)</label>
+      <input type="number" step="1" min="0" max="100" id="setupDividendPayoutRatioMin" value="15"> %
+      <label>Ratio dividende/bénéfice — plein (à partir de ce seuil, la séquence croît et récompense normalement; entre les deux, elle est mise en pause)</label>
+      <input type="number" step="1" min="0" max="100" id="setupDividendPayoutRatioFull" value="25"> %
+      <!-- Section 190bis (voir RESUME_ET_REGLES.md): un dividende versé sur un semestre à bénéfice
+      nul/négatif (financé par l'épargne) gèle la séquence au lieu de la briser — mais seulement de façon
+      sporadique. Ce réglage plafonne le nombre de semestres CONSÉCUTIFS à bénéfice non positif tolérés en
+      pause; au-delà, la séquence est brisée (une dépendance ancrée au déficit n'est plus une "malchance
+      passagère"). -->
+      <label>Semestres déficitaires consécutifs tolérés en pause (au-delà, la séquence est brisée — pas seulement gelée)</label>
+      <input type="number" step="1" min="0" id="setupDividendLossPauseMax" value="2">
+
+      <!-- Section 192 (voir RESUME_ET_REGLES.md) — pions neutres: injectent des liquidités en tournant sur
+      le plateau comme des entreprises, sans y participer autrement (pas de salaire GO, pas de taxes, pas
+      de collecte de loyer) — voir corePerformNeutralPawnRoll. Liste à longueur variable, même pattern que
+      « Joueurs » plus haut (renderPlayerLines) — 0 ligne = 0 pion, un nom vide reçoit un nom par défaut. -->
+      <div class="setup-subhead">Pions neutres (injection de liquidités)</div>
+      <label>Pions neutres (optionnel — noms pour flavor, un nom vide reçoit un nom par défaut)</label>
+      <div id="neutralPawnLines"></div>
+      <button class="btn btn-ghost btn-sm" id="addNeutralPawn">+ Ajouter un pion neutre</button>
+
+      <!-- Section 192 — fin de partie alternative à durée cachée: voir le commentaire complet dans
+      createGame(). 0/0 (les deux champs) = désactivé, comportement historique. -->
+      <div class="setup-subhead">Durée de partie (optionnel)</div>
+      <label>Fin alternative à durée cachée — plage d'années financières (0/0 = désactivé, aucune limite). Un an, tiré au hasard dans cette plage à la création, est choisi et jamais révélé aux joueurs avant la fin de la partie.</label>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <input type="number" step="1" min="0" id="setupMaxGameYearsMin" value="0" style="flex:1;" placeholder="Min">
+        <span>–</span>
+        <input type="number" step="1" min="0" id="setupMaxGameYearsMax" value="0" style="flex:1;" placeholder="Max">
+      </div>
+
       <div class="setup-subhead">Fonctionnalités activées pour cette partie</div>
       <div id="featureChecks" style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
         ${FEATURE_LIST.map(f=>`
@@ -14323,7 +14800,9 @@ function renderSetup(){
     </div>
   </div>`;
   renderPlayerLines();
+  renderNeutralPawnLines();
   document.getElementById('addPlayer').addEventListener('click', ()=>{ setupPlayers.push(''); renderPlayerLines(); });
+  document.getElementById('addNeutralPawn').addEventListener('click', ()=>{ setupNeutralPawns.push(''); renderNeutralPawnLines(); });
   document.getElementById('createBtn').addEventListener('click', async ()=>{
     const names = setupPlayers.map(s=>s.trim()).filter(Boolean);
     if(names.length<2){ alert('Ajoutez au moins 2 joueurs.'); return; }
@@ -14366,9 +14845,22 @@ function renderSetup(){
       // ailleurs (createCompany/renderCompanySetupGate/migrateState).
       companyCeoStartPct: (parseFloat(document.getElementById('setupCompanyCeoStartPct').value)||30)/100,
       companyInitialInvestment: parseFloat(document.getElementById('setupCompanyInvestment').value)||0,
+      // Section 190 (voir RESUME_ET_REGLES.md): bornes du ratio dividende/bénéfice qui pilotent
+      // dividendStreak (champ HTML en points de pourcentage 0-100, converti ici en fraction 0-1).
+      dividendPayoutRatioMin: (parseFloat(document.getElementById('setupDividendPayoutRatioMin').value)||0)/100,
+      dividendPayoutRatioFull: (parseFloat(document.getElementById('setupDividendPayoutRatioFull').value)||0)/100,
+      // Section 190bis (voir RESUME_ET_REGLES.md): semestres déficitaires consécutifs tolérés en pause.
+      dividendLossPauseMax: parseInt(document.getElementById('setupDividendLossPauseMax').value)||0,
+      // Section 192 (voir RESUME_ET_REGLES.md): plage d'années financières pour la fin de partie à durée
+      // cachée (0/0 = désactivé) — voir createGame() pour le tirage lui-même.
+      maxGameYearsMin: parseInt(document.getElementById('setupMaxGameYearsMin').value)||0,
+      maxGameYearsMax: parseInt(document.getElementById('setupMaxGameYearsMax').value)||0,
       features,
     };
-    await createGame(names, startCash, bankCash, 'M$', settings);
+    // Section 192 (voir RESUME_ET_REGLES.md): noms des pions neutres — la LONGUEUR de setupNeutralPawns
+    // est le nombre de pions (0 par défaut, aucun minimum contrairement aux joueurs).
+    const neutralPawnNames = setupNeutralPawns.map(s=>s.trim());
+    await createGame(names, startCash, bankCash, 'M$', settings, neutralPawnNames);
   });
   document.getElementById('joinBtn').addEventListener('click', async ()=>{
     const code = document.getElementById('joinCode').value.trim().toUpperCase();
@@ -14394,6 +14886,22 @@ function renderPlayerLines(){
   }));
   host.querySelectorAll('[data-premove]').forEach(b=>b.addEventListener('click', e=>{
     setupPlayers.splice(parseInt(e.target.dataset.premove),1); renderPlayerLines();
+  }));
+}
+// Section 192 (voir RESUME_ET_REGLES.md) — même pattern que renderPlayerLines ci-dessus, aucune borne
+// minimale (0 pion neutre est un choix valide — « possible de mettre 0 »).
+function renderNeutralPawnLines(){
+  const host = document.getElementById('neutralPawnLines');
+  host.innerHTML = setupNeutralPawns.map((v,i)=>`
+    <div class="playerline">
+      <input type="text" value="${esc(v)}" data-npline="${i}" placeholder="Pion neutre ${i+1} (nom optionnel)">
+      <button class="btn-x" data-npremove="${i}">✕</button>
+    </div>`).join('');
+  host.querySelectorAll('[data-npline]').forEach(inp=>inp.addEventListener('input', e=>{
+    setupNeutralPawns[parseInt(e.target.dataset.npline)] = e.target.value;
+  }));
+  host.querySelectorAll('[data-npremove]').forEach(b=>b.addEventListener('click', e=>{
+    setupNeutralPawns.splice(parseInt(e.target.dataset.npremove),1); renderNeutralPawnLines();
   }));
 }
 

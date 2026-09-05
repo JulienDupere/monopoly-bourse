@@ -641,6 +641,16 @@ let activeTab = 'portefeuille';
 let isSpectator = false;
 let lastSerialized = null;
 let pollTimer = null;
+// Section 187bis (voir RESUME_ET_REGLES.md) — état de l'abonnement temps réel Firebase (remplace le
+// polling toutes les 3 secondes quand Firebase est le backend actif, voir startPolling/stopSync).
+// firebaseListenerHandle: {ref, callback} de l'écouteur actif, ou null si aucun (window.storage actif,
+// ou config Firebase absente — polling classique conservé dans ces deux cas). lastReceivedRaw: dernière
+// valeur distante REÇUE par l'écouteur, qu'elle ait pu être appliquée immédiatement ou non (bloquée par
+// isLocalInputActive()) — syncRetryTimer la réessaie localement (sans aucun appel réseau) tant qu'elle
+// n'a pas été appliquée.
+let firebaseListenerHandle = null;
+let lastReceivedRaw = null;
+let syncRetryTimer = null;
 let etfDutchTicker = null; // ré-affichage local (sans réseau) pour animer le prix décroissant d'une enchère Dutch ETF en cours — voir startEtfDutchTicker
 // Section 145 (ALPHA test, voir RESUME_ET_REGLES.md): « Les ETF dans l'enchère qui part à 500M et qui
 // descend dans les écrans des autres joueurs non admin ont vois seulement 0K$. » Diagnostic confirmé:
@@ -3929,30 +3939,92 @@ function isLocalInputActive(){
   const modalHost = document.getElementById('modalHost');
   if(modalHost && modalHost.innerHTML && modalHost.innerHTML.trim() !== '') return true;
   const ae = document.activeElement;
-  if(ae && ae.tagName && ['INPUT','SELECT','TEXTAREA'].includes(ae.tagName) && ae.id !== 'whoami') return true;
+  // Section 187bis (voir RESUME_ET_REGLES.md) — revue externe: un <select> HORS modale (ex:
+  // #pfSemesterSelect, simple filtre d'affichage de renderPortefeuille()) applique son choix
+  // INSTANTANÉMENT via son propre gestionnaire 'change' (aucune saisie en cours à protéger — contrairement
+  // à un input/textarea, où l'utilisateur peut être en train de taper une valeur pas encore validée, ex:
+  // une offre de prêt inline). Le garder focalisé après un clic (comportement standard de certains
+  // navigateurs/systèmes) ne doit donc plus geler indéfiniment la synchronisation avec les autres
+  // appareils — c'était le bug rapporté (« le taux d'actualisation en Administration, ou la période des
+  // états financiers, restent sélectionnés puis l'écran semble figé »). Un <select> DANS une modale reste
+  // protégé exactement comme avant, via le garde modalHost ci-dessus — rien ne change pour eux (#mTerm,
+  // etc.). SELECT retiré de la liste ci-dessous ; INPUT/TEXTAREA inchangés.
+  if(ae && ae.tagName && ['INPUT','TEXTAREA'].includes(ae.tagName) && ae.id !== 'whoami') return true;
   return false;
 }
+/* Corrige un bug latent (4e playtest — « il n'y a pas de bouton pour accepter/refuser les offres »):
+   contrairement à loadGame(), une relecture périodique ne rappelait JAMAIS migrateState() sur l'état
+   reçu. En pratique, si un appareil enregistrait un état sauvegardé par un onglet resté sur une ANCIENNE
+   version du script (avant l'ajout d'un champ, ex: rentSwapOffers), tous les autres appareils recevaient
+   cet état incomplet sans jamais le corriger — les offres en attente (ou tout autre champ ajouté depuis)
+   pouvaient alors silencieusement disparaître de l'écran de certains joueurs. migrateState() est
+   idempotente (elle ne fait que compléter les champs manquants), donc l'appeler à chaque relecture ne
+   change rien pour un état déjà à jour. Retourne true si un nouvel état a bien été appliqué. */
+function applyRemoteStateIfNewer(raw){
+  if(raw && raw !== lastSerialized){
+    state = JSON.parse(raw);
+    migrateState(state);
+    lastSerialized = raw;
+    render();
+    return true;
+  }
+  return false;
+}
+/* Section 187bis (voir RESUME_ET_REGLES.md) — revue externe: le polling toutes les 3 secondes (ancienne
+   version de cette fonction, conservée ci-dessous pour window.storage) télécharge l'état COMPLET de la
+   partie à CHAQUE tick sur CHAQUE appareil connecté, même quand rien n'a changé. Mesuré: un état de
+   partie typique pèse ~120 Ko après quelques dizaines de lancers ; avec plusieurs appareils sur plusieurs
+   heures, ça peut représenter plusieurs Go téléchargés en une seule soirée — au risque d'épuiser le
+   quota gratuit Firebase (10 Go/mois, plan Spark) en une seule partie, plus vite encore avec plusieurs
+   écrans (ex: un écran TV en plus des appareils joueurs).
+   Corrigé en utilisant l'abonnement temps réel natif de Firebase (`ref.on('value', ...)`) plutôt qu'un
+   polling: Firebase ne pousse une mise à jour QUE quand la donnée change réellement côté serveur, sans
+   aucun re-téléchargement périodique inutile. Le comportement perçu est inchangé (mise à jour quasi
+   immédiate, toujours protégée par isLocalInputActive() exactement comme avant — si un champ a le focus,
+   la mise à jour reçue est simplement mise de côté). syncRetryTimer (ci-dessous) rattrape le cas où un
+   événement Firebase est arrivé PENDANT qu'un champ avait le focus et qu'aucun AUTRE événement ne s'est
+   produit depuis: sans lui, cette mise à jour resterait ignorée indéfiniment même après que le joueur ait
+   quitté son champ. Il tourne toutes les 3 secondes comme l'ancien polling, mais SANS AUCUN appel
+   réseau — il ne fait que comparer deux valeurs déjà en mémoire (lastReceivedRaw/lastSerialized) — donc
+   sans le coût de bande passante que ce correctif vise justement à éliminer.
+   window.storage (environnement Claude/Cowork) n'offre pas d'abonnement temps réel équivalent — l'ancien
+   polling toutes les 3 secondes y est donc conservé tel quel (comportement inchangé dans cet
+   environnement, qui n'a de toute façon aucun quota réseau de ce type). Idem si Firebase n'est pas
+   configuré (firebaseDb() renvoie null): on retente par polling comme avant, storageGet() renverra
+   simplement null à chaque tick (chemin déjà existant, déjà signalé par #firebaseConfigWarning). */
 function startPolling(){
-  if(pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(async ()=>{
-    if(!gameCode) return;
-    if(isLocalInputActive()) return; // on ne touche à rien tant qu'une saisie locale est en cours
-    const raw = await storageGet('game:'+gameCode, true);
-    if(raw && raw !== lastSerialized){
-      state = JSON.parse(raw);
-      // Corrige un bug latent (4e playtest — « il n'y a pas de bouton pour accepter/refuser les offres »):
-      // contrairement à loadGame(), cette relecture périodique ne rappelait JAMAIS migrateState() sur
-      // l'état reçu. En pratique, si un appareil enregistrait un état sauvegardé par un onglet resté sur
-      // une ANCIENNE version du script (avant l'ajout d'un champ, ex: rentSwapOffers), tous les autres
-      // appareils recevaient cet état incomplet sans jamais le corriger — les offres en attente (ou tout
-      // autre champ ajouté depuis) pouvaient alors silencieusement disparaître de l'écran de certains
-      // joueurs. migrateState() est idempotente (elle ne fait que compléter les champs manquants), donc
-      // l'appeler à chaque relecture ne change rien pour un état déjà à jour.
-      migrateState(state);
-      lastSerialized = raw;
-      render();
-    }
+  stopSync();
+  const db = window.storage ? null : firebaseDb();
+  if(!db){
+    pollTimer = setInterval(async ()=>{
+      if(!gameCode) return;
+      if(isLocalInputActive()) return; // on ne touche à rien tant qu'une saisie locale est en cours
+      const raw = await storageGet('game:'+gameCode, true);
+      applyRemoteStateIfNewer(raw);
+    }, 3000);
+    return;
+  }
+  const ref = db.ref('data/'+firebaseSafeKey('game:'+gameCode));
+  const callback = (snap)=>{
+    lastReceivedRaw = snap.exists() ? snap.val() : null;
+    if(isLocalInputActive()) return; // voir syncRetryTimer plus bas — rattrapé sans appel réseau
+    applyRemoteStateIfNewer(lastReceivedRaw);
+  };
+  ref.on('value', callback);
+  firebaseListenerHandle = {ref, callback};
+  syncRetryTimer = setInterval(()=>{
+    if(!gameCode || isLocalInputActive()) return;
+    applyRemoteStateIfNewer(lastReceivedRaw);
   }, 3000);
+}
+/* Arrête proprement toute synchronisation en cours (polling classique ET/OU abonnement Firebase), quel
+   que soit celui qui était actif — appelée par startPolling() elle-même (avant d'en redémarrer une) et
+   par performQuitGame() en quittant la partie. */
+function stopSync(){
+  if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+  if(syncRetryTimer){ clearInterval(syncRetryTimer); syncRetryTimer = null; }
+  if(firebaseListenerHandle){ firebaseListenerHandle.ref.off('value', firebaseListenerHandle.callback); firebaseListenerHandle = null; }
+  lastReceivedRaw = null;
 }
 
 /* Ré-affichage local (SANS réseau — distinct du poll partagé ci-dessus) toutes les secondes, pour
@@ -4200,14 +4272,32 @@ function etfValue(player){
   const co = companyOfPlayer(player.id);
   return co ? companyEtfValue(co) : 0;
 }
-/* Valeur COMPTABLE d'une entreprise: trésorerie + valeur immobilière (rachat) des terrains qu'elle
-   détient + valeur de ses parts d'ETF. Ce n'est JAMAIS un « prix de l'action » — un futur mécanisme
-   séparé (non construit ici — cubes verts/rouges + une « pige », voir la discussion de conception de
-   l'étape 5/8) pourra faire diverger le prix réel de marché de cette valeur comptable, à la façon d'un
-   marché boursier réel où le cours peut s'écarter de la valeur au livre. companyValue(company) est la
-   métrique de richesse « intéressante » du jeu depuis cette étape — voir renderResume/renderEntreprise. */
+/* Valeur COMPTABLE (équité nette) d'une entreprise: trésorerie + valeur immobilière (rachat) des terrains
+   qu'elle détient + valeur de ses parts d'ETF + créances (prêts/hypothèques qu'elle a elle-même consentis
+   à d'autres entreprises, voir companyReceivablesForStatements/section 156) − dette qu'elle doit
+   (hypothèques, subventions d'avance, prêts — voir companyDebt).
+   Section 188 (voir RESUME_ET_REGLES.md, audit externe): AVANT cette section, cette fonction ne
+   soustrayait AUCUNE dette — une hypothèque ou une subvention d'avance faisait ainsi rentrer du cash sans
+   jamais faire apparaître le passif en contrepartie, gonflant artificiellement ce chiffre (utilisé pour
+   le classement final « équité des entreprises », le ratio d'endettement companyDebtRatio — dont le
+   commentaire supposait DÉJÀ, à tort jusqu'ici, que companyValue() était nette de dette, voir
+   companyDebtRatio plus bas —, la taxe sur le revenu de la case 4, et la taille relative utilisée par
+   volatilityMultiplier). Les créances sont ajoutées en miroir de la dette soustraite, pour rester
+   cohérent avec la décision déjà prise à la section 156 (« Compagnie A prête à B : A a un actif, B a un
+   passif ») — sans ça, soustraire la dette SANS ajouter les créances aurait pénalisé injustement toute
+   entreprise prêteuse (son cash déjà diminué du capital prêté, sans que la créance correspondante ne soit
+   jamais comptée en retour). Résultat: companySharePrice(company) (=companyValue/totalShares) coïncide
+   désormais avec bookPerShare (=bsThis.equity/totalShares, déjà correct ailleurs — voir son propre
+   commentaire plus haut, qui documentait cet écart comme une erreur connue).
+   Ce n'est JAMAIS un « prix de l'action » — un futur mécanisme séparé (non construit ici — cubes verts/
+   rouges + une « pige », voir la discussion de conception de l'étape 5/8) pourra faire diverger le prix
+   réel de marché de cette valeur comptable, à la façon d'un marché boursier réel où le cours peut
+   s'écarter de la valeur au livre. companyValue(company) est la métrique de richesse « intéressante » du
+   jeu depuis cette étape — voir renderResume/renderEntreprise. */
 function companyValue(company){
-  return company.cash + companyRealEstateValue(company) + companyEtfValue(company);
+  const receiv = companyReceivablesForStatements(company);
+  return company.cash + companyRealEstateValue(company) + companyEtfValue(company)
+    + receiv.shortTerm + receiv.longTerm - companyDebt(company);
 }
 /* Estimation COMPTABLE de la valeur par part (companyValue/totalShares) — utile pour un affichage
    "valeur par part" dans l'onglet Entreprise. Comme companyValue, ce n'est PAS un prix de marché. */
@@ -4907,7 +4997,7 @@ function renderTicker(items){
    points d'attache (écran de création d'entreprise, en-tête normal, mode spectateur) appellent désormais
    modalQuitGame() au lieu de quitGame() directement. */
 async function performQuitGame(){
-  if(pollTimer) clearInterval(pollTimer);
+  stopSync();
   isSpectator = false;
   await storageSet('lastcode', '', false);
   await storageSet('lastspectator', '', false);
@@ -6997,6 +7087,12 @@ function companyDebtRatio(company){
   // company.cash posé par le Bloc 2 (avant l'entreprise, c'était netWorth(player) qui jouait ce rôle;
   // la structure « + debt » est inchangée dans les deux cas — ratio dette/capital total, où le capital
   // total = valeur comptable + la dette elle-même, cohérente avec l'ancienne logique joueur).
+  // Section 188 (voir RESUME_ET_REGLES.md, audit externe): cette ligne suppose que companyValue(company)
+  // est déjà NETTE de dette (pour que ce +debt reconstitue bien les actifs BRUTS) — ça n'a été vrai qu'à
+  // partir de cette section (companyValue() ne soustrayait jusque-là AUCUNE dette): ce ratio a donc
+  // silencieusement SOUS-ÉVALUÉ l'endettement réel de chaque entreprise depuis sa création (dénominateur
+  // gonflé d'un montant de dette compté deux fois). Corrigé par la correction de companyValue() elle-même,
+  // aucune ligne de CETTE fonction n'a besoin de changer.
   const grossAssets = companyValue(company) + debt; // valeur brute avant retrait de la dette
   return grossAssets>0 ? debt/grossAssets : 0;
 }

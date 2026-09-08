@@ -2493,7 +2493,15 @@ function renderPortefeuilleTrading(me, company){
     const strikesLabel = kind==='straddle'
       ? `ATM (${fmtPrice(legs[0].strike)})`
       : legs.map(l=>`${l.type==='call'?'C':'P'} ${fmtPrice(l.strike)} (${l.side==='long'?'+':'-'})`).join(' / ');
-    return `<tr><td>${esc(co.name)}</td><td>${esc(OPTION_STRATEGY_LABELS[kind]||kind)}</td><td>${strikesLabel}</td><td>${rollsLeft}</td><td>${contracts.toFixed(4)}</td><td class="money" style="color:${costAtOpen>=0?'#047857':'var(--brick)'};">${costAtOpen>=0?'+':''}${fmt(costAtOpen)}</td><td class="money">${fmt(valueNow)}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td><td><button class="btn btn-ghost btn-sm" data-close-option-strategy="${sid}">Fermer la stratégie</button></td></tr>`;
+    // Section 236 (voir RESUME_ET_REGLES.md) — `costAtOpen` suit la convention VALEUR (jambe longue = +,
+    // jambe courte = -, même sens que `valueNow`/le P&L juste à côté) — mais sa couleur doit refléter le
+    // sens RÉEL de l'argent à l'ouverture (même convention que le libellé du modal d'ouverture, « Crédit net
+    // reçu »/« Débit net payé »), PAS le signe de la valeur: un débit net payé (costAtOpen>0, ex. achat d'un
+    // bull spread) est un flux de trésorerie SORTANT -> rouge; un crédit net reçu (costAtOpen<0, ex. vente
+    // d'un bull spread) est un flux ENTRANT -> vert. D'où le mapping INVERSÉ de celui de `pnl` ci-dessous
+    // (qui reste, lui, en logique gain/perte: vert = value actuelle > coût, rouge = value actuelle < coût).
+    const costAtOpenColor = costAtOpen>0 ? 'var(--brick)' : '#047857';
+    return `<tr><td>${esc(co.name)}</td><td>${esc(OPTION_STRATEGY_LABELS[kind]||kind)}</td><td>${strikesLabel}</td><td>${rollsLeft}</td><td>${contracts.toFixed(4)}</td><td class="money" style="color:${costAtOpenColor};">${costAtOpen>=0?'+':''}${fmt(costAtOpen)}</td><td class="money">${fmt(valueNow)}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td><td><button class="btn btn-ghost btn-sm" data-close-option-strategy="${sid}">Fermer la stratégie</button></td></tr>`;
   }).join('');
   const strategiesHtml = myStrategies.length>0
     ? `<table><tr><th>Entreprise</th><th>Stratégie</th><th>Jambes (strike, +longue/-écrite)</th><th>Lancers restants</th><th>Contrats</th><th>Coût net à l'ouverture</th><th>Valeur nette actuelle</th><th>P&amp;L latent</th><th></th></tr>${strategiesRows}</table>`

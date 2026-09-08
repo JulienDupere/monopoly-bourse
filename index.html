@@ -2369,11 +2369,19 @@ function renderPortefeuilleTrading(me, company){
     const myOffer = state.loanOffers.find(o=>o.requestId===r.id && o.playerId===me.id);
     const pctMin = Math.round((state.settings.loanOfferWithholdingPctMin||0)*100), pctMax = Math.round((state.settings.loanOfferWithholdingPctMax||1)*100);
     const multMin = state.settings.loanOfferMultipleMin||1, multMax = state.settings.loanOfferMultipleMax||1;
+    // Section 233 (voir RESUME_ET_REGLES.md) — 3e critère « Garantie »/« Non garantie », voir
+    // submitLoanOffer/securedLoanGuaranteeInfo. Case à cocher simple, pré-remplie sur ma propre offre
+    // existante (même upsert que withholdingPct/multiple ci-dessus).
+    const securedForm = `<label style="display:inline-flex;align-items:center;gap:4px;font-weight:400;"><input type="checkbox" id="mLoanOfferSecured_${r.id}" ${myOffer&&myOffer.secured?'checked':''}> garantie</label>`;
     const offerForm = `<input type="number" step="1" min="${pctMin}" max="${pctMax}" value="${myOffer?Math.round(myOffer.withholdingPct*100):pctMin}" id="mLoanOfferPct_${r.id}" style="width:56px;"> % ×
-      <input type="number" step="0.1" min="${multMin}" max="${multMax}" value="${myOffer?myOffer.multiple:multMin}" id="mLoanOfferMult_${r.id}" style="width:56px;"> ×
+      <input type="number" step="0.1" min="${multMin}" max="${multMax}" value="${myOffer?myOffer.multiple:multMin}" id="mLoanOfferMult_${r.id}" style="width:56px;"> × ${securedForm}
       <button class="btn btn-primary btn-sm" data-submit-loan-offer="${r.id}">${myOffer?'Mettre à jour':'Proposer'}</button>
       ${myOffer?`<button class="btn btn-ghost btn-sm" data-cancel-loan-offer="${myOffer.id}">Retirer</button>`:''}`;
-    return `<div style="margin-bottom:4px;">🏦 Demande d'emprunt ${borrowerCo?esc(borrowerCo.name):'—'} : ${fmt(r.principal)} (${offersOnThis.length} offre${offersOnThis.length===1?'':'s'} reçue${offersOnThis.length===1?'':'s'}) — ${offerForm}</div>`;
+    // Section 233 (voir RESUME_ET_REGLES.md) — « mettre la cote dans les produits de financement ou
+    // d'émission »: le prêteur voit la cote de l'emprunteuse AVANT de décider ses conditions (et si son
+    // offre sera garantie ou non).
+    const ratingHtml = borrowerCo ? ` ${creditRatingBadgeHtml(borrowerCo)}` : '';
+    return `<div style="margin-bottom:4px;">🏦 Demande d'emprunt ${borrowerCo?esc(borrowerCo.name):'—'}${ratingHtml} : ${fmt(r.principal)} (${offersOnThis.length} offre${offersOnThis.length===1?'':'s'} reçue${offersOnThis.length===1?'':'s'}) — ${offerForm}</div>`;
   });
   const announcementBannerHtml = (dividendAnnouncementLines.length>0 || ceoAnnouncementLines.length>0 || ceoPublicStatementLines.length>0 || loanRequestLines.length>0)
     ? `<div class="small" id="pfAnnouncementBanner" style="margin:2px 0 14px;">${[...dividendAnnouncementLines, ...ceoAnnouncementLines, ...ceoPublicStatementLines, ...loanRequestLines].join('')}</div>`
@@ -2541,10 +2549,17 @@ function renderPortefeuilleTrading(me, company){
   // donnerait de l'exposition à des obligations » — verbatim de l'utilisateur, d'où le rapprochement
   // visuel avec « Mes bons gouvernementaux » juste en dessous.
   const myLoansAsLender = (state.loans||[]).filter(l=>l.lenderKind==='player' && l.lenderId===me.id && l.repaidSoFar<l.totalDue-1e-9);
-  const myLoansHtml = myLoansAsLender.length===0 ? '' : `<table><tr><th>Entreprise</th><th>Principal</th><th>Total dû</th><th>Remboursé</th><th>% des loyers</th><th>Multiple</th></tr>
+  // Section 233 (voir RESUME_ET_REGLES.md) — « Il faut que les joueurs aient un risque réel [...] Leur
+  // valeur nette ne doit pas prendre en compte le dû [sauf obligation garantie, plafonnée aux parts du CEO
+  // emprunteur] ». Colonne « Type » + « Compté à ma valeur nette » pour que le risque réel (0$ compté pour
+  // une obligation non garantie, potentiellement moins que le solde dû pour une garantie mal couverte) soit
+  // visible directement ici, pas seulement déductible de netWorth() en coulisse.
+  const myLoansSecuredInfo = securedLoanGuaranteeInfo();
+  const myLoansHtml = myLoansAsLender.length===0 ? '' : `<table><tr><th>Entreprise</th><th>Principal</th><th>Total dû</th><th>Remboursé</th><th>% des loyers</th><th>Multiple</th><th>Type</th><th>Compté à ma valeur nette</th></tr>
     ${myLoansAsLender.map(l=>{
       const co = companyById(l.borrowerId);
-      return `<tr><td>${esc(co?co.name:'?')}</td><td class="money">${fmt(l.principal)}</td><td class="money">${fmt(l.totalDue)}</td><td class="money">${fmt(l.repaidSoFar)}</td><td>${Math.round(l.withholdingPct*100)}%</td><td>${l.multiple}×</td></tr>`;
+      const counted = l.secured ? (myLoansSecuredInfo.payoutByLoanId[l.id]||0) : 0;
+      return `<tr><td>${esc(co?co.name:'?')}</td><td class="money">${fmt(l.principal)}</td><td class="money">${fmt(l.totalDue)}</td><td class="money">${fmt(l.repaidSoFar)}</td><td>${Math.round(l.withholdingPct*100)}%</td><td>${l.multiple}×</td><td>${l.secured?'🔒 Garantie':'Non garantie'}</td><td class="money">${fmt(counted)}</td></tr>`;
     }).join('')}
   </table>`;
   const instrumentsTradingHtml = (() => {
@@ -4235,6 +4250,8 @@ function renderEntreprise(){
       <div class="small" style="font-weight:600;">Trésorerie</div>
       <div class="money" style="font-size:28px;font-weight:800;margin-top:2px;">${fmt(company.cash)}</div>
       ${goAdvanceInline ? `<div style="margin-top:2px;">${goAdvanceInline}</div>` : ''}
+      <div class="small" style="font-weight:600;margin-top:12px;">Cote de crédit</div>
+      <div style="margin-top:2px;">${creditRatingBadgeHtml(company)}</div>
     </div>
     <div style="flex:1 1 240px;">
       <div class="small" style="font-weight:600;margin-bottom:6px;">Actionnariat</div>
@@ -4307,9 +4324,10 @@ function renderEntreprise(){
 
   ${(f.loan && loansAsBorrower.length>0)?`
   <div class="small" style="font-weight:600;margin-top:14px;">Prêts — emprunté (à rembourser)</div>
-  <table><tr><th>Prêteur</th><th>Principal</th><th>Total dû</th><th>Remboursé</th></tr>
-    ${loansAsBorrower.map(l=>`<tr><td>${esc(loanLenderLabel(l))}</td><td class="money">${fmt(l.principal)}</td><td class="money">${fmt(l.totalDue)}</td><td class="money">${fmt(l.repaidSoFar)}</td></tr>`).join('')}
-  </table>` : ''}
+  <table><tr><th>Prêteur</th><th>Principal</th><th>Total dû</th><th>Remboursé</th><th>Type</th></tr>
+    ${loansAsBorrower.map(l=>`<tr><td>${esc(loanLenderLabel(l))}</td><td class="money">${fmt(l.principal)}</td><td class="money">${fmt(l.totalDue)}</td><td class="money">${fmt(l.repaidSoFar)}</td><td>${l.secured?'🔒 Garantie':'Non garantie'}</td></tr>`).join('')}
+  </table>
+  ${loansAsBorrower.some(l=>l.secured) ? `<div class="small" style="margin-top:4px;">🔒 Au moins un de ces prêts est <b>garanti</b> — voir RESUME_ET_REGLES.md section 233: si ${esc(company.name)} n'a pas fini de le rembourser, la valeur de vos parts de fondateur dans ${esc(company.name)} sera amputée en fin de partie pour couvrir le solde encore dû (plafonné à la valeur de ces parts).</div>` : ''}` : ''}
   ${(f.loan && loansAsLender.length>0)?`
   <div class="small" style="font-weight:600;margin-top:8px;">Prêts — prêté (à recevoir)</div>
   <table><tr><th>Emprunteuse</th><th>Principal</th><th>Total dû</th><th>Remboursé</th></tr>
@@ -4852,6 +4870,55 @@ function companySharePrice(company){
    toujours PAS d'équité séparée en parallèle: enforceMarginCalls (voir plus bas, renommée depuis
    enforceShortMarginCalls maintenant qu'elle couvre aussi les options écrites) réutilise EXACTEMENT ce
    même netWorth() pour vérifier la marge d'un joueur. */
+/* Section 233 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Il faut que les joueurs
+   aient un risque réel en acceptant une émission d'obligation d'une compagnie [...] Leur valeur nette ne
+   doit pas prendre en compte le dû. [...] CEPENDANT, ajouter en option [...] un troisième critère, un choix
+   entre "Obligation garantie" vs "Obligation non garantie". Une obligation garantie ferait en sorte que la
+   dette à être payée (non payée encore) compterait dans la valeur nette du joueur [...] et se paierait via
+   les parts du CEO de la compagnie. [...] si les parts ne couvrent pas l'entièreté du solde, le joueur aura
+   le [minimum] entre sa part due et la valeur du CEO dans cette entreprise. Un CEO garantissant un tel prêt
+   verra sa valeur nette diminuer [...] pour rembourser le tout. » (le mot exact tapé était « maximum »,
+   mais le contexte — « si les parts ne couvrent pas l'entièreté du solde » — décrit sans ambiguïté un
+   PLAFOND, donc un minimum entre les deux montants; interprété ainsi, à confirmer si ce n'est pas ce qui
+   était voulu).
+   Calcule, en UN SEUL passage sur state.loans groupé par compagnie EMPRUNTEUSE, le montant que chaque prêt
+   "garanti" (l.secured===true) encore dû récupère RÉELLEMENT sur la part du CEO emprunteur — réutilisé tel
+   quel des DEUX côtés de netWorth() (l'actif du prêteur ET le passif du CEO), jamais deux formules
+   séparées, même principe que enforceMarginCalls/netWorth ailleurs dans ce fichier. Une compagnie peut
+   porter PLUSIEURS prêts garantis simultanément (à des prêteurs différents) — la part du CEO est alors le
+   collatéral COMMUN de tous ces prêts, jamais compté plusieurs fois: si sa valeur ne couvre pas la somme
+   des soldes garantis dus, le manque est réparti AU PRORATA entre les prêteurs garantis (aucun rang de
+   priorité entre eux — l'utilisateur n'a donné qu'un exemple à un seul prêt, ce prorata est la
+   généralisation la plus neutre au cas à plusieurs prêts). Un prêt "non garanti" (l.secured falsy — donc
+   aussi le comportement PAR DÉFAUT pour toute sauvegarde antérieure à cette section, sans migration
+   nécessaire) ne touche jamais ce calcul: son risque réel se traduit simplement par une absence totale de
+   comptage côté prêteur, voir l'appelant. */
+function securedLoanGuaranteeInfo(){
+  const payoutByLoanId = {};
+  const ceoDeductionByCompanyId = {};
+  const byBorrower = {};
+  (state.loans||[]).forEach(l=>{
+    if(!l.secured) return;
+    if(!(l.repaidSoFar < l.totalDue-1e-9)) return;
+    (byBorrower[l.borrowerId] = byBorrower[l.borrowerId]||[]).push(l);
+  });
+  Object.keys(byBorrower).forEach(companyId=>{
+    const co = companyById(companyId);
+    const loans = byBorrower[companyId];
+    if(!co){ return; }
+    const sumDue = loans.reduce((s,l)=>s+(l.totalDue-l.repaidSoFar), 0);
+    const ceoStake = co.shareholders.find(s=>s.playerId===co.ceoId);
+    const ceoStakeValue = ceoStake ? ceoStake.shares*(co.stockPrice||0) : 0;
+    const pool = Math.max(0, Math.min(ceoStakeValue, sumDue));
+    ceoDeductionByCompanyId[companyId] = pool;
+    if(sumDue<=1e-9) return;
+    loans.forEach(l=>{
+      const due = l.totalDue-l.repaidSoFar;
+      payoutByLoanId[l.id] = pool * (due/sumDue);
+    });
+  });
+  return {payoutByLoanId, ceoDeductionByCompanyId};
+}
 function netWorth(player){
   let total = player.cash;
   state.companies.forEach(co=>{
@@ -4866,15 +4933,25 @@ function netWorth(player){
     });
   }
   total += player.bondBalance||0; // Section 157 (voir RESUME_ET_REGLES.md): peut désormais être NÉGATIF (dette empruntée via shortBonds) — la soustraction voulue tombe déjà juste de cette seule ligne, inchangée.
-  // Section 157 (voir RESUME_ET_REGLES.md) — nouvelle exposition « obligataire »: la créance encore due au
-  // joueur sur CHAQUE prêt à une entreprise dont il est le prêteur (lenderKind:'player') compte comme un
-  // ACTIF — valorisée au solde encore dû (totalDue-repaidSoFar), qui inclut le rendement du multiple, MÊME
-  // convention que companyReceivablesForStatements côté compagnies (section 156) et que la compagnie
-  // emprunteuse, qui porte le PASSIF miroir dans son propre bilan (companyLiabilitiesForStatements).
+  // Section 157 (voir RESUME_ET_REGLES.md), RETRAVAILLÉE à la section 233: la créance encore due au joueur
+  // sur CHAQUE prêt à une entreprise dont il est le prêteur (lenderKind:'player') ne compte PLUS
+  // automatiquement — seulement si l.secured===true (choisi par le prêteur À L'OFFRE, voir
+  // submitLoanOffer), et alors PLAFONNÉE à sa part du collatéral CEO (securedLoanGuaranteeInfo ci-dessus,
+  // jamais toute la créance si le CEO ne peut pas couvrir). Un prêt "non garanti" (par défaut) est un vrai
+  // risque désormais: rien n'est compté ici si la partie devait se terminer avant remboursement complet —
+  // demande explicite de l'utilisateur.
+  const secured = securedLoanGuaranteeInfo();
   (state.loans||[]).forEach(l=>{
-    if(l.lenderKind==='player' && l.lenderId===player.id && l.repaidSoFar<l.totalDue-1e-9){
-      total += (l.totalDue - l.repaidSoFar);
+    if(l.lenderKind==='player' && l.lenderId===player.id && l.repaidSoFar<l.totalDue-1e-9 && l.secured){
+      total += secured.payoutByLoanId[l.id]||0;
     }
+  });
+  // Miroir passif: si CE joueur est CEO d'une entreprise portant un ou plusieurs prêts garantis encore dus,
+  // sa part dans SA PROPRE entreprise (déjà comptée intégralement ci-dessus, dans la boucle state.companies
+  // tout en haut) est amputée du montant effectivement versé aux prêteurs garantis — « Un CEO garantissant
+  // un tel prêt verra sa valeur nette diminuer en fin de partie pour rembourser le tout ».
+  state.companies.forEach(co=>{
+    if(co.ceoId===player.id){ total -= secured.ceoDeductionByCompanyId[co.id]||0; }
   });
   if(player.optionPositions){
     player.optionPositions.forEach(pos=>{
@@ -8287,6 +8364,102 @@ function companyDebtRatio(company){
 }
 function riskAdjustedRate(baseRate, company){
   return baseRate + companyDebtRatio(company) * state.settings.debtSpreadFactor;
+}
+/* Section 233 (voir RESUME_ET_REGLES.md), Partie « cote de crédit » — demande explicite de l'utilisateur:
+   « J'aimerais ajouter un flavor. Une cote de crédit voir en pièce jointe la photo pour chaque compagnie,
+   mettre la cote dans les produits de financement ou d'émission. » Reprend fidèlement la spec déjà
+   approuvée dans claude/DESIGN_PRIVILEGIEES_ET_NOTATION.md (Partie 1, retenue le 8 septembre 2026): 3
+   facteurs pondérés 50/30/20 (endettement/couverture des charges/historique de défaut), TOUJOURS recalculée
+   EN DIRECT à chaque affichage (jamais figée), aucune nouvelle donnée nécessaire. Décision de séquençage
+   confirmée par l'utilisateur (« Cote seule d'abord ») — affichage PUR cette fois-ci: aucune conséquence
+   n'est encore branchée (ni tarification/riskAdjustedRate, ni cubes de changement de cran, ni marché de
+   parts privilégiées, dont la construction reste explicitement remise à une prochaine passe) — voir l'ordre
+   de construction recommandé par la spec elle-même.
+   Réconciliation entre la spec (échelle simplifiée à 7 crans, AAA/AA/A/BBB/BB/B/CCC) et l'échelle bien plus
+   granulaire (avec +/-, jusqu'à D) montrée par l'utilisateur en pièce jointe — jugement d'implémentation,
+   les deux servent à des fins différentes, jamais en conflit: la note AFFICHÉE (`grade`) est la granulaire
+   (19 crans +/-, correspond exactement à la photo, avec ses descriptions de qualité), tandis que le `cran`
+   (grossier, 7 niveaux + D) reste la version SIMPLIFIÉE de la spec, réservée à un usage futur
+   (tarification/cubes de changement de cran) qui n'a justement pas besoin d'une granularité aussi fine.
+   Facteur 1 (endettement, 50%): companyDebtRatio(company), déjà 0 (aucune dette) à ~1 (dette = actifs
+   bruts) — directement la badness recherchée, aucune transformation nécessaire.
+   Facteur 2 (couverture des charges, 30%): netIncomeExpectationRatio(is), revenus/dépenses — jugement
+   d'implémentation: calculée sur l'HISTORIQUE COMPLET de la compagnie (incomeStatementFor(id,'all')) plutôt
+   que le seul semestre en cours, pour éviter une volatilité extrême juste après chaque bascule de semestre
+   (un semestre tout juste commencé n'a souvent encore aucune dépense ni aucun revenu comptabilisés — une
+   cote qui s'effondrerait à chaque nouveau semestre puis se rétablirait au fil du semestre n'aurait aucun
+   sens pédagogique). Transformée en badness via un seuil à ratio=2 (badness 0, "confortable") jusqu'à
+   ratio=0 (badness 1, "aucun revenu ne couvre les dépenses") — ratio=1 (point mort) tombe au milieu (0.5).
+   Cas particulier: compagnie sans AUCUNE activité enregistrée encore (revenus ET dépenses nuls, souvent une
+   compagnie tout juste fondée) — badness NEUTRE (0.5), pas le pire cas: l'absence d'historique n'est ni un
+   bon ni un mauvais signe, contrairement à un revenu de 0 face à des dépenses réelles (authentiquement
+   mauvais, ratio 0 légitime).
+   Facteur 3 (historique de défaut, 20%, PÉNALITÉ SEULEMENT — jamais un bonus, comme demandé par la spec): un
+   prêt de dernier recours déjà contracté une fois (company.lastResortLoanUsed, PERMANENT) pèse lourd (0.6);
+   chaque semestre CONSÉCUTIF de perte tolérée (company.dividendLossStreak) ajoute 0.15, plafonné à 0.4 — les
+   deux se cumulent (une compagnie déjà passée par un prêt de dernier recours ET en pleine série de pertes
+   peut atteindre 1.0, le pire cas).
+   `D` (« En faillite ») n'est PAS une simple queue de la note pondérée — c'est un état d'INSOLVABILITÉ
+   RÉELLE, jamais atteint autrement: companyDebtRatio(company)>=1 (la dette égale ou dépasse les actifs
+   bruts, donc companyValue(company)<=0 — plus aucune équité). Aucune compagnie saine ne peut y tomber par un
+   simple cumul de mauvais facteurs — D reste un plancher séparé, pas un 20e barreau de l'échelle pondérée. */
+function companyCreditRatingInfo(company){
+  const debtRatio = companyDebtRatio(company);
+  const debtBadness = Math.max(0, Math.min(1, debtRatio));
+  const isAll = incomeStatementFor(company.id, 'all');
+  const coverageRatio = netIncomeExpectationRatio(isAll);
+  let coverageBadness;
+  if(isAll.totalRevenue<=1e-9 && isAll.totalExpense<=1e-9){
+    coverageBadness = 0.5;
+  } else {
+    coverageBadness = coverageRatio===Infinity ? 0 : Math.max(0, Math.min(1, 1 - coverageRatio/2));
+  }
+  const streak = company.dividendLossStreak||0;
+  let defaultBadness = 0;
+  if(company.lastResortLoanUsed) defaultBadness += 0.6;
+  defaultBadness += Math.min(streak*0.15, 0.4);
+  defaultBadness = Math.max(0, Math.min(1, defaultBadness));
+  const overallBadness = 0.5*debtBadness + 0.3*coverageBadness + 0.2*defaultBadness;
+  const score = 100*(1-overallBadness);
+  const insolvent = debtRatio>=1;
+  const GRADES = ['AAA','AA+','AA','AA-','A+','A','A-','BBB+','BBB','BBB-','BB+','BB','BB-','B+','B','B-','CCC+','CCC','CCC-'];
+  const DESC_BY_GRADE = {
+    AAA:'Excellente', 'AA+':'Qualité élevée', AA:'Qualité élevée', 'AA-':'Qualité élevée',
+    'A+':'Qualité moyenne', A:'Qualité moyenne', 'A-':'Qualité moyenne',
+    'BBB+':'Qualité sous la moyenne', BBB:'Qualité sous la moyenne', 'BBB-':'Qualité sous la moyenne',
+    'BB+':'Spéculatif', BB:'Spéculatif', 'BB-':'Spéculatif',
+    'B+':'Plus que spéculatif', B:'Plus que spéculatif', 'B-':'Plus que spéculatif',
+    'CCC+':'Risque important', CCC:'Extrêmement spéculatif', 'CCC-':'Près de la faillite',
+    D:'En faillite',
+  };
+  let grade, desc;
+  if(insolvent){ grade='D'; desc=DESC_BY_GRADE.D; }
+  else {
+    const band = Math.max(0, Math.min(GRADES.length-1, Math.floor((100-score)/100*GRADES.length)));
+    grade = GRADES[band];
+    desc = DESC_BY_GRADE[grade];
+  }
+  const cran = grade==='D' ? 'D' : grade.replace(/[+-]$/, '');
+  const investmentGrade = ['AAA','AA','A','BBB'].includes(cran);
+  return {
+    grade, cran, desc, score, insolvent, investmentGrade,
+    debtRatio, debtBadness, coverageRatio, coverageBadness, defaultBadness,
+    lastResortLoanUsed: !!company.lastResortLoanUsed, dividendLossStreak: streak,
+  };
+}
+/* Petit badge HTML réutilisé aux 3 endroits demandés par l'utilisateur (« mettre la cote dans les produits
+   de financement ou d'émission »): Mon Entreprise (sa propre cote), le bandeau d'offres de prêt du
+   Portefeuille (cote de la compagnie emprunteuse, pour que le prêteur puisse juger AVANT d'offrir), et
+   modalIssueLoan (rappel de sa propre cote au CEO emprunteur). Couleur à 3 paliers — vert (investment
+   grade), doré (spéculatif, BB à B), brique (CCC/D, la même couleur que les pertes/dettes ailleurs dans
+   l'app) — jugement d'implémentation, aucune couleur n'était spécifiée par l'utilisateur ni par la spec. */
+function creditRatingBadgeHtml(company){
+  const r = companyCreditRatingInfo(company);
+  const color = r.investmentGrade ? '#047857' : (r.grade==='D' || r.cran==='CCC') ? 'var(--brick)' : '#B45309';
+  return `<span style="display:inline-flex;align-items:center;gap:5px;">
+    <span style="font-weight:800;font-size:15px;color:${color};border:1.5px solid ${color};border-radius:4px;padding:1px 6px;">${esc(r.grade)}</span>
+    <span class="small">${esc(r.desc)}</span>
+  </span>`;
 }
 
 /* ========================================================================================================
@@ -11898,7 +12071,7 @@ async function cancelLoanRequest(requestId){
    PROPRE demande. Aucune vérification d'encaisse ici (seulement à l'acceptation, voir acceptLoanOffer) —
    une offre n'engage rien tant qu'elle n'est pas acceptée, l'encaisse du joueur peut légitimement varier
    entre-temps (autre trading, etc.). */
-async function submitLoanOffer(requestId, player, withholdingPct, multiple){
+async function submitLoanOffer(requestId, player, withholdingPct, multiple, secured){
   const req = state.loanRequests.find(r=>r.id===requestId);
   if(!req) return {ok:false, error:'Cette demande d’emprunt n’est plus disponible.'};
   const co = companyById(req.borrowerId);
@@ -11907,10 +12080,15 @@ async function submitLoanOffer(requestId, player, withholdingPct, multiple){
   if(!(withholdingPct>=pctMin-1e-9 && withholdingPct<=pctMax+1e-9)) return {ok:false, error:`Le % des loyers retenu doit être entre ${Math.round(pctMin*100)}% et ${Math.round(pctMax*100)}%.`};
   const multMin = state.settings.loanOfferMultipleMin||1, multMax = state.settings.loanOfferMultipleMax||1;
   if(!(multiple>=multMin-1e-9 && multiple<=multMax+1e-9)) return {ok:false, error:`Le multiple de remboursement doit être entre ${multMin}× et ${multMax}×.`};
+  // Section 233 (voir RESUME_ET_REGLES.md) — 3e critère de l'offre, demande explicite de l'utilisateur:
+  // « Obligation garantie » vs « Obligation non garantie ». Booléen simple, choisi librement par le
+  // PRÊTEUR (pas le CEO emprunteur) — c'est lui qui accepte le risque réduit en échange d'un plafond de
+  // recouvrement sur les parts du CEO, voir securedLoanGuaranteeInfo/netWorth.
+  secured = !!secured;
   const existing = state.loanOffers.find(o=>o.requestId===requestId && o.playerId===player.id);
-  if(existing){ existing.withholdingPct = withholdingPct; existing.multiple = multiple; }
-  else { state.loanOffers.push({id:uid(), requestId, playerId:player.id, withholdingPct, multiple, createdAt:nowLabel()}); }
-  log(`${player.name} propose un prêt à ${co?co.name:'?'}: ${Math.round(withholdingPct*100)}% des loyers retenu, remboursement à ${multiple}× le capital.`);
+  if(existing){ existing.withholdingPct = withholdingPct; existing.multiple = multiple; existing.secured = secured; }
+  else { state.loanOffers.push({id:uid(), requestId, playerId:player.id, withholdingPct, multiple, secured, createdAt:nowLabel()}); }
+  log(`${player.name} propose un prêt ${secured?'GARANTI':'non garanti'} à ${co?co.name:'?'}: ${Math.round(withholdingPct*100)}% des loyers retenu, remboursement à ${multiple}× le capital.`);
   await saveGame(); render();
   return {ok:true};
 }
@@ -11944,7 +12122,7 @@ async function acceptLoanOffer(offerId){
   }
   const lenderPlayer = state.players.find(p=>p.id===offer.playerId);
   if(!lenderPlayer || (lenderPlayer.cash||0) < req.principal - 1e-9){ alert('Ce joueur n’a plus assez d’encaisse pour honorer cette offre — choisissez-en une autre ou attendez.'); return; }
-  const ok = await issueLoan(offer.playerId, req.borrowerId, req.principal, offer.withholdingPct, offer.multiple);
+  const ok = await issueLoan(offer.playerId, req.borrowerId, req.principal, offer.withholdingPct, offer.multiple, offer.secured);
   if(!ok) return;
   state.loanRequests = state.loanRequests.filter(r=>r.id!==req.id);
   state.loanOffers = state.loanOffers.filter(o=>o.requestId!==req.id);
@@ -11957,7 +12135,7 @@ async function acceptLoanOffer(offerId){
    Administration) plutôt que lus dans settings (qui ne fixe plus qu'un maximum de principal et des bornes
    d'offre, voir plus haut). Retourne true/false (succès) plutôt que rien, pour qu'acceptLoanOffer puisse
    savoir si la suite (retrait de la demande/des offres) doit avoir lieu. */
-async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multiple){
+async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multiple, secured){
   if(!lenderId || !borrowerId || lenderId===borrowerId){ alert('Choisissez un prêteur et un emprunteur différents.'); return false; }
   // Section 180 (RESUME_ET_REGLES.md) — CORRECTIF: même garde que postLoanRequest/acceptLoanOffer. issueLoan
   // est la primitive de bas niveau appelée par acceptLoanOffer ET par le formulaire Administration — la
@@ -11985,9 +12163,13 @@ async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multip
   // prêteur) reçoit du rouge, voir DESIGN_MOTEUR_BOURSIER.md.
   injectStockCube(borrower, 'red', STOCK_TRIGGER_LOAN_RED_MIN, STOCK_TRIGGER_LOAN_RED_MAX);
   const totalDue = principal * multiple;
-  const loan = {id:uid(), lenderId, lenderKind, borrowerId, principal, totalDue, repaidSoFar:0, withholdingPct, multiple, createdAt:nowLabel()};
+  // Section 233 (voir RESUME_ET_REGLES.md) — !! normalise undefined/null (prêts de dernier recours,
+  // Administration sans case cochée, etc.) à false: garanti reste un choix EXPLICITE, jamais un défaut
+  // implicite d'un appelant qui ne connaît pas encore ce champ.
+  secured = !!secured;
+  const loan = {id:uid(), lenderId, lenderKind, borrowerId, principal, totalDue, repaidSoFar:0, withholdingPct, multiple, secured, createdAt:nowLabel()};
   state.loans.push(loan);
-  log(`Prêt de ${fmt(principal)} accordé par ${loanLenderLabel(loan)} à ${borrower.name}. ${Math.round(withholdingPct*100)}% de tous ses loyers reçus seront retenus automatiquement jusqu'à ${fmt(totalDue)} au total (${multiple}× le capital).`,
+  log(`Prêt ${secured?'GARANTI':'non garanti'} de ${fmt(principal)} accordé par ${loanLenderLabel(loan)} à ${borrower.name}. ${Math.round(withholdingPct*100)}% de tous ses loyers reçus seront retenus automatiquement jusqu'à ${fmt(totalDue)} au total (${multiple}× le capital).`,
     [{label:`${loanLenderLabel(loan)} (capital prêté)`, amount:-principal}, {label:`${borrower.name} (capital reçu)`, amount:principal}]);
   await saveGame(); render();
   return true;
@@ -13380,9 +13562,11 @@ function bindTabEvents(t){
       if(!meNow){ alert('Sélectionnez d’abord un joueur via « Vous êtes ».'); return; }
       const pctInput = document.getElementById(`mLoanOfferPct_${requestId}`);
       const multInput = document.getElementById(`mLoanOfferMult_${requestId}`);
+      const securedInput = document.getElementById(`mLoanOfferSecured_${requestId}`);
       const withholdingPct = (parseFloat(pctInput.value)||0)/100;
       const multiple = parseFloat(multInput.value)||0;
-      submitLoanOffer(requestId, meNow, withholdingPct, multiple).then(res=>{ if(res && !res.ok) alert(res.error); });
+      const secured = !!(securedInput && securedInput.checked);
+      submitLoanOffer(requestId, meNow, withholdingPct, multiple, secured).then(res=>{ if(res && !res.ok) alert(res.error); });
     }));
     document.querySelectorAll('[data-cancel-loan-offer]').forEach(b=>b.addEventListener('click', ()=>cancelLoanOffer(b.dataset.cancelLoanOffer)));
     // Section 139 (voir RESUME_ET_REGLES.md) — points 3+4 du plan de raffinement du Portefeuille:
@@ -14502,6 +14686,7 @@ function modalIssueLoanAdmin(){
     <input type="number" step="1" min="${pctMin}" max="${pctMax}" id="mLoanPctAdmin" value="${pctMin}"> %
     <label>Multiple de remboursement (entre ${multMin}× et ${multMax}×)</label>
     <input type="number" step="0.1" min="${multMin}" max="${multMax}" id="mLoanMultAdmin" value="${multMin}">
+    <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="mLoanSecuredAdmin"> Obligation garantie (voir RESUME_ET_REGLES.md section 233 — met en jeu les parts du CEO emprunteur en fin de partie)</label>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Accorder le prêt</button>
@@ -14513,10 +14698,11 @@ function modalIssueLoanAdmin(){
     const principal = parseFloat(document.getElementById('mLoanPrincipalAdmin').value)||0;
     const withholdingPct = (parseFloat(document.getElementById('mLoanPctAdmin').value)||0)/100;
     const multiple = parseFloat(document.getElementById('mLoanMultAdmin').value)||1;
+    const secured = !!document.getElementById('mLoanSecuredAdmin').checked;
     const borrowerCo = companyById(borrowerId);
     if(borrowerCo && borrowerCo.ceoId===lenderId){ alert('Le CEO d’une entreprise ne peut pas prêter à sa propre compagnie — délit d’initié intégré au jeu.'); return; }
     closeModal();
-    issueLoan(lenderId, borrowerId, principal, withholdingPct, multiple);
+    issueLoan(lenderId, borrowerId, principal, withholdingPct, multiple, secured);
   });
 }
 
@@ -16125,13 +16311,17 @@ function modalIssueLoan(){
     const offers = state.loanOffers.filter(o=>o.requestId===request.id);
     const offersRows = offers.map(o=>{
       const pl = state.players.find(p=>p.id===o.playerId);
-      return `<tr><td>${esc(pl?pl.name:'?')}</td><td>${Math.round(o.withholdingPct*100)}%</td><td>${o.multiple}×</td><td><button class="btn btn-primary btn-sm" data-accept-loan-offer="${o.id}">Accepter</button></td></tr>`;
+      // Section 233 (voir RESUME_ET_REGLES.md) — le CEO voit le statut garanti/non garanti de CHAQUE offre
+      // avant de choisir laquelle accepter: une offre garantie met les parts du CEO en jeu en fin de
+      // partie (voir securedLoanGuaranteeInfo/netWorth), une info qui pèse clairement dans son choix.
+      return `<tr><td>${esc(pl?pl.name:'?')}</td><td>${Math.round(o.withholdingPct*100)}%</td><td>${o.multiple}×</td><td>${o.secured?'🔒 Garantie':'Non garantie'}</td><td><button class="btn btn-primary btn-sm" data-accept-loan-offer="${o.id}">Accepter</button></td></tr>`;
     }).join('');
     openModal(`
     <h3>Prêt — ${esc(myCo.name)}</h3>
+    <div class="small" style="margin-bottom:8px;">${creditRatingBadgeHtml(myCo)}</div>
     ${activeLoansHtml}
-    <div class="small" style="margin-bottom:10px;">Demande d'emprunt ouverte: <b>${fmt(request.principal)}</b>. Les offres reçues des joueurs sont listées ci-dessous — acceptez-en une (crée le prêt immédiatement) ou annulez la demande si aucune ne convient.</div>
-    ${offers.length>0 ? `<table><tr><th>Joueur</th><th>% des loyers retenu</th><th>Multiple</th><th></th></tr>${offersRows}</table>` : '<div class="empty">Aucune offre reçue pour le moment.</div>'}
+    <div class="small" style="margin-bottom:10px;">Demande d'emprunt ouverte: <b>${fmt(request.principal)}</b>. Les offres reçues des joueurs sont listées ci-dessous — acceptez-en une (crée le prêt immédiatement) ou annulez la demande si aucune ne convient. Une offre <b>garantie</b> met en jeu la valeur des parts du CEO en fin de partie si le prêt n'est pas remboursé; une offre <b>non garantie</b> ne représente aucun risque pour le CEO.</div>
+    ${offers.length>0 ? `<table><tr><th>Joueur</th><th>% des loyers retenu</th><th>Multiple</th><th>Type</th><th></th></tr>${offersRows}</table>` : '<div class="empty">Aucune offre reçue pour le moment.</div>'}
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancelRequest">Annuler la demande</button>
       <button class="btn btn-ghost" id="mCancel">Fermer</button>
@@ -16145,6 +16335,7 @@ function modalIssueLoan(){
   if(!(capLeft>0)){
     openModal(`
     <h3>Prêt — ${esc(myCo.name)}</h3>
+    <div class="small" style="margin-bottom:8px;">${creditRatingBadgeHtml(myCo)}</div>
     ${activeLoansHtml}
     <div class="small">Capacité d'emprunt maximale déjà atteinte (${fmt(state.settings.loanMaxPrincipal)} de principal cumulé sur les prêts actifs) — remboursez un prêt existant pour libérer de la capacité avant d'en demander un nouveau.</div>
     <div class="modal-actions"><button class="btn btn-ghost" id="mCancel">Fermer</button></div>`);
@@ -16153,6 +16344,7 @@ function modalIssueLoan(){
   }
   openModal(`
     <h3>Prêt — ${esc(myCo.name)}</h3>
+    <div class="small" style="margin-bottom:8px;">${creditRatingBadgeHtml(myCo)}</div>
     ${activeLoansHtml}
     <div class="small" style="margin-bottom:10px;">Publiez une demande d'emprunt: un avis est envoyé à tous les joueurs, qui peuvent proposer leurs conditions (% des loyers retenu, multiple de remboursement). Vous choisirez ensuite d'accepter une offre ou aucune. Une entreprise ne peut avoir qu'une seule demande d'emprunt OUVERTE à la fois (plusieurs prêts peuvent être actifs simultanément). Capacité d'emprunt restante: <b>${fmt(capLeft)}</b> (maximum cumulé: ${fmt(state.settings.loanMaxPrincipal)}).</div>
     <label>Emprunteur</label>

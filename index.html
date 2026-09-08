@@ -2269,7 +2269,7 @@ function renderPortefeuilleTopBar(me, company){
   const pfActionsMenuHtml = `${pfActionsMenuStyle}
   <div class="ent-actions-menu" id="pfActionsMenu">
     <button type="button" class="btn btn-gold btn-sm ent-actions-toggle" id="pfActionsMenuBtn" aria-haspopup="true" aria-expanded="false" title="Actions de trading">☰ Actions</button>
-    <div class="ent-actions-panel" id="pfActionsPanel">${actionsMenuGroupTitle('Comptant', true)}<button class="btn btn-ghost btn-sm" id="openBuySharesBtn">📈 Acheter des actions</button><button class="btn btn-ghost btn-sm" id="openSellSharesBtn">📉 Vendre des actions</button>${isCeo ? `<button class="btn btn-ghost btn-sm" id="openAnnounceCeoTradeBtn">📢 Annoncer un achat/une vente de mes propres parts</button>` : ''}${actionsMenuGroupTitle('Vente à découvert')}<button class="btn btn-ghost btn-sm" id="openShortSharesBtn">📉 Vendre à découvert</button><button class="btn btn-ghost btn-sm" id="openCoverShortSharesBtn">📈 Racheter pour clôturer</button>${actionsMenuGroupTitle('Bons gouvernementaux')}<button class="btn btn-ghost btn-sm" id="openInvestBondsBtn">💰 Investir</button><button class="btn btn-ghost btn-sm" id="openWithdrawBondsBtn">🏦 Retirer</button><button class="btn btn-ghost btn-sm" id="openBorrowBondsBtn">💸 Emprunter (à découvert)</button>${actionsMenuGroupTitle('Options')}<button class="btn btn-ghost btn-sm" id="openOptionChainBtn">📊 Voir la chaîne d'options</button><button class="btn btn-ghost btn-sm" id="openOptionTradeBtn">🎯 Nouvelle position d'option</button></div>
+    <div class="ent-actions-panel" id="pfActionsPanel">${actionsMenuGroupTitle('Comptant', true)}<button class="btn btn-ghost btn-sm" id="openBuySharesBtn">📈 Acheter des actions</button><button class="btn btn-ghost btn-sm" id="openSellSharesBtn">📉 Vendre des actions</button>${isCeo ? `<button class="btn btn-ghost btn-sm" id="openAnnounceCeoTradeBtn">📢 Annoncer un achat/une vente de mes propres parts</button>` : ''}${actionsMenuGroupTitle('Vente à découvert')}<button class="btn btn-ghost btn-sm" id="openShortSharesBtn">📉 Vendre à découvert</button><button class="btn btn-ghost btn-sm" id="openCoverShortSharesBtn">📈 Racheter pour clôturer</button>${actionsMenuGroupTitle('Bons gouvernementaux')}<button class="btn btn-ghost btn-sm" id="openInvestBondsBtn">💰 Investir</button><button class="btn btn-ghost btn-sm" id="openWithdrawBondsBtn">🏦 Retirer</button><button class="btn btn-ghost btn-sm" id="openBorrowBondsBtn">💸 Emprunter (à découvert)</button>${actionsMenuGroupTitle('Options')}<button class="btn btn-ghost btn-sm" id="openOptionChainBtn">📊 Voir la chaîne d'options</button><button class="btn btn-ghost btn-sm" id="openOptionTradeBtn">🎯 Nouvelle position d'option</button><button class="btn btn-ghost btn-sm" id="openOptionStrategyBtn">🧩 Stratégies d'options</button></div>
   </div>`;
   // Section 229 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: bouton posé JUSTE À CÔTÉ de
   // « Revoir le dernier tour » (Portefeuille SEULEMENT — voir showPortfolioEvolutionPopup), même style
@@ -2431,9 +2431,14 @@ function renderPortefeuilleTrading(me, company){
   // strikes × échéances) ET son sélecteur de compagnie ne sont PLUS construits ici — ils vivent désormais
   // dans la modale dédiée modalOptionChain() (voir sa définition, et le bouton #openOptionChainBtn du menu
   // ☰ Actions), pour libérer de la place visuelle dans la page tant qu'on n'a pas cliqué dessus.
+  // Section 235 (voir RESUME_ET_REGLES.md) — `!pos.strategyId` : une jambe de stratégie d'options
+  // (bull/bear spread, ATM straddle — toujours à règlement CASH, voir openOptionStrategy) n'apparaît plus
+  // ICI comme une ligne d'option isolée, potentiellement déroutante (une seule jambe d'un spread, sans son
+  // contexte) — elle est regroupée avec sa jambe sœur dans la table dédiée « Mes stratégies d'options »
+  // juste plus bas (myStrategies/strategiesHtml).
   const myOptions = (me.optionPositions||[]).map(pos=>{
     const co = companyById(pos.companyId);
-    return (co && pos.shares>1e-9) ? {co, pos} : null;
+    return (co && pos.shares>1e-9 && !pos.strategyId) ? {co, pos} : null;
   }).filter(Boolean);
   const optionsRows = myOptions.map(({co,pos})=>{
     const premium = optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll);
@@ -2458,6 +2463,41 @@ function renderPortefeuilleTrading(me, company){
   const optionsPositionsHtml = myOptions.length>0
     ? `<table><tr><th>Entreprise</th><th>Type</th><th>Côté</th><th>Strike</th><th>Lancers restants</th><th>Contrats</th><th>Prime à l'ouverture</th><th>Valeur de marché</th><th>P&amp;L latent</th><th title="Delta — exposition en $ à une variation de 1$ du cours">Δ</th><th title="Gamma — variation du Delta pour 1$ de variation du cours">Γ</th><th title="Vega — exposition en $ à une variation de 1 point de volatilité annuelle">V</th><th title="Theta — décroissance en $ par lancer de dé">Θ</th><th></th></tr>${optionsRows}</table>`
     : '<div class="empty">Aucune position d’option pour le moment.</div>';
+
+  // Section 235 (voir RESUME_ET_REGLES.md) — « Mes stratégies d'options » : regroupe les jambes partageant
+  // un même `strategyId` (voir openOptionStrategy) en UNE seule ligne par stratégie ouverte, toujours à
+  // règlement CASH (jamais de livraison de parts à l'échéance — voir settleOptionStrategyLegCash). Coût
+  // net à l'ouverture/Valeur nette actuelle sont des sommes SIGNÉES sur les jambes (jambe longue = +valeur
+  // qu'elle vaut, jambe courte = -valeur qu'elle coûterait à racheter) — donc directement comparables entre
+  // elles (P&L = valeur nette actuelle − coût net à l'ouverture), MÊME convention de signe que
+  // player.cumOptionNetPremium/netFlow (openOptionStrategy) : positif = la stratégie VAUT actuellement plus
+  // qu'elle n'a coûté (ou a rapporté plus qu'elle n'a coûté si négative à l'ouverture).
+  const myStrategyIds = Array.from(new Set((me.optionPositions||[]).filter(p=>p.strategyId && p.shares>1e-9).map(p=>p.strategyId)));
+  const myStrategies = myStrategyIds.map(sid=>{
+    const legs = (me.optionPositions||[]).filter(p=>p.strategyId===sid && p.shares>1e-9);
+    if(legs.length===0) return null;
+    const co = companyById(legs[0].companyId);
+    if(!co) return null;
+    return {sid, co, kind: legs[0].strategyKind, expiryRoll: legs[0].expiryRoll, contracts: legs[0].shares, legs};
+  }).filter(Boolean);
+  const strategiesRows = myStrategies.map(({sid,co,kind,expiryRoll,contracts,legs})=>{
+    let costAtOpen = 0, valueNow = 0;
+    legs.forEach(l=>{
+      const premiumNow = optionPremiumFor(co, l.type, l.strike, l.expiryRoll);
+      const sign = l.side==='long' ? 1 : -1;
+      costAtOpen += sign * optionNotional(l.shares, l.premiumAtOpen);
+      valueNow += sign * optionNotional(l.shares, premiumNow);
+    });
+    const pnl = valueNow - costAtOpen;
+    const rollsLeft = Math.max(0, expiryRoll - state.gameClock.rollCount);
+    const strikesLabel = kind==='straddle'
+      ? `ATM (${fmtPrice(legs[0].strike)})`
+      : legs.map(l=>`${l.type==='call'?'C':'P'} ${fmtPrice(l.strike)} (${l.side==='long'?'+':'-'})`).join(' / ');
+    return `<tr><td>${esc(co.name)}</td><td>${esc(OPTION_STRATEGY_LABELS[kind]||kind)}</td><td>${strikesLabel}</td><td>${rollsLeft}</td><td>${contracts.toFixed(4)}</td><td class="money" style="color:${costAtOpen>=0?'#047857':'var(--brick)'};">${costAtOpen>=0?'+':''}${fmt(costAtOpen)}</td><td class="money">${fmt(valueNow)}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td><td><button class="btn btn-ghost btn-sm" data-close-option-strategy="${sid}">Fermer la stratégie</button></td></tr>`;
+  }).join('');
+  const strategiesHtml = myStrategies.length>0
+    ? `<table><tr><th>Entreprise</th><th>Stratégie</th><th>Jambes (strike, +longue/-écrite)</th><th>Lancers restants</th><th>Contrats</th><th>Coût net à l'ouverture</th><th>Valeur nette actuelle</th><th>P&amp;L latent</th><th></th></tr>${strategiesRows}</table>`
+    : '<div class="empty">Aucune stratégie d’options pour le moment.</div>';
 
   // Section 201 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « Comparer le cours entre
   // entreprises » déménage après les états financiers (voir renderPortefeuilleCompareChart, appelée par
@@ -2580,7 +2620,10 @@ function renderPortefeuilleTrading(me, company){
     // Section 157 (voir RESUME_ET_REGLES.md): un solde négatif (dette empruntée via shortBonds) doit lui
     // aussi rendre visible cette section — Math.abs() plutôt que la comparaison stricte >0 d'origine.
     const showBons = Math.abs(me.bondBalance||0) > 1e-9;
-    const showOptions = myOptions.length>0;
+    // Section 235 (voir RESUME_ET_REGLES.md) — inclut désormais aussi myStrategies (bull/bear spread, ATM
+    // straddle) : la section « Options (PUT/CALL) » reste visible si le joueur détient AU MOINS une option
+    // simple OU une stratégie, même si l'une des deux catégories est vide.
+    const showOptions = myOptions.length>0 || myStrategies.length>0;
     const showLoans = myLoansAsLender.length>0;
     const blocks = [
       showShort ? entrepriseAccordion('pf-short', 'Mes positions à découvert', shortsHtml) : '',
@@ -2588,7 +2631,10 @@ function renderPortefeuilleTrading(me, company){
       showLoans ? entrepriseAccordion('pf-loans', 'Mes prêts aux entreprises', myLoansHtml) : '',
       showOptions ? entrepriseAccordion('pf-options', 'Options (PUT/CALL)', `
       <div class="small" style="margin-bottom:8px;">Consultez la chaîne de primes (calls/puts) depuis le menu ☰ Actions ci-dessus — « 📊 Voir la chaîne d'options ».</div>
-      ${optionsPositionsHtml}`) : '',
+      ${optionsPositionsHtml}
+      <div class="small" style="font-weight:600;margin-top:16px;margin-bottom:6px;">Mes stratégies d'options (règlement cash uniquement, jamais de livraison de parts)</div>
+      <div class="small" style="margin-bottom:8px;">Ouvrez un bull spread, un bear spread ou un ATM straddle depuis le menu ☰ Actions ci-dessus — « 🧩 Stratégies d'options ».</div>
+      ${strategiesHtml}`) : '',
     ];
     // Section 171 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « La section instrument
     // de trading ne pas l'afficher si il n'y a pas de produits à l'intérieur. » Auparavant, en l'absence de
@@ -3570,11 +3616,18 @@ function renderEntreprise(){
   // disabled+title que sellHousesButtonHtml/lastResortLoanButtonHtml ci-dessus. Ne s'applique qu'à la
   // DÉCLARATION (passer à "prête") — annuler un statut déjà "prête" reste toujours permis (aucune raison
   // d'empêcher un CEO de se rétracter).
+  // Section 234 (voir RESUME_ET_REGLES.md) — restriction du blocage aux frontières de semestre
+  // (`tradingWindowOpen()`, voir sa définition): demande explicite de l'utilisateur, « l'encaisse négative
+  // des joueurs et des entreprises ne permet pas de passer au tour suivant seulement aux semestres. dans un
+  // tour normal on ferme les yeux » — la majorité des outils de financement (prêts, dividendes, trading,
+  // rachat/émission d'actions...) ne sont accessibles QU'aux semestres, donc bloquer à CHAQUE tour aurait pu
+  // coincer une entreprise en encaisse négative sans aucun moyen d'agir jusqu'au prochain semestre.
+  const blockReadyForNegativeCash = company.cash<0 && tradingWindowOpen();
   const readyActionHtml = company.inJail
     ? `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`
     : (company.ready
         ? `<button class="btn btn-ghost btn-sm" data-cancel-ready="${company.id}">🔄 Annuler Tour Terminé</button>`
-        : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}" ${company.cash<0?`disabled title="Encaisse négative (${fmt(company.cash)}) — l'entreprise doit avoir une encaisse ≥ 0$ pour terminer son tour."`:''}>✅ Tour Terminé</button>`);
+        : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}" ${blockReadyForNegativeCash?`disabled title="Encaisse négative (${fmt(company.cash)}) — l'entreprise doit avoir une encaisse ≥ 0$ pour terminer son tour de semestre."`:''}>✅ Tour Terminé</button>`);
 
   // --- Maisons: réserve (ajout) + soumission d'offre d'enchère (déplacée depuis l'ancien onglet Maisons). Section
   // 88: plus aucun bouton d'AJUSTEMENT MANUEL (+1/-1) ici — demande explicite de l'utilisateur (« les
@@ -3803,6 +3856,19 @@ function renderEntreprise(){
   // contrairement à buildHouseButtonHtml qui l'a explicitement écarté à la section 170 pour une action
   // neutre — ici l'action EST dangereuse/irréversible par nature).
   const lastResortLoanButtonHtml = `<button class="btn btn-brick btn-sm" id="openLastResortLoanBtn" ${company.cash>=0?`disabled title="Réservé aux entreprises à encaisse négative (encaisse actuelle: ${fmt(company.cash)})."`:''}>🆘 Prêt de dernier recours</button>`;
+
+  // Section 234 (voir RESUME_ET_REGLES.md) — deux boutons « Émission de nouvelles actions »/« Rachat
+  // d'actions » (voir issueNewShares/buybackShares/modalIssueNewShares/modalBuybackShares pour toute la
+  // logique). Même pattern disabled+title que les autres boutons de ce menu — désactivés hors fenêtre de
+  // trading (tradingWindowOpen(), ces deux actions dépendent du stockPrice comme le trading joueur) ; le
+  // bouton d'émission est en plus désactivé une fois le plafond de 10% atteint. Icônes 📤/📥 (parts qui
+  // sortent vers le marché / parts qui reviennent) — pas encore prises dans ce menu (voir la liste tenue à
+  // jour au commentaire de payDividendButtonHtml/ceoStatementButtonHtml ci-dessus).
+  const tradingWindowClosedReason = !tradingWindowOpen() ? `Le marché est fermé — possible seulement aux semestres (prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s)).` : '';
+  const shareIssuanceRemaining = shareIssuanceRemainingCap(company);
+  const issueSharesDisabledReason = tradingWindowClosedReason || (shareIssuanceRemaining<=1e-9 ? `Plafond d'émission atteint (10% de ${fmtShares(company.totalShares)} parts).` : '');
+  const issueSharesButtonHtml = `<button class="btn btn-pale-gold btn-sm" id="openIssueSharesBtn" ${issueSharesDisabledReason?`disabled title="${esc(issueSharesDisabledReason)}"`:''}>📤 Émission de nouvelles actions</button>`;
+  const buybackSharesButtonHtml = `<button class="btn btn-pale-gold btn-sm" id="openBuybackSharesBtn" ${tradingWindowClosedReason?`disabled title="${esc(tradingWindowClosedReason)}"`:''}>📥 Rachat d'actions</button>`;
 
   // Section 93 (2026-09-01, voir RESUME_ET_REGLES.md): retrait complet de l'onglet fusionné « Assurances,
   // Marchés & Produits » — tout son contenu ACTIONNABLE (achat d'assurance simple, ajustement de la
@@ -4207,7 +4273,7 @@ function renderEntreprise(){
   const entActionsMenuHtml = `${entActionsMenuStyle}
   <div class="ent-actions-menu" id="entActionsMenu">
     <button type="button" class="btn btn-gold btn-sm ent-actions-toggle" id="entActionsMenuBtn" aria-haspopup="true" aria-expanded="false" title="Actions de l'entreprise">☰ Actions</button>
-    <div class="ent-actions-panel" id="entActionsPanel">${actionsMenuGroupTitle('Plateau', true)}${readyActionHtml}${goAdvanceButtonHtml}${actionsMenuGroupTitle('Immobilier')}${sellShareButtonHtml}${mortgageButtonHtml}${buildHouseButtonHtml}${houseBidButtonHtml}${sellHousesButtonHtml}${actionsMenuGroupTitle('Finance')}${issueLoanButtonHtml}${payDividendButtonHtml}${ceoStatementButtonHtml}${lastResortLoanButtonHtml}${actionsMenuGroupTitle('Assurance & Swaps')}${insuranceBundleButtonHtml}${proposeSwapButtonHtml}${proposeCompButtonHtml}</div>
+    <div class="ent-actions-panel" id="entActionsPanel">${actionsMenuGroupTitle('Plateau', true)}${readyActionHtml}${goAdvanceButtonHtml}${actionsMenuGroupTitle('Immobilier')}${sellShareButtonHtml}${mortgageButtonHtml}${buildHouseButtonHtml}${houseBidButtonHtml}${sellHousesButtonHtml}${actionsMenuGroupTitle('Finance')}${issueLoanButtonHtml}${payDividendButtonHtml}${issueSharesButtonHtml}${buybackSharesButtonHtml}${ceoStatementButtonHtml}${lastResortLoanButtonHtml}${actionsMenuGroupTitle('Assurance & Swaps')}${insuranceBundleButtonHtml}${proposeSwapButtonHtml}${proposeCompButtonHtml}</div>
   </div>`;
 
   // Section 135 (voir RESUME_ET_REGLES.md): bande d'alerte visible dès l'ouverture de l'onglet quand
@@ -7742,6 +7808,11 @@ const FIN_CATEGORIES = {
   mortgage_investment_recovery:{bucket:null, cf:'investing', label:'Capital hypothécaire recouvré'},
   // --- Financement (jamais à l'état des résultats) ---
   share_issuance_proceeds:    {bucket:null, cf:'financing', label:'Capital-actions reçu'},
+  // Section 234 (voir RESUME_ET_REGLES.md) — symétrique de share_issuance_proceeds ci-dessus, pour la
+  // nouvelle action « Rachat d'actions » (voir buybackShares): un rachat d'actions n'est jamais une dépense
+  // d'exploitation (bucket:null, comme dividend_payout juste plus bas) — n'affecte donc jamais
+  // incomeStatementFor, seulement cashFlowStatementFor sous financing.
+  share_repurchase_outflow:   {bucket:null, cf:'financing', label:'Rachat d’actions'},
   // Section 156 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur, corrigeant la section 145:
   // « Une subvention (GO) est un revenu, par contre une subvention d'avance est un financement, qui ne
   // devrait pas se retrouver dans l'état des résultats mais dans la section financement des flux de
@@ -8947,6 +9018,115 @@ function tradeCompanyShares(company, player, direction, amount){
 }
 
 /* ========================================================================================================
+   ---------- Section 234 (voir RESUME_ET_REGLES.md) — deux nouvelles actions CORPORATIVES (déclenchées par
+   le CEO au nom de son entreprise, PAS un trade personnel d'un joueur): émission de nouvelles actions et
+   rachat d'actions. Demande explicite de l'utilisateur, verbatim:
+   « 1) Émissions de nouvelles actions: Impact : Reçoit l'argent en fonction du prix de l'action, ajoute des
+   cubes rouges dans les mêmes proportion qu'une vente d'actions (avec un petit bonus rouges). Limites : Ne
+   peut pas émettre plus que 10% des parts de départ (dans les paramètres de départs)
+   2) Rachat d'actions: impact: Achat au prix des actions, ajoute des cubes verts comme un achat de l'action
+   avec bonus vert. Toutes part racheter peux être émission a nouveau plus tard, en ajout au 10% d'émissions.
+   pas d'impact sur le nombre de parts disponibles puisque techniquement dans le jeu il n'y a pas de
+   limites. »
+   Vérifié dans le code avant d'écrire quoi que ce soit: `company.totalShares` n'est JAMAIS muté après la
+   fondation (createCompany, une seule fois), et `sharesIssued`/`shareholders` ne bougent que via l'IPO
+   initiale (applyCompanyIpoFunding) ou le trading secondaire joueur (executeShareTrade) — confirmant la
+   lecture « pas d'impact sur le nombre de parts disponibles »: ces deux actions sont un pur mouvement de
+   trésorerie + cubes, elles NE TOUCHENT JAMAIS totalShares/sharesIssued/company.shareholders (aucune
+   dilution ni retrait réel de parts, contrairement à une vraie émission/un vrai rachat boursier).
+   Restrictions confirmées avec l'utilisateur (clarification directe): fenêtre de trading aux semestres
+   uniquement (tradingWindowOpen(), même garde que tradeCompanyShares — ces actions dépendent du
+   stockPrice), et PAS de restriction CEO (« le ceo ça n'a pas rapport ici le ceo contrôle les actions de la
+   compagnie mais c'est l'argent de la compagnie qui est utilisé pas celle du CEO personnellement » — à la
+   différence de tradeCompanyShares, dont la garde anti-délit d'initié ne vise QUE le CEO qui tenterait de
+   trader PERSONNELLEMENT ses propres parts). */
+const SHARE_ISSUANCE_CAP_PCT = 0.10; // « ne peut pas émettre plus que 10% des parts de départ »
+// « petit bonus » rouge/vert — bonus ADDITIF, injecté par-dessus la fourchette proportionnelle de
+// tradeCubeRange (même accumulateur cumulatif tradeImpactAccum que le trading joueur, donc « mêmes
+// proportions », voir son commentaire), mais appliqué INCONDITIONNELLEMENT — contrairement à
+// tradeCubeRange, qui peut retourner `null` pour une transaction trop petite pour franchir une unité
+// d'impact (garde-fou anti-fragmentation pensé pour le trading joueur, qui PEUT se répéter en une
+// multitude de micro-ordres). Une émission/un rachat est une décision CEO déclarée, jamais une
+// micro-transaction fragmentée de ce genre — le petit bonus, toujours présent, reflète que cette action
+// est structurellement plus significative qu'un simple trade secondaire de même taille (dilution réelle
+// pour l'émission, retrait réel d'offre pour le rachat). Valeurs de départ, comme tous les STOCK_TRIGGER_*
+// existants: à calibrer en jouant, jamais gravées dans le roc.
+const STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MIN = 1, STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MAX = 2;
+const STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MIN = 1, STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MAX = 2;
+/* Marge d'émission RESTANTE (en nombre de parts) avant que `company` atteigne son plafond cumulatif de
+   10% de `company.totalShares` — voir issueNewShares. `company.cumulativeSharesEmittedNet` (initialisé
+   paresseusement à 0) = émissions cumulées − rachats cumulés depuis le début de la partie (plancher 0,
+   jamais négatif — voir buybackShares): un rachat libère donc bien de la marge future, « en ajout au 10%
+   d'émissions », sans jamais faire dépasser le plafond d'origine même si l'entreprise rachète au total
+   plus qu'elle n'a jamais émis. */
+function shareIssuanceRemainingCap(company){
+  const cap = SHARE_ISSUANCE_CAP_PCT * company.totalShares;
+  const used = company.cumulativeSharesEmittedNet || 0;
+  return Math.max(0, cap - used);
+}
+/* Émission de nouvelles actions par `company` (action CEO, voir le commentaire de section 234 ci-dessus).
+   `qty` = un nombre de PARTS (jamais un montant $, contrairement au trading joueur/executeShareTrade — le
+   plafond de 10% et la fourchette de cubes proportionnelle sont tous deux exprimés en parts, pas en $).
+   `company.cash += qty*stockPrice` (émission PRIMAIRE, contrairement au trading secondaire joueur qui ne
+   touche JAMAIS company.cash — voir le commentaire d'executeShareTrade), logué sous
+   'share_issuance_proceeds' (même catégorie de grand livre que l'IPO initiale — financement, jamais un
+   revenu d'exploitation). Cubes ROUGES (comme une vente — pression baissière, plus de parts en
+   circulation) via tradeCubeRange + le petit bonus additif ci-dessus. AUCUNE mutation de
+   totalShares/sharesIssued/company.shareholders. */
+function issueNewShares(company, qty){
+  if(!(qty>0)) return {ok:false, error:'La quantité doit être positive.'};
+  if(companyPendingIpoShares(company)>0) return {ok:false, error:`${company.name} n'a pas encore terminé son introduction en bourse (IPO) — pas encore éligible.`};
+  if(!tradingWindowOpen()) return {ok:false, error:`Le marché est fermé — cette action n'est possible qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`};
+  if(state.gameEndedReason) return {ok:false, error:'La partie est terminée.'};
+  const price = company.stockPrice||0;
+  if(!(price>0)) return {ok:false, error:'Le prix de l’action est invalide pour le moment.'};
+  const remaining = shareIssuanceRemainingCap(company);
+  if(qty>remaining+1e-9) return {ok:false, error:`Plafond d'émission atteint — il ne reste que ${fmtShares(remaining)} part(s) émissible(s) (10% de ${fmtShares(company.totalShares)} au total, net des rachats déjà effectués).`};
+  const amount = qty*price;
+  company.cash += amount;
+  logFin(company.id, 'share_issuance_proceeds', amount);
+  company.cumulativeSharesEmittedNet = (company.cumulativeSharesEmittedNet||0) + qty;
+  const base = tradeCubeRange(company, qty, 'red');
+  const bonus = STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MIN + Math.floor(Math.random()*(STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MAX-STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MIN+1));
+  let cubesInjected = injectStockCube(company, 'red', bonus, bonus);
+  if(base) cubesInjected += injectStockCube(company, 'red', base.qtyMin, base.qtyMax);
+  const entries = [{label:`${company.name} (émission de ${fmtShares(qty)} nouvelle(s) action(s) @ ${fmtPrice(price)})`, amount}];
+  log(`${company.name} émet ${fmtShares(qty)} nouvelle(s) action(s) à ${fmtPrice(price)}/part et encaisse ${fmt(amount)}.`, entries);
+  return {ok:true, entries, qty, amount, cubesInjected};
+}
+/* Rachat d'actions par `company` (action CEO, symétrique d'issueNewShares ci-dessus — voir son commentaire
+   pour toute la justification commune). `qty` = un nombre de PARTS. `company.cash -= qty*stockPrice`,
+   logué sous 'share_repurchase_outflow' (financement, jamais une dépense d'exploitation). Aucune garde sur
+   l'encaisse résultante: l'encaisse négative est explicitement permise partout dans le jeu sauf pour
+   soumettre une offre ETF (voir section 233 point 4, RESUME_ET_REGLES.md) — un rachat peut donc rendre
+   l'encaisse négative, exactement comme un dividende ou une taxe le peuvent déjà. Cubes VERTS (comme un
+   achat — pression haussière, moins de parts en circulation) via tradeCubeRange + le petit bonus additif.
+   Réduit `company.cumulativeSharesEmittedNet` (plancher 0) — libère de la marge d'émission future, « en
+   ajout au 10% d'émissions » (voir shareIssuanceRemainingCap). Pas de plafond sur `qty` lui-même au-delà de
+   qty>0: ce n'est pas un retrait réel de parts détenues par de vrais actionnaires (voir le commentaire de
+   section 234), donc aucune notion d'« inventaire » à ne pas dépasser. AUCUNE mutation de
+   totalShares/sharesIssued/company.shareholders. */
+function buybackShares(company, qty){
+  if(!(qty>0)) return {ok:false, error:'La quantité doit être positive.'};
+  if(companyPendingIpoShares(company)>0) return {ok:false, error:`${company.name} n'a pas encore terminé son introduction en bourse (IPO) — pas encore éligible.`};
+  if(!tradingWindowOpen()) return {ok:false, error:`Le marché est fermé — cette action n'est possible qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`};
+  if(state.gameEndedReason) return {ok:false, error:'La partie est terminée.'};
+  const price = company.stockPrice||0;
+  if(!(price>0)) return {ok:false, error:'Le prix de l’action est invalide pour le moment.'};
+  const amount = qty*price;
+  company.cash -= amount;
+  logFin(company.id, 'share_repurchase_outflow', -amount);
+  company.cumulativeSharesEmittedNet = Math.max(0, (company.cumulativeSharesEmittedNet||0) - qty);
+  const base = tradeCubeRange(company, qty, 'green');
+  const bonus = STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MIN + Math.floor(Math.random()*(STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MAX-STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MIN+1));
+  let cubesInjected = injectStockCube(company, 'green', bonus, bonus);
+  if(base) cubesInjected += injectStockCube(company, 'green', base.qtyMin, base.qtyMax);
+  const entries = [{label:`${company.name} (rachat de ${fmtShares(qty)} action(s) @ ${fmtPrice(price)})`, amount:-amount}];
+  log(`${company.name} rachète ${fmtShares(qty)} action(s) à ${fmtPrice(price)}/part pour ${fmt(amount)}.`, entries);
+  return {ok:true, entries, qty, amount, cubesInjected};
+}
+
+/* ========================================================================================================
    ---------- Vente à découvert (trading joueurs PHASE 2 — voir RESUME_ET_REGLES.md section 129 et
    claude/DESIGN_TRADING_JOUEURS.md section 3, Project) ----------
    Ouvrir un short = une vente NORMALE contre bankEntry.shares (réduit l'inventaire banque exactement comme
@@ -10014,6 +10194,164 @@ function closeOptionPosition(player, positionId, shares, _bypassTradingWindow){
   if(pos.shares<=1e-9) player.optionPositions.splice(player.optionPositions.indexOf(pos), 1); // nettoyage: jamais d'entrée à ~0 qui traîne
   return {ok:true, entries, qty};
 }
+
+/* ========================================================================================================
+   ---------- Section 235 (voir RESUME_ET_REGLES.md) — stratégies d'options à règlement CASH SEULEMENT
+   (jamais de livraison physique d'actions, contrairement aux options simples ci-dessus — section 152/226).
+   Demande explicite de l'utilisateur, verbatim : « dans les actions portefeuille ajouter un bouton.
+   Stratégies d'options. Ajouter: acheter/vendre bull spread, bear spread, Atm straddle. toutes ces
+   Stratégies sont cash settlement seulement. aucune livraison de stocks comparer aux autres options
+   disponibles. »
+
+   Construction confirmée par l'utilisateur (AskUserQuestion, avant tout code) :
+   - Bull spread = CALLS : acheter = long call strike bas + short call strike haut (+C/-C) ; vendre =
+     l'inverse exact (-C/+C).
+   - Bear spread = PUTS (instrument DISTINCT du bull spread, pas un simple miroir sur calls — évite qu'un
+     « bull spread vendu » et un « bear spread acheté » sur les mêmes strikes soient la MÊME position) :
+     acheter = long put strike haut + short put strike bas (+P/-P) ; vendre = l'inverse (-P/+P).
+   - ATM straddle = long call ATM + long put ATM (achat) ou l'inverse écrit (vente) — toujours au strike
+     ATM (0%, voir OPTION_STRIKE_PCTS), jamais un autre strike.
+   - Strikes des spreads AU CHOIX du joueur parmi les 5 strikes existants de la chaîne (confirmé —
+     « Au choix (2 menus déroulants) »), jamais une largeur fixe imposée.
+
+   Chaque JAMBE d'une stratégie est une entrée NORMALE de player.optionPositions — réutilise TOUTE
+   l'infrastructure existante (pricing Black-Scholes via optionPremiumFor, marge via
+   enforceMarginCalls/optionCoveredShares, déjà génériques sur TOUTE entrée side:'short', clôture anticipée
+   via closeOptionPosition INCHANGÉE) — avec deux champs additionnels : `strategyId` (partagé entre les
+   jambes d'UNE MÊME ouverture, pour le regroupement à l'affichage et closeOptionStrategy ci-dessous) et
+   `cashSettled:true` (bascule le règlement À L'ÉCHÉANCE — voir settleExpiredOptions plus bas — d'un
+   exercice/une assignation PHYSIQUE vers un simple paiement en CASH de la valeur intrinsèque, JAMAIS de
+   mouvement sur company.shareholders/player.shortPositions). AUCUN cube injecté au règlement (même
+   convention que le reste du module Options : ouverture/clôture anticipée n'injecte déjà aucun cube — un
+   règlement cash n'est pas plus un « vrai trade de marché » qu'une clôture anticipée).
+
+   AUCUNE fusion avec une position simple préexistante (contrairement à openOptionPosition, qui fusionne un
+   contrat identique) : une ouverture de stratégie crée TOUJOURS 2 jambes fraîches, même si un contrat
+   identique (même type/côté/strike/échéance) existe déjà chez ce joueur — évite qu'une fusion ne fasse
+   involontairement basculer une position physique existante vers un règlement cash, ou l'inverse.
+   Simplification documentée : un contrat cash-réglé et un contrat physique de mêmes caractéristiques
+   restent deux instruments distincts, comme sur un vrai marché.
+
+   Conséquence documentée d'enforceMarginCalls (INCHANGÉE, aucun code spécial ajouté ici) : un appel de
+   marge cible et clôture une SEULE jambe à la fois (celle offrant la plus grosse réduction de marge, voir
+   son commentaire) — il peut donc, dans un scénario extrême, clôturer une seule jambe d'une stratégie à 2
+   jambes et laisser l'autre ouverte comme position simple. Simplification volontaire acceptable pour un
+   jeu de société, même esprit que le commentaire d'optionCoveredShares plus haut. */
+const OPTION_STRATEGY_LABELS = {bullSpread:'Bull spread', bearSpread:'Bear spread', straddle:'ATM straddle'};
+/* Construit les 2 jambes {type,side,strike} d'une stratégie, AVANT tarification — voir le commentaire
+   d'en-tête ci-dessus pour la construction exacte de chaque stratégie/direction. `strikeLow`/`strikeHigh`
+   ignorés pour 'straddle' (toujours le strike ATM courant de `company`, calculé ICI au moment de
+   l'ouverture — comme n'importe quel strike de la chaîne, voir optionChainFor). */
+function optionStrategyLegs(company, kind, direction, strikeLow, strikeHigh){
+  const atm = company.stockPrice||0;
+  if(kind==='bullSpread'){
+    return direction==='buy'
+      ? [{type:'call', side:'long', strike:strikeLow}, {type:'call', side:'short', strike:strikeHigh}]
+      : [{type:'call', side:'short', strike:strikeLow}, {type:'call', side:'long', strike:strikeHigh}];
+  }
+  if(kind==='bearSpread'){
+    return direction==='buy'
+      ? [{type:'put', side:'long', strike:strikeHigh}, {type:'put', side:'short', strike:strikeLow}]
+      : [{type:'put', side:'short', strike:strikeHigh}, {type:'put', side:'long', strike:strikeLow}];
+  }
+  if(kind==='straddle'){
+    return direction==='buy'
+      ? [{type:'call', side:'long', strike:atm}, {type:'put', side:'long', strike:atm}]
+      : [{type:'call', side:'short', strike:atm}, {type:'put', side:'short', strike:atm}];
+  }
+  return null;
+}
+/* Ouvre une stratégie d'options — voir le commentaire d'en-tête de cette section pour toute la
+   justification. Gardes IDENTIQUES à openOptionPosition (fenêtre de trading, CEO ne peut trader aucune
+   option — y compris une stratégie — sur sa propre compagnie, partie pas terminée, garde IPO, garde prêt
+   de dernier recours appliquée JAMBE PAR JAMBE), + `contracts` un entier positif (MÊME nombre de contrats
+   sur les 2 jambes — une stratégie simple est toujours 1:1, jamais de ratio inégal dans cette phase).
+   Coût NET = somme signée des 2 jambes (jambe longue = débit, jambe courte = crédit) — la garde d'encaisse
+   ne porte QUE sur ce débit NET (pas sur le coût brut de la seule jambe longue), cohérent avec un ordre de
+   spread réel qui ne mobilise que la marge/l'encaisse nette. Un crédit net (stratégie vendue) n'a AUCUNE
+   garde d'encaisse — même philosophie que l'écriture nue partout ailleurs dans ce module. */
+function openOptionStrategy(company, player, kind, direction, strikeLow, strikeHigh, expiryRoll, contracts){
+  // Section 134 (voir RESUME_ET_REGLES.md) — fenêtre de trading limitée aux semestres: garde EN TOUT DÉBUT.
+  if(!tradingWindowOpen()) return {ok:false, error:`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`};
+  if(!(contracts>0) || !Number.isInteger(contracts)) return {ok:false, error:'Le nombre de contrats doit être un entier positif (pas de contrat fractionnaire).'};
+  if(player.id===company.ceoId) return {ok:false, error:`Le CEO de ${company.name} ne peut trader aucune stratégie d'option sur sa propre compagnie — délit d'initié intégré au jeu.`};
+  if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
+  if(companyPendingIpoShares(company)>0) return {ok:false, error:`${company.name} n'a pas encore terminé son introduction en bourse (IPO) — pas encore tradable.`};
+  if(!OPTION_STRATEGY_LABELS[kind]) return {ok:false, error:'Stratégie inconnue.'};
+  if(direction!=='buy' && direction!=='sell') return {ok:false, error:'Direction invalide.'};
+  if(!(expiryRoll>state.gameClock.rollCount)) return {ok:false, error:'Cette échéance est déjà passée (ou en cours) — choisissez une échéance future.'};
+  if(kind!=='straddle'){
+    if(!(strikeLow>0) || !(strikeHigh>0)) return {ok:false, error:'Les deux strikes du spread doivent être positifs.'};
+    if(!(strikeHigh>strikeLow+1e-9)) return {ok:false, error:'Le strike haut doit être strictement supérieur au strike bas.'};
+  }
+  const legs = optionStrategyLegs(company, kind, direction, strikeLow, strikeHigh);
+  // Section 178 (voir RESUME_ET_REGLES.md) — même garde qu'openOptionPosition (« les shorts call et les
+  // achat de put ne sont plus disponible pour l'entreprise en question »), appliquée JAMBE PAR JAMBE : une
+  // stratégie dont AU MOINS une jambe serait un short call ou un long put est refusée EN BLOC (impossible
+  // d'ouvrir « la moitié » d'une stratégie).
+  if(company.lastResortLoanUsed && legs.some(l=>(l.type==='call'&&l.side==='short')||(l.type==='put'&&l.side==='long'))){
+    return {ok:false, error:`${company.name} a contracté un prêt de dernier recours — plus de vente de call à découvert ni d'achat de put possible sur cette entreprise (les positions déjà ouvertes restent valides).`};
+  }
+  const priced = legs.map(l=>({...l, premium: optionPremiumFor(company, l.type, l.strike, expiryRoll)}));
+  // netFlow: MÊME convention de signe que player.cumOptionNetPremium ailleurs dans ce module — positif =
+  // crédit net reçu, négatif = débit net payé.
+  const netFlow = priced.reduce((s,l)=> s + (l.side==='short' ? optionNotional(contracts,l.premium) : -optionNotional(contracts,l.premium)), 0);
+  if(netFlow<0 && (-netFlow)>player.cash+1e-9) return {ok:false, error:'Encaisse personnelle insuffisante pour ce débit net.'};
+  const strategyId = uid();
+  if(!player.optionPositions) player.optionPositions = [];
+  priced.forEach(l=>{
+    const notional = optionNotional(contracts, l.premium);
+    if(l.side==='long'){ player.cash -= notional; state.bank.cash += notional; }
+    else { player.cash += notional; state.bank.cash -= notional; }
+    player.optionPositions.push({id:uid(), companyId:company.id, type:l.type, side:l.side, strike:l.strike, expiryRoll, shares:contracts, openedRoll: state.gameClock.rollCount, premiumAtOpen: l.premium, strategyId, strategyKind:kind, cashSettled:true});
+  });
+  player.cumOptionNetPremium = (player.cumOptionNetPremium||0) + netFlow;
+  const label = OPTION_STRATEGY_LABELS[kind];
+  const entries = [
+    {label:`${player.name} (${direction==='buy'?'achat':'vente'} ${label} — ${company.name})`, amount: netFlow},
+    {label:`Banque (contrepartie — ${label} ${company.name})`, amount: -netFlow},
+  ];
+  return {ok:true, entries, strategyId, netFlow};
+}
+/* Ferme (clôture anticipée) une stratégie d'options ENTIÈRE (toutes ses jambes encore ouvertes) en un
+   clic — bouton « Fermer la stratégie » de la table « Mes stratégies d'options » (renderPortefeuilleTrading).
+   Délègue CHAQUE jambe à closeOptionPosition (INCHANGÉE — une clôture anticipée reste toujours cash-réglée
+   au prix courant, que la jambe soit cashSettled ou non, voir son commentaire) et agrège les entrées pour
+   un seul popup de transaction. Une jambe déjà clôturée entre-temps (ex.: par un appel de marge, voir la
+   conséquence documentée au commentaire d'en-tête ci-dessus) est simplement ignorée — pas une erreur, sauf
+   si les DEUX jambes sont déjà closes (rien à fermer). */
+function closeOptionStrategy(player, strategyId){
+  const legs = (player.optionPositions||[]).filter(p=>p.strategyId===strategyId && p.shares>1e-9);
+  if(legs.length===0) return {ok:false, error:'Stratégie introuvable ou déjà clôturée.'};
+  const entries = [];
+  let qty = 0;
+  legs.forEach(leg=>{
+    const res = closeOptionPosition(player, leg.id, Number.MAX_SAFE_INTEGER);
+    if(res.ok){ entries.push(...res.entries); qty += res.qty; }
+  });
+  return {ok:true, entries, qty};
+}
+/* Règlement CASH (jamais physique) d'UNE jambe de stratégie arrivée à échéance — appelée depuis
+   settleExpiredOptions ci-dessous UNIQUEMENT quand `pos.cashSettled` est vrai, à la place de
+   settleOptionExercise (règlement physique). Symétrique par construction : position LONGUE ITM → le
+   joueur REÇOIT `intrinsic × 100 × contrats` (optionNotional) ; position ÉCRITE ITM → le joueur PAIE ce
+   même montant (AUCUNE garde d'encaisse — même philosophie que l'écriture nue partout ailleurs : peut
+   rendre l'encaisse négative, jamais un frein). AUCUN mouvement sur company.shareholders/
+   player.shortPositions (c'est tout le point du règlement cash), AUCUN cube injecté (voir le commentaire
+   d'en-tête). `intrinsic<=0` (hors-jeu) → aucun mouvement, `null` retourné (même convention que
+   settleOptionExercise, qui n'est appelée que si intrinsic>1e-9). */
+function settleOptionStrategyLegCash(player, pos, company, intrinsic){
+  const amount = optionNotional(pos.shares, intrinsic);
+  if(pos.side==='long'){
+    player.cash += amount;
+    state.bank.cash -= amount;
+  } else {
+    player.cash -= amount;
+    state.bank.cash += amount;
+  }
+  return `réglée EN CASH (valeur intrinsèque) — ${fmt(amount)} ${pos.side==='long'?'crédité':'débité'}, aucune livraison de parts`;
+}
+
 /* Exercice/assignation PHYSIQUE d'une option ARRIVÉE À ÉCHÉANCE et DANS LA MONNAIE — section 152 (voir
    RESUME_ET_REGLES.md), demande explicite de l'utilisateur : « Quand le PUT vendu fini ITM le joueur doit
    être forcé d'acheter les actions 100Xcontrats au strike price. Même chose pour l'achat de CALL. Aussi à
@@ -10184,7 +10522,12 @@ function settleOptionExercise(player, pos, company){
    INCHANGÉE — reste cash-réglée, une clôture anticipée volontaire n'est pas un exercice), même esprit que
    executeCeoAnnouncement qui distingue toujours l'exécution différée d'une transaction spontanée. Itère sur
    une COPIE (slice) de player.optionPositions car cette boucle retire des entrées du tableau original en
-   cours de route. */
+   cours de route.
+   Section 235 (voir RESUME_ET_REGLES.md) — `pos.cashSettled` (jambes de stratégie, voir son commentaire de
+   déclaration) bascule le règlement ITM vers settleOptionStrategyLegCash (paiement cash de la valeur
+   intrinsèque) au lieu de settleOptionExercise (exercice/assignation PHYSIQUE) — SEULE branche modifiée par
+   cette section, tout le reste de cette fonction (calcul d'intrinsic, retrait de la position, format du
+   log) reste strictement identique et partagé par les deux types de règlement. */
 function settleExpiredOptions(){
   state.players.forEach(p=>{
     if(!p.optionPositions || p.optionPositions.length===0) return;
@@ -10194,9 +10537,12 @@ function settleExpiredOptions(){
       const price = co ? (co.stockPrice||0) : 0;
       const intrinsic = pos.type==='call' ? Math.max(0, price-pos.strike) : Math.max(0, pos.strike-price);
       const typeLabel = pos.type==='call' ? 'CALL' : 'PUT';
+      const strategyLabel = pos.strategyKind ? ` (jambe de ${OPTION_STRATEGY_LABELS[pos.strategyKind]||pos.strategyKind})` : '';
       const sideLabel = pos.side==='long' ? 'longue' : 'écrite';
-      const exerciseLabel = (intrinsic>1e-9 && co) ? settleOptionExercise(p, pos, co) : null;
-      log(`⏱️ Règlement AUTOMATIQUE à l'échéance : l'option ${typeLabel} ${sideLabel} de ${p.name} sur ${co?co.name:'?'} (strike ${fmtPrice(pos.strike)}, ${pos.shares.toFixed(4)} contrat(s) — levier 100X) expire ${exerciseLabel ? `DANS LA MONNAIE — ${exerciseLabel}` : 'HORS-JEU, sans valeur'}, au prix de règlement de ${fmtPrice(price)}/part. Ce n'est PAS une fermeture volontaire du joueur.`);
+      const exerciseLabel = (intrinsic>1e-9 && co)
+        ? (pos.cashSettled ? settleOptionStrategyLegCash(p, pos, co, intrinsic) : settleOptionExercise(p, pos, co))
+        : null;
+      log(`⏱️ Règlement AUTOMATIQUE à l'échéance : l'option ${typeLabel} ${sideLabel} de ${p.name} sur ${co?co.name:'?'}${strategyLabel} (strike ${fmtPrice(pos.strike)}, ${pos.shares.toFixed(4)} contrat(s) — levier 100X) expire ${exerciseLabel ? `DANS LA MONNAIE — ${exerciseLabel}` : 'HORS-JEU, sans valeur'}, au prix de règlement de ${fmtPrice(price)}/part. Ce n'est PAS une fermeture volontaire du joueur.`);
       p.optionPositions.splice(p.optionPositions.indexOf(pos), 1); // retiré TOUJOURS, exercée ou pas
     });
   });
@@ -11033,7 +11379,10 @@ async function markCompanyReady(companyId){
   // qu'il y ait un pop-up qui mentionne vous devez avoir une encaisse >=0 pour continuer. » Garde en double
   // avec readyActionHtml ci-dessus (UI désactivée) — celle-ci est la garde métier RÉELLE (empêche aussi tout
   // appel direct/programmatique, pas seulement le clic bouton).
-  if(co.cash<0){ alert(`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`); return; }
+  // Section 234 (voir RESUME_ET_REGLES.md) — restreint au frontières de semestre (`tradingWindowOpen()`),
+  // voir le commentaire de readyActionHtml ci-dessus pour la citation complète de l'utilisateur et la
+  // justification (« dans un tour normal on ferme les yeux »).
+  if(co.cash<0 && tradingWindowOpen()){ alert(`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`); return; }
   co.ready = true;
   log(`${co.name} est prête pour le prochain lancer de dés pour tous.`);
   const triggered = await checkAllCompaniesReady();
@@ -13250,6 +13599,13 @@ function bindTabEvents(t){
     // section 134 — dividende désormais différé, pas instantané), même pattern que les bindings ci-dessus.
     const openPayDividendBtn = document.getElementById('openPayDividendBtn');
     if(openPayDividendBtn) openPayDividendBtn.addEventListener('click', modalAnnounceDividend);
+    // Section 234 (voir RESUME_ET_REGLES.md) — boutons « 📤 Émission de nouvelles actions »/« 📥 Rachat
+    // d'actions » (issueSharesButtonHtml/buybackSharesButtonHtml) -> modalIssueNewShares()/
+    // modalBuybackShares(), même pattern que les bindings ci-dessus.
+    const openIssueSharesBtn = document.getElementById('openIssueSharesBtn');
+    if(openIssueSharesBtn) openIssueSharesBtn.addEventListener('click', modalIssueNewShares);
+    const openBuybackSharesBtn = document.getElementById('openBuybackSharesBtn');
+    if(openBuybackSharesBtn) openBuybackSharesBtn.addEventListener('click', modalBuybackShares);
     // Section 160 (voir RESUME_ET_REGLES.md) — bouton « 📢 Sortie publique du CEO » (ceoStatementButtonHtml,
     // id `openPublicCeoStatementBtn`) -> modalPublicCeoStatement(), même pattern que le binding ci-dessus.
     const openPublicCeoStatementBtn = document.getElementById('openPublicCeoStatementBtn');
@@ -13550,7 +13906,12 @@ function bindTabEvents(t){
     if(openOptionChainBtn) openOptionChainBtn.addEventListener('click', ()=>modalOptionChain());
     const openOptionTradeBtn = document.getElementById('openOptionTradeBtn');
     if(openOptionTradeBtn) openOptionTradeBtn.addEventListener('click', ()=>modalOptionTrade());
+    // Section 235 (voir RESUME_ET_REGLES.md) — bouton « 🧩 Stratégies d'options » (bull/bear spread, ATM
+    // straddle, toujours à règlement cash) -> modalOptionStrategy(), même pattern que les bindings ci-dessus.
+    const openOptionStrategyBtn = document.getElementById('openOptionStrategyBtn');
+    if(openOptionStrategyBtn) openOptionStrategyBtn.addEventListener('click', ()=>modalOptionStrategy());
     document.querySelectorAll('[data-close-option]').forEach(b=>b.addEventListener('click', ()=>closeOptionPositionFromUi(b.dataset.closeOption)));
+    document.querySelectorAll('[data-close-option-strategy]').forEach(b=>b.addEventListener('click', ()=>closeOptionStrategyFromUi(b.dataset.closeOptionStrategy)));
     // Section 157bis (voir RESUME_ET_REGLES.md) — correctif reçu juste après la livraison de la section
     // 157: le formulaire « Marché des demandes d'emprunt » (proposer/mettre à jour/retirer une offre sur
     // la demande d'une AUTRE entreprise) a déménagé de Mon Entreprise vers le bandeau d'annonces du
@@ -15535,6 +15896,59 @@ function modalAnnounceDividend(){
    (« les marchés se calment »). pressPublicCeoStatement() continue de retourner
    {success, redBefore, redAfter, whiteBonusAdded} en interne (utile pour les tests et un futur suivi
    admin) — seul l'AFFICHAGE joueur change ici. */
+/* Section 234 (voir RESUME_ET_REGLES.md) — modale « Émission de nouvelles actions », même pattern que
+   modalAnnounceDividend juste au-dessus (openModal, un seul champ, #mOk délègue TOUTE la logique de
+   mutation à issueNewShares — voir son commentaire pour la justification complète). Le texte
+   d'avertissement ne mentionne jamais les cubes (implémentation interne — même convention que
+   modalPublicCeoStatement/section 161, voir son commentaire), seulement l'effet perçu (pression baissière
+   sur le marché). */
+function modalIssueNewShares(){
+  const myCo = myCompany();
+  if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
+  const remaining = shareIssuanceRemainingCap(myCo);
+  openModal(`
+    <h3>Émission de nouvelles actions — ${esc(myCo.name)}</h3>
+    <div class="small" style="margin-bottom:10px;">Émet de nouvelles parts au prix actuel de l'action et encaisse le montant reçu dans la trésorerie de l'entreprise. Cette dilution exerce une pression baissière sur le marché, comme une vente d'actions (plus marquée qu'une vente équivalente). Plafond cumulatif dans la partie: 10% des parts de départ de l'entreprise, net des rachats déjà effectués.</div>
+    <div class="small" style="margin-bottom:8px;">Prix actuel: <b>${fmtPrice(myCo.stockPrice)}</b>/part &nbsp;|&nbsp; Marge d'émission restante: <b>${fmtShares(remaining)}</b> part(s) (10% de ${fmtShares(myCo.totalShares)})</div>
+    <label>Quantité de parts à émettre</label>
+    <input type="number" step="1" min="0" max="${remaining}" id="mIssueSharesQty" value="0">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mOk">Émettre</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const qty = parseFloat(document.getElementById('mIssueSharesQty').value)||0;
+    const res = issueNewShares(myCo, qty);
+    if(!res.ok){ alert(res.error); return; }
+    await saveGame(); closeModal(); render();
+    showTransactionPopup(`Émission de nouvelles actions — ${myCo.name}`, res.entries);
+  });
+}
+/* Section 234 (voir RESUME_ET_REGLES.md) — modale « Rachat d'actions », symétrique de
+   modalIssueNewShares ci-dessus (voir son commentaire pour la justification commune). */
+function modalBuybackShares(){
+  const myCo = myCompany();
+  if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
+  openModal(`
+    <h3>Rachat d'actions — ${esc(myCo.name)}</h3>
+    <div class="small" style="margin-bottom:10px;">Rachète des parts au prix actuel de l'action, payées à même la trésorerie de l'entreprise. Ce retrait d'offre exerce une pression haussière sur le marché, comme un achat d'actions (plus marquée qu'un achat équivalent), et libère de la marge d'émission future.</div>
+    <div class="small" style="margin-bottom:8px;">Prix actuel: <b>${fmtPrice(myCo.stockPrice)}</b>/part &nbsp;|&nbsp; Trésorerie actuelle: <b>${fmt(myCo.cash)}</b></div>
+    <label>Quantité de parts à racheter</label>
+    <input type="number" step="1" min="0" id="mBuybackSharesQty" value="0">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mOk">Racheter</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const qty = parseFloat(document.getElementById('mBuybackSharesQty').value)||0;
+    const res = buybackShares(myCo, qty);
+    if(!res.ok){ alert(res.error); return; }
+    await saveGame(); closeModal(); render();
+    showTransactionPopup(`Rachat d'actions — ${myCo.name}`, res.entries);
+  });
+}
 function modalPublicCeoStatement(){
   const myCo = myCompany();
   if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
@@ -16137,6 +16551,136 @@ async function closeOptionPositionFromUi(positionId){
   log(`${me.name} clôture sa position d'option sur ${label} (${res.qty.toFixed(4)} contrat(s), au prix courant).`, res.entries);
   await saveGame(); render();
   showTransactionPopup(`Clôture d'option — ${label}`, res.entries);
+}
+/* Section 235 (voir RESUME_ET_REGLES.md) — modale « Stratégies d'options » (Portefeuille ☰ Actions, groupe
+   « Options », bouton #openOptionStrategyBtn) : bull spread, bear spread, ATM straddle, TOUJOURS à
+   règlement cash (voir le commentaire d'en-tête d'openOptionStrategy pour toute la construction et la
+   justification). Même pattern général que modalOptionTrade juste au-dessus (sélecteurs rafraîchis au
+   changement, `#mOk` délègue toute la logique de mutation à openOptionStrategy), avec en plus : un
+   sélecteur de STRATÉGIE (qui montre/masque les 2 sélecteurs de strike bas/haut — la stratégie ATM
+   straddle n'a par définition aucun strike à choisir, toujours le strike ATM courant) et un panneau
+   d'information qui détaille les 2 jambes construites (jamais une seule prime, contrairement à
+   modalOptionTrade) avant confirmation. */
+function modalOptionStrategy(){
+  const me = state.players.find(p=>p.id===myPlayerId);
+  if(!me) return;
+  if(!tradingWindowOpen()){ alert(`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`); return; }
+  if(state.gameEndedReason){ alert('La partie est terminée — plus aucun trading possible.'); return; }
+  const eligible = activeCompanies().filter(c=>companyPendingIpoShares(c)<=0 && c.ceoId!==me.id);
+  if(eligible.length===0){ alert('Aucune entreprise disponible au trading de stratégies d’options pour le moment (introduction en bourse non financée, ou vous êtes CEO de toutes les entreprises actives).'); return; }
+  const companyOptions = eligible.map(c=>`<option value="${c.id}">${companyOptionLabel(c)} — ${fmtPrice(c.stockPrice||0)}/part</option>`).join('');
+  openModal(`
+    <h3>Nouvelle stratégie d'options</h3>
+    <div class="small" style="margin-bottom:10px;">Bull spread (calls), bear spread (puts) et ATM straddle — toujours réglées EN CASH à l'échéance, jamais de livraison de parts (contrairement aux options simples).</div>
+    <label>Entreprise</label>
+    <select id="mOptStratCompany">${companyOptions}</select>
+    <label>Stratégie</label>
+    <select id="mOptStratKind">
+      <option value="bullSpread">Bull spread (calls)</option>
+      <option value="bearSpread">Bear spread (puts)</option>
+      <option value="straddle">ATM straddle</option>
+    </select>
+    <label>Direction</label>
+    <select id="mOptStratDirection"><option value="buy">Acheter</option><option value="sell">Vendre</option></select>
+    <div id="mOptStratSpreadStrikes">
+      <label>Strike bas</label>
+      <select id="mOptStratStrikeLow"></select>
+      <label>Strike haut</label>
+      <select id="mOptStratStrikeHigh"></select>
+    </div>
+    <label>Échéance</label>
+    <select id="mOptStratExpiry"></select>
+    <label>Contrats (levier 100X — même nombre sur les 2 jambes)</label>
+    <input type="number" step="1" min="1" id="mOptStratContracts" value="1">
+    <div class="small" id="mOptStratInfo" style="margin-bottom:8px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mOk">Confirmer</button>
+    </div>`);
+  const refreshChainSelectors = ()=>{
+    const co = companyById(document.getElementById('mOptStratCompany').value);
+    if(!co) return;
+    const chain = optionChainFor(co);
+    const strikeLowSel = document.getElementById('mOptStratStrikeLow');
+    const strikeHighSel = document.getElementById('mOptStratStrikeHigh');
+    const strikeOptHtml = chain.strikes.map((s,i)=>`<option value="${s}">${fmtPrice(s)} (${OPTION_STRIKE_PCTS[i]>=0?'+':''}${(OPTION_STRIKE_PCTS[i]*100).toFixed(0)}%)</option>`).join('');
+    strikeLowSel.innerHTML = strikeOptHtml;
+    strikeHighSel.innerHTML = strikeOptHtml;
+    // Par défaut: -10%/+10% (indices 1 et 3 de OPTION_STRIKE_PCTS) — un spread raisonnable de part et
+    // d'autre de l'ATM, jamais imposé (le joueur peut choisir n'importe quelle paire des 5 strikes).
+    if(chain.strikes.length>=4){ strikeLowSel.selectedIndex = 1; strikeHighSel.selectedIndex = 3; }
+    const expirySel = document.getElementById('mOptStratExpiry');
+    expirySel.innerHTML = chain.expiries.map(e=>`<option value="${e.rollTarget}">${e.semesters} semestre${e.semesters>1?'s':''}</option>`).join('');
+  };
+  const refreshKindVisibility = ()=>{
+    const kind = document.getElementById('mOptStratKind').value;
+    document.getElementById('mOptStratSpreadStrikes').hidden = (kind==='straddle');
+  };
+  const refreshInfo = ()=>{
+    const co = companyById(document.getElementById('mOptStratCompany').value);
+    const kind = document.getElementById('mOptStratKind').value;
+    const direction = document.getElementById('mOptStratDirection').value;
+    const strikeLow = parseFloat(document.getElementById('mOptStratStrikeLow').value)||0;
+    const strikeHigh = parseFloat(document.getElementById('mOptStratStrikeHigh').value)||0;
+    const expiryRoll = parseInt(document.getElementById('mOptStratExpiry').value)||0;
+    const contracts = parseInt(document.getElementById('mOptStratContracts').value)||0;
+    if(!co || !expiryRoll || !contracts){ document.getElementById('mOptStratInfo').innerHTML = ''; return; }
+    const legs = optionStrategyLegs(co, kind, direction, strikeLow, strikeHigh);
+    const legLines = legs.map(l=>{
+      const premium = optionPremiumFor(co, l.type, l.strike, expiryRoll);
+      const notional = optionNotional(contracts, premium);
+      const typeLabel = l.type==='call' ? 'CALL' : 'PUT';
+      const sideLabel = l.side==='long' ? 'achetée' : 'écrite';
+      return `${l.side==='long'?'+':'-'}${typeLabel} ${fmtPrice(l.strike)} (${sideLabel}) — prime ${fmtPrice(premium)}/part × 100 × ${contracts} = ${fmt(notional)}`;
+    }).join('<br>');
+    const netFlow = legs.reduce((s,l)=> s + (l.side==='short' ? optionNotional(contracts, optionPremiumFor(co,l.type,l.strike,expiryRoll)) : -optionNotional(contracts, optionPremiumFor(co,l.type,l.strike,expiryRoll))), 0);
+    const netLabel = netFlow>=0 ? `Crédit net reçu à l'ouverture: ${fmt(netFlow)}` : `Débit net payé à l'ouverture: ${fmt(-netFlow)}`;
+    document.getElementById('mOptStratInfo').innerHTML = `${legLines}<br><b>${netLabel}</b><br><span style="opacity:0.75;">Réglée en CASH à l'échéance — jamais de livraison de parts.</span>`;
+  };
+  refreshChainSelectors();
+  refreshKindVisibility();
+  refreshInfo();
+  document.getElementById('mOptStratCompany').addEventListener('change', ()=>{ refreshChainSelectors(); refreshInfo(); });
+  document.getElementById('mOptStratKind').addEventListener('change', ()=>{ refreshKindVisibility(); refreshInfo(); });
+  document.getElementById('mOptStratDirection').addEventListener('change', refreshInfo);
+  document.getElementById('mOptStratStrikeLow').addEventListener('change', refreshInfo);
+  document.getElementById('mOptStratStrikeHigh').addEventListener('change', refreshInfo);
+  document.getElementById('mOptStratExpiry').addEventListener('change', refreshInfo);
+  document.getElementById('mOptStratContracts').addEventListener('input', refreshInfo);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const co = companyById(document.getElementById('mOptStratCompany').value);
+    const kind = document.getElementById('mOptStratKind').value;
+    const direction = document.getElementById('mOptStratDirection').value;
+    const strikeLow = parseFloat(document.getElementById('mOptStratStrikeLow').value)||0;
+    const strikeHigh = parseFloat(document.getElementById('mOptStratStrikeHigh').value)||0;
+    const expiryRoll = parseInt(document.getElementById('mOptStratExpiry').value)||0;
+    const contracts = parseInt(document.getElementById('mOptStratContracts').value)||0;
+    if(!co){ alert('Entreprise introuvable.'); return; }
+    const res = openOptionStrategy(co, me, kind, direction, strikeLow, strikeHigh, expiryRoll, contracts);
+    if(!res.ok){ alert(res.error); return; }
+    const label = OPTION_STRATEGY_LABELS[kind];
+    log(`${me.name} ${direction==='buy'?'achète':'vend'} un ${label} sur ${co.name} (échéance au lancer ${expiryRoll}, ${contracts} contrat(s) — levier 100X, règlement cash uniquement).`, res.entries);
+    await saveGame(); closeModal(); render();
+    showTransactionPopup(`Nouvelle stratégie d'options — ${co.name}`, res.entries);
+  });
+}
+/* Ferme (clôture anticipée) une stratégie d'options ENTIÈRE — bouton « Fermer la stratégie » de la table
+   « Mes stratégies d'options » (renderPortefeuilleTrading). Délègue à closeOptionStrategy (voir sa
+   définition — ferme chaque jambe encore ouverte via closeOptionPosition, MÊME mécanique qu'une clôture
+   anticipée d'option simple, agrégée en un seul popup). */
+async function closeOptionStrategyFromUi(strategyId){
+  const me = state.players.find(p=>p.id===myPlayerId);
+  if(!me) return;
+  const leg = (me.optionPositions||[]).find(p=>p.strategyId===strategyId);
+  const co = leg ? companyById(leg.companyId) : null;
+  const kindLabel = leg ? (OPTION_STRATEGY_LABELS[leg.strategyKind]||leg.strategyKind) : 'stratégie';
+  const res = closeOptionStrategy(me, strategyId);
+  if(!res.ok){ alert(res.error); return; }
+  const label = co ? co.name : '?';
+  log(`${me.name} clôture sa stratégie (${kindLabel}) sur ${label} (${res.qty.toFixed(4)} contrat(s) au total sur les 2 jambes, au prix courant).`, res.entries);
+  await saveGame(); render();
+  showTransactionPopup(`Clôture de stratégie — ${label}`, res.entries);
 }
 
 function modalInsureProperty(pid, term){

@@ -696,6 +696,14 @@ let seenDiceRollEventRoll = undefined;
 
 
 
+let seenCeoAnnouncementExecutionIds = new Set();
+
+
+
+
+
+
+
 let firebaseListenerHandle = null;
 let lastReceivedRaw = null;
 let syncRetryTimer = null;
@@ -1121,6 +1129,10 @@ function migrateState(s){
   
   
   if(!s.ceoShareSaleLog) s.ceoShareSaleLog = [];
+  
+  
+  
+  if(!s.ceoAnnouncementExecutions) s.ceoAnnouncementExecutions = [];
   
   
   
@@ -1750,6 +1762,18 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
     ceoShareSaleLog: [],
     
     
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    ceoAnnouncementExecutions: [],
+    
+    
     dividendAnnouncements: [],
     
     
@@ -1787,6 +1811,10 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
   
   
   seenDiceRollEventRoll = state.lastDiceRollEvent ? state.lastDiceRollEvent.roll : null;
+  
+  
+  
+  seenCeoAnnouncementExecutionIds = new Set((state.ceoAnnouncementExecutions||[]).map(e=>e.id));
   startPolling();
   render();
 }
@@ -1807,11 +1835,37 @@ async function loadGame(code){
   
   
   seenDiceRollEventRoll = state.lastDiceRollEvent ? state.lastDiceRollEvent.roll : null;
+  
+  
+  
+  seenCeoAnnouncementExecutionIds = new Set((state.ceoAnnouncementExecutions||[]).map(e=>e.id));
   startPolling();
   return true;
 }
 
-async function saveGame(){
+async function saveGame(opts){
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   
   
   
@@ -1838,9 +1892,11 @@ async function saveGame(){
       state = JSON.parse(remoteRaw);
       migrateState(state);
       lastSerialized = remoteRaw;
-      alert('Un autre appareil vient de sauvegarder la partie avant toi — ton action n’a pas été enregistrée pour éviter d’effacer la sienne. La partie a été mise à jour avec les dernières données; tu peux refaire ton action.');
-      render();
-      return false;
+      if(!(opts && opts.silent)){
+        alert('Un autre appareil vient de sauvegarder la partie avant toi — ton action n’a pas été enregistrée pour éviter d’effacer la sienne. La partie a été mise à jour avec les dernières données; tu peux refaire ton action.');
+        render();
+      }
+      return 'conflict';
     }
   }
   if(state.version===undefined) state.version = 0;
@@ -1855,13 +1911,35 @@ async function saveGame(){
   
   const ok = await storageSet('game:'+gameCode, raw, true);
   toggleSaveFailedWarning(ok===null);
-  if(ok===null) return false;
+  if(ok===null) return false; 
   lastSerialized = raw;
   return true;
 }
 function toggleSaveFailedWarning(show){
   const warn = document.getElementById('saveFailedWarning');
   if(warn) warn.style.display = show ? 'block' : 'none';
+}
+
+async function attemptActionWithRetry(applyFn, {maxAttempts=5, onRetry}={}){
+  let res = null;
+  let needsReapply = true;
+  for(let attempt=1; attempt<=maxAttempts; attempt++){
+    if(needsReapply){
+      
+      
+      res = await applyFn();
+      if(!res || !res.ok) return res; 
+    }
+    const saved = await saveGame({silent:true});
+    if(saved===true) return res; 
+    if(onRetry) onRetry(attempt);
+    
+    
+    
+    
+    needsReapply = (saved==='conflict');
+  }
+  return {ok:false, error:`Un autre appareil sauvegarde en continu — nouvel essai automatique fait ${maxAttempts} fois sans succès. Réessaie dans un instant.`};
 }
 
 
@@ -2209,8 +2287,10 @@ function actionsMenuGroupTitle(label, first){
 }
 
 function reviewLastTurnButtonHtml(idPrefix){
+  
+  
   const disabled = !state.lastDiceRollEvent || !myCompany();
-  return `<button type="button" class="btn btn-ghost btn-sm" id="${idPrefix}ReviewLastTurnBtn" title="Revoir le résumé du dernier tour" style="margin-left:8px;" ${disabled?'disabled':''}>🔁 Revoir le dernier tour</button>`;
+  return disabled ? '' : `<button type="button" class="btn btn-ghost btn-sm" id="${idPrefix}ReviewLastTurnBtn" title="Revoir le résumé du dernier tour" style="margin-left:8px;">🔁 Revoir le dernier tour</button>`;
 }
 
 function reviewLastTurnSummary(){
@@ -3630,12 +3710,19 @@ function renderEntreprise(){
   
   
   
+  
+  
+  
+  
+  
+  
+  
   const blockReadyForNegativeCash = company.cash<0 && tradingWindowOpen();
   const readyActionHtml = company.inJail
     ? `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`
     : (company.ready
         ? `<button class="btn btn-ghost btn-sm" data-cancel-ready="${company.id}">🔄 Annuler Tour Terminé</button>`
-        : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}" ${blockReadyForNegativeCash?`disabled title="Encaisse négative (${fmt(company.cash)}) — l'entreprise doit avoir une encaisse ≥ 0$ pour terminer son tour de semestre."`:''}>✅ Tour Terminé</button>`);
+        : (blockReadyForNegativeCash ? '' : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}">✅ Tour Terminé</button>`));
 
   
   
@@ -3717,13 +3804,16 @@ function renderEntreprise(){
   
   
   
-  const nextGoAdvanceTooltip = atMaxGo
-    ? 'Maximum de subventions d\'avance simultanées atteint pour cette entreprise'
-    : `Prochaine subvention d'avance disponible: ${fmt(goAdvanceAmount(company.goAdvancesOwed+1, company))} (taux ${(riskAdjustedRate(state.settings.goAdvanceRate,company)*100).toFixed(1)}%)`;
+  const nextGoAdvanceTooltip = `Prochaine subvention d'avance disponible: ${fmt(goAdvanceAmount(company.goAdvancesOwed+1, company))} (taux ${(riskAdjustedRate(state.settings.goAdvanceRate,company)*100).toFixed(1)}%)`;
   
   
-  const goAdvanceButtonHtml = (f.goAdvance && !company.inJail)
-    ? `<button class="btn btn-pale-gold btn-sm" data-go-advance="${company.id}" title="${esc(nextGoAdvanceTooltip)}" ${atMaxGo?'disabled':''}>💸 Vendre la prochaine subvention d'avance</button>`
+  
+  
+  
+  
+  
+  const goAdvanceButtonHtml = (f.goAdvance && !company.inJail && !atMaxGo)
+    ? `<button class="btn btn-pale-gold btn-sm" data-go-advance="${company.id}" title="${esc(nextGoAdvanceTooltip)}">💸 Vendre la prochaine subvention d'avance</button>`
     : '';
   const loansAsBorrower = (state.loans||[]).filter(l=>l.borrowerId===company.id && l.repaidSoFar<l.totalDue-1e-9);
   const loansAsLender = (state.loans||[]).filter(l=>l.lenderId===company.id && l.repaidSoFar<l.totalDue-1e-9);
@@ -3763,15 +3853,16 @@ function renderEntreprise(){
   const loanCapExhausted = state.settings.loanMaxPrincipal>0 && loanCapLeft<=1e-9;
   const issueLoanTooltip = openLoanRequest
     ? `Demande d'emprunt ouverte (${fmt(openLoanRequest.principal)}) — ${openRequestOfferCount} offre(s) reçue(s) des joueurs. Cliquez pour consulter/accepter.`
-    : loanCapExhausted
-      ? `Capacité d'emprunt maximale déjà atteinte (${fmt(loanCapUsed)}/${fmt(state.settings.loanMaxPrincipal)} emprunté sur ${activeLoansForCo.length} prêt${activeLoansForCo.length===1?'':'s'} actif${activeLoansForCo.length===1?'':'s'}) — remboursez-en un pour pouvoir en signer un nouveau.`
-      : `Publier une demande d'emprunt (jusqu'à ${fmt(loanCapLeft)} encore disponible sur un maximum de ${fmt(state.settings.loanMaxPrincipal)}${loanCapUsed>0?`, ${fmt(loanCapUsed)} déjà emprunté sur ${activeLoansForCo.length} prêt${activeLoansForCo.length===1?'':'s'} actif${activeLoansForCo.length===1?'':'s'}`:''}) — les joueurs pourront proposer leurs conditions.`;
+    : `Publier une demande d'emprunt (jusqu'à ${fmt(loanCapLeft)} encore disponible sur un maximum de ${fmt(state.settings.loanMaxPrincipal)}${loanCapUsed>0?`, ${fmt(loanCapUsed)} déjà emprunté sur ${activeLoansForCo.length} prêt${activeLoansForCo.length===1?'':'s'} actif${activeLoansForCo.length===1?'':'s'}`:''}) — les joueurs pourront proposer leurs conditions.`;
   
   
   
   
-  const issueLoanButtonHtml = f.loan
-    ? `<button class="btn btn-pale-gold btn-sm" id="openIssueLoanBtn" title="${esc(issueLoanTooltip)}" ${(loanCapExhausted && !openLoanRequest)?'disabled':''}>💰 Prêt${openLoanRequest?` (${openRequestOfferCount} offre${openRequestOfferCount===1?'':'s'})`:(activeLoansForCo.length>0?` (${activeLoansForCo.length} actif${activeLoansForCo.length===1?'':'s'})`:'')}</button>`
+  
+  
+  
+  const issueLoanButtonHtml = (f.loan && !(loanCapExhausted && !openLoanRequest))
+    ? `<button class="btn btn-pale-gold btn-sm" id="openIssueLoanBtn" title="${esc(issueLoanTooltip)}">💰 Prêt${openLoanRequest?` (${openRequestOfferCount} offre${openRequestOfferCount===1?'':'s'})`:(activeLoansForCo.length>0?` (${activeLoansForCo.length} actif${activeLoansForCo.length===1?'':'s'})`:'')}</button>`
     : '';
   const proposeSwapButtonHtml = f.rentSwap
     ? `<button class="btn btn-ghost btn-sm" id="openProposeSwapBtn">🔄 Swap</button>`
@@ -3809,7 +3900,10 @@ function renderEntreprise(){
   
   
   
-  const sellHousesButtonHtml = `<button class="btn btn-ghost btn-sm" id="openSellHousesBtn" ${company.houseReserve<=0?`disabled title="Aucune maison en réserve non placée à vendre."`:''}>🏠 Vendre des maisons</button>`;
+  
+  
+  
+  const sellHousesButtonHtml = company.houseReserve<=0 ? '' : `<button class="btn btn-ghost btn-sm" id="openSellHousesBtn">🏠 Vendre des maisons</button>`;
 
   
   
@@ -3860,10 +3954,12 @@ function renderEntreprise(){
   
   
   
-  const ceoStatementDisabledReason = company.publicStatementUsed
-    ? `Déjà utilisée cette partie — une seule fois par entreprise.`
-    : (company.lastResortLoanUsed ? `Indisponible — ${esc(company.name)} a contracté un prêt de dernier recours.` : '');
-  const ceoStatementButtonHtml = `<button class="btn btn-ghost btn-sm" id="openPublicCeoStatementBtn" ${ceoStatementDisabledReason?`disabled title="${ceoStatementDisabledReason}"`:''}>📢 Sortie publique du CEO</button>`;
+  
+  
+  
+  
+  const ceoStatementDisabled = company.publicStatementUsed || company.lastResortLoanUsed;
+  const ceoStatementButtonHtml = ceoStatementDisabled ? '' : `<button class="btn btn-ghost btn-sm" id="openPublicCeoStatementBtn">📢 Sortie publique du CEO</button>`;
 
   
   
@@ -3872,8 +3968,13 @@ function renderEntreprise(){
   
   
   
-  const lastResortLoanButtonHtml = `<button class="btn btn-brick btn-sm" id="openLastResortLoanBtn" ${company.cash>=0?`disabled title="Réservé aux entreprises à encaisse négative (encaisse actuelle: ${fmt(company.cash)})."`:''}>🆘 Prêt de dernier recours</button>`;
+  
+  
+  const lastResortLoanButtonHtml = company.cash>=0 ? '' : `<button class="btn btn-brick btn-sm" id="openLastResortLoanBtn">🆘 Prêt de dernier recours</button>`;
 
+  
+  
+  
   
   
   
@@ -3883,9 +3984,12 @@ function renderEntreprise(){
   
   const tradingWindowClosedReason = !tradingWindowOpen() ? `Le marché est fermé — possible seulement aux semestres (prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s)).` : '';
   const shareIssuanceRemaining = shareIssuanceRemainingCap(company);
-  const issueSharesDisabledReason = tradingWindowClosedReason || (shareIssuanceRemaining<=1e-9 ? `Plafond d'émission atteint (10% de ${fmtShares(company.totalShares)} parts).` : '');
-  const issueSharesButtonHtml = `<button class="btn btn-pale-gold btn-sm" id="openIssueSharesBtn" ${issueSharesDisabledReason?`disabled title="${esc(issueSharesDisabledReason)}"`:''}>📤 Émission de nouvelles actions</button>`;
-  const buybackSharesButtonHtml = `<button class="btn btn-pale-gold btn-sm" id="openBuybackSharesBtn" ${tradingWindowClosedReason?`disabled title="${esc(tradingWindowClosedReason)}"`:''}>📥 Rachat d'actions</button>`;
+  
+  
+  
+  const issueSharesDisabled = !!tradingWindowClosedReason || shareIssuanceRemaining<=1e-9;
+  const issueSharesButtonHtml = issueSharesDisabled ? '' : `<button class="btn btn-pale-gold btn-sm" id="openIssueSharesBtn">📤 Émission de nouvelles actions</button>`;
+  const buybackSharesButtonHtml = tradingWindowClosedReason ? '' : `<button class="btn btn-pale-gold btn-sm" id="openBuybackSharesBtn">📥 Rachat d'actions</button>`;
 
   
   
@@ -3895,8 +3999,10 @@ function renderEntreprise(){
   
   
   const preferredCapRemainingForMe = preferredCapRemaining(company.id);
-  const issuePreferredDisabledReason = tradingWindowClosedReason || (preferredCapRemainingForMe<=1e-9 ? `Plafond cumulatif de parts privilégiées atteint (${fmt(state.settings.preferredMaxPrincipal||0)} sur toute la partie).` : '');
-  const issuePreferredButtonHtml = `<button class="btn btn-pale-gold btn-sm" id="openIssuePreferredBtn" ${issuePreferredDisabledReason?`disabled title="${esc(issuePreferredDisabledReason)}"`:''}>🎫 Émettre des parts privilégiées</button>`;
+  
+  
+  const issuePreferredDisabled = !!tradingWindowClosedReason || preferredCapRemainingForMe<=1e-9;
+  const issuePreferredButtonHtml = issuePreferredDisabled ? '' : `<button class="btn btn-pale-gold btn-sm" id="openIssuePreferredBtn">🎫 Émettre des parts privilégiées</button>`;
 
   
   
@@ -5314,7 +5420,7 @@ function visibleTabs(){
   
   
   
-  if(myPlayerId===state.creatorId) tabs.push('simulation');
+  
   return tabs;
 }
 
@@ -5359,13 +5465,46 @@ function renderGameEndedScreen(){
   
   
   
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  const flavorIndexRows = ranking.map(row=>{
+    const cells = NET_WORTH_INDEX_DEFS.map(def=>{
+      const companies = def.types===null ? state.companies : state.companies.filter(co=>def.types.includes(co.type));
+      const series = equalWeightIndexNetWorthSeries(row.p, companies);
+      if(!series.length) return '<td class="money" style="color:var(--muted);">—</td>';
+      const indexFinal = series[series.length-1].y;
+      const beat = row.nw >= indexFinal;
+      return `<td class="money" style="color:${beat?'#047857':'var(--brick)'};">${fmt(indexFinal)}</td>`;
+    }).join('');
+    return `
+    <tr>
+      <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${row.p.color};margin-right:6px;vertical-align:middle;"></span>${esc(row.p.name)}</td>
+      <td class="money">${fmt(row.nw)}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+  const flavorIndexHeaderCells = NET_WORTH_INDEX_DEFS.map(def=>`<th>${esc(def.label)}</th>`).join('');
+  
+  
+  
+  
+  
+  
+  
   const reasonMessage = reason==='bankOwnsAll'
     ? `La banque possède désormais <b>100%</b> des parts de l'entreprise <b>${esc(r.companyName)}</b> — plus aucun joueur ni son CEO n'y détient de position longue (lancer de dés #${r.roll}) — la partie se termine immédiatement pour tout le monde, comme convenu.`
     : reason==='maxDuration'
     ? `La partie a atteint sa <b>durée maximale</b> (lancer de dés #${r.roll}) — la partie se termine immédiatement pour tout le monde, comme convenu.`
     : `L'entreprise <b>${esc(r.companyName)}</b> a vu le cours de son action tomber à 0 en bourse (lancer de dés #${r.roll}) — la partie se termine immédiatement pour tout le monde, comme convenu.`;
   app.innerHTML = `
-  <div class="card pad" style="max-width:640px;margin:60px auto;text-align:center;">
+  <div class="card pad" style="max-width:820px;margin:60px auto;text-align:center;">
     <div class="section-title" style="justify-content:center;">🏁 Partie terminée</div>
     <p>${reasonMessage}</p>
     <p class="small">Aucun nouveau lancer de dés n'est plus possible. Toutes les positions boursières ci-dessous sont valorisées à leur juste valeur marchande (JVM) au moment où la partie s'est arrêtée.</p>
@@ -5373,6 +5512,9 @@ function renderGameEndedScreen(){
     <table style="text-align:left;"><tr><th></th><th>Joueur</th><th>Actifs finaux (JVM)</th></tr>${rankingRows}</table>
     <div class="section-title" style="justify-content:center;margin-top:20px;">📊 Classement final — équité des entreprises</div>
     <table style="text-align:left;"><tr><th></th><th>Entreprise</th><th>Valeur comptable (équité)</th><th>Prix de l'action</th><th>Ratio action/équité</th></tr>${companyRankingRows}</table>
+    <div class="section-title" style="justify-content:center;margin-top:20px;">📈 Comme flavor — auriez-vous battu l'investissement passif ?</div>
+    <p class="small">Pour chaque joueur : la valeur qu'auraient eu ses actifs s'il avait plutôt investi à part égale dans TOUTES les entreprises de ce secteur (ou du marché entier), sans jamais rien faire d'autre — le même calcul que le comparateur de Mon Portefeuille. En vert si le joueur a réellement fait mieux en jouant activement, en rouge sinon. « — » si aucune entreprise de ce secteur n'a jamais existé dans cette partie.</p>
+    <table style="text-align:left;"><tr><th>Joueur</th><th>Actifs réels (JVM)</th>${flavorIndexHeaderCells}</tr>${flavorIndexRows}</table>
     <div style="margin-top:16px;"><span style="cursor:pointer;text-decoration:underline;" id="gameEndedReview">consulter quand même les onglets (lecture seule dans l'esprit, aucun lancer possible)</span></div>
   </div>`;
   document.getElementById('gameEndedReview').addEventListener('click', ()=>{ __gameEndedReviewMode = true; render(); });
@@ -5473,6 +5615,9 @@ function render(){
   
   
   maybeShowDiceRollTurnPopup();
+  
+  
+  maybeShowCeoAnnouncementExecutionPopup();
   const tabs = visibleTabs();
   
   
@@ -5544,7 +5689,8 @@ function render(){
 
 function tabLabel(t){
   
-  return {portefeuille:'Portefeuille', entreprise:'Mon Entreprise', admin:'Administration', simulation:'Simulation', etf:'ETF', lexique:'Lexique'}[t];
+  
+  return {portefeuille:'Portefeuille', entreprise:'Mon Entreprise', admin:'Administration', etf:'ETF', lexique:'Lexique'}[t];
 }
 
 function renderTab(t){
@@ -5553,7 +5699,7 @@ function renderTab(t){
   if(t==='portefeuille') return renderPortefeuille();
   if(t==='entreprise') return renderEntreprise();
   if(t==='admin') return renderAdmin();
-  if(t==='simulation') return renderSimulation(); 
+  
   if(t==='etf') return renderEtf();
   if(t==='lexique') return renderLexique();
 }
@@ -6152,7 +6298,7 @@ function subInsurableItems(companyId){
     .map(p=>({type:'prop', id:p.id, label:p.name, q:subInsuranceQuote(p, companyId)}))
     .filter(x=>x.q.prob>0 && x.q.floor>0);
 }
-async function purchaseInsuranceBundle(selections, claimMode, term){
+async function purchaseInsuranceBundle(selections, claimMode, term, opts){
   
   
   
@@ -6161,18 +6307,24 @@ async function purchaseInsuranceBundle(selections, claimMode, term){
   
   
   
-  if(selections.length===0) return;
+  
+  
+  
+  
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  if(selections.length===0) return fail(null);
   const myCo = myCompany();
-  if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
+  if(!myCo) return fail('Vous devez d’abord fonder une entreprise.');
   
   
   
   
   if(term && term!=='sub' && !insuranceTermAvailable(term)){
-    alert(`Le terme « ${term==='year'?'Année financière':'Semestre'} » n'est plus disponible (la partie a avancé) — seule l'assurance sous-standard peut encore être signée pour l'instant.`);
-    return;
+    return fail(`Le terme « ${term==='year'?'Année financière':'Semestre'} » n'est plus disponible (la partie a avancé) — seule l'assurance sous-standard peut encore être signée pour l'instant.`);
   }
-  
   
   
   
@@ -6191,10 +6343,11 @@ async function purchaseInsuranceBundle(selections, claimMode, term){
     for(const s of selections){
       const p = s.item.type==='prop' ? state.properties.find(x=>x.id===s.item.id) : null;
       if(p && p.subInsurance){ alreadyCovered.push(p.name); continue; }
-      await buySubInsurance(s.item.id, myCo.id, s.insurerId, s.premium);
+      await buySubInsurance(s.item.id, myCo.id, s.insurerId, s.premium, {silent:true});
     }
-    if(alreadyCovered.length) alert(`Déjà assuré(e) entretemps par une autre entreprise, ignoré(e): ${alreadyCovered.join(', ')}.`);
-    return;
+    if(alreadyCovered.length && !opts.silent) alert(`Déjà assuré(e) entretemps par une autre entreprise, ignoré(e): ${alreadyCovered.join(', ')}.`);
+    if(!opts.silent){ await saveGame(); render(); }
+    return {ok:true, alreadyCovered};
   }
   const validSelections = selections.filter(s=>{
     if(s.item.type!=='prop') return true;
@@ -6202,7 +6355,7 @@ async function purchaseInsuranceBundle(selections, claimMode, term){
     if(p && p.insurance){ alreadyCovered.push(p.name); return false; }
     return true;
   });
-  if(alreadyCovered.length) alert(`Déjà assuré(e) entretemps par une autre entreprise, ignoré(e): ${alreadyCovered.join(', ')}.`);
+  if(alreadyCovered.length && !opts.silent) alert(`Déjà assuré(e) entretemps par une autre entreprise, ignoré(e): ${alreadyCovered.join(', ')}.`);
   const groups = {};
   validSelections.forEach(s=>{ (groups[s.insurerId] = groups[s.insurerId]||[]).push(s); });
   for(const insurerId in groups){
@@ -6231,7 +6384,8 @@ async function purchaseInsuranceBundle(selections, claimMode, term){
     else { const ins=companyById(insurerId); if(ins){ ins.cash += totalPremium; logFin(ins.id, 'insurance_premium_revenue', totalPremium); } }
     log(`${myCo.name} signe un contrat groupé (${group.length} case${group.length>1?'s':''}: ${group.map(s=>s.item.label).join(', ')}) auprès de ${insurerLabel(insurerId)} pour une prime totale de ${totalPremium.toFixed(2)} — ${claimMode==='single'?'un seul sinistre par terrain':'sinistres récurrents'}.`, entries);
   }
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true, alreadyCovered};
 }
 
 
@@ -7324,6 +7478,14 @@ function executeCeoAnnouncement(ann){
     state.ceoShareSaleLog.push({companyId: company.id, year: currentGameYear(), qty: price>0 ? ann.amount/price : 0, roll: state.gameClock.rollCount});
   }
   log(`${company.name} — exécution de l'annonce CEO de ${player.name} faite il y a 1 an (${dirLabel} de ${fmt(ann.amount)}, au prix courant de ${fmtPrice(company.stockPrice)}/part) : ce n'est PAS une transaction spontanée, le CEO s'y était engagé publiquement (voir Portefeuille, section « Annonces CEO en attente »).`, res.entries);
+  
+  
+  
+  
+  
+  
+  state.ceoAnnouncementExecutions.push({id: ann.id, ceoId: player.id, companyId: company.id, direction: ann.direction, amount: ann.amount, qty: res.qty, price: company.stockPrice, roll: state.gameClock.rollCount, entries: res.entries});
+  if(state.ceoAnnouncementExecutions.length>50) state.ceoAnnouncementExecutions.splice(0, state.ceoAnnouncementExecutions.length-50);
 }
 
 
@@ -8595,7 +8757,11 @@ function preferredCapRemaining(companyId){
   return Math.max(0, cap-used);
 }
 
-async function issuePreferredShares(companyId, qty, dividendRate, callPrice){
+async function issuePreferredShares(companyId, qty, dividendRate, callPrice, opts){
+  
+  
+  
+  opts = opts || {};
   const co = companyById(companyId);
   if(!co) return {ok:false, error:'Entreprise introuvable.'};
   if(companyPendingIpoShares(co)>0) return {ok:false, error:`${co.name} n'a pas encore terminé son introduction en bourse (IPO) — pas encore éligible.`};
@@ -8624,7 +8790,7 @@ async function issuePreferredShares(companyId, qty, dividendRate, callPrice){
   co.preferredIssuances = co.preferredIssuances||[];
   co.preferredIssuances.push(issuance);
   log(`${co.name} émet une offre de ${fmtShares(qty)} part(s) privilégiée(s) à ${fmtPrice(price)}/part (dividende ${(dividendRate*100).toFixed(2)}%/an, rachat à ${fmtPrice(callPrice)}/part) — un avis est envoyé à tous les joueurs, qui ont jusqu'au prochain lancer de dés pour accepter ou refuser.`);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
   return {ok:true, issuance};
 }
 
@@ -8676,7 +8842,10 @@ function resolvePendingPreferredIssuances(){
   });
 }
 
-async function callPreferredShares(companyId, issuanceId, qty){
+async function callPreferredShares(companyId, issuanceId, qty, opts){
+  
+  
+  opts = opts || {};
   const co = companyById(companyId);
   if(!co) return {ok:false, error:'Entreprise introuvable.'};
   const issuance = (co.preferredIssuances||[]).find(i=>i.id===issuanceId);
@@ -8705,7 +8874,7 @@ async function callPreferredShares(companyId, issuanceId, qty){
   issuance.qtyOutstanding = Math.max(0, issuance.qtyOutstanding-qty);
   const cubesInjected = injectStockCube(co, 'green', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
   log(`${co.name} rachète (call) ${fmtShares(qty)} part(s) privilégiée(s) à ${fmtPrice(issuance.callPrice)}/part pour ${fmt(amount)}.`, entries);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
   return {ok:true, entries, cubesInjected};
 }
 
@@ -8803,7 +8972,10 @@ function resolvePreferredDividendsYearEnd(year){
   });
 }
 
-async function listPreferredSharesForSale(companyId, issuanceId, seller, qty){
+async function listPreferredSharesForSale(companyId, issuanceId, seller, qty, opts){
+  
+  
+  opts = opts || {};
   const co = companyById(companyId);
   const issuance = co && (co.preferredIssuances||[]).find(i=>i.id===issuanceId);
   if(!issuance) return {ok:false, error:'Émission introuvable.'};
@@ -8811,7 +8983,7 @@ async function listPreferredSharesForSale(companyId, issuanceId, seller, qty){
   if(!(qty>0) || !holder || qty>holder.qty+1e-9) return {ok:false, error:'Vous ne détenez pas assez de parts sur cette émission.'};
   state.preferredMarketListings.push({id:uid(), companyId, issuanceId, sellerId:seller.id, qty, createdAt:nowLabel()});
   log(`${seller.name} met en vente ${fmtShares(qty)} part(s) privilégiée(s) de ${co.name} sur le marché secondaire.`);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
   return {ok:true};
 }
 async function cancelPreferredListing(listingId, playerId){
@@ -8822,12 +8994,21 @@ async function cancelPreferredListing(listingId, playerId){
   await saveGame(); render();
   return {ok:true};
 }
-async function buyPreferredSharesFromListing(listingId, buyer, qty){
+async function buyPreferredSharesFromListing(listingId, buyerId, qty, opts){
+  
+  
+  
+  
+  
+  
+  opts = opts || {};
   const listing = state.preferredMarketListings.find(l=>l.id===listingId);
   if(!listing) return {ok:false, error:'Cette annonce n’est plus disponible.'};
   const co = companyById(listing.companyId);
   const issuance = co && (co.preferredIssuances||[]).find(i=>i.id===listing.issuanceId);
   if(!issuance) return {ok:false, error:'Émission introuvable.'};
+  const buyer = state.players.find(p=>p.id===buyerId);
+  if(!buyer) return {ok:false, error:'Joueur introuvable.'};
   if(buyer.id===listing.sellerId) return {ok:false, error:'Vous ne pouvez pas acheter votre propre annonce.'};
   if(!(qty>0) || qty>listing.qty+1e-9) return {ok:false, error:'Quantité invalide.'};
   const price = Math.min(co.stockPrice||0, issuance.callPrice);
@@ -8844,7 +9025,7 @@ async function buyPreferredSharesFromListing(listingId, buyer, qty){
   if(listing.qty<=1e-9) state.preferredMarketListings = state.preferredMarketListings.filter(l=>l.id!==listingId);
   const entries = [{label:`${buyer.name} (achat de parts privilégiées — ${co.name})`, amount:-amount}, {label:`${seller?seller.name:'?'} (vente de parts privilégiées — ${co.name})`, amount}];
   log(`${buyer.name} achète ${fmtShares(qty)} part(s) privilégiée(s) de ${co.name} à ${seller?seller.name:'?'} pour ${fmt(amount)} (${fmtPrice(price)}/part).`, entries);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
   return {ok:true, entries};
 }
 
@@ -9275,154 +9456,6 @@ function pressPublicCeoStatement(company){
   company.whiteBonusRemaining = (company.whiteBonusRemaining||0) + STOCK_CEO_STATEMENT_WHITE_BONUS;
   company.publicStatementUsed = true;
   return {success:true, redBefore, redAfter:r.red+tr.red, whiteBonusAdded:STOCK_CEO_STATEMENT_WHITE_BONUS};
-}
-
-
-
-let simParams = null; 
-let simResults = null; 
-
-
-
-function simDefaultParams(){
-  return {
-    years: 15,
-    trialsPerType: 3,
-    startPrice: 100,
-    drawsMin: STOCK_DRAWS_MIN, drawsMax: STOCK_DRAWS_MAX,
-    floorPct: STOCK_FOUNDING_FLOOR_PCT*100,
-  };
-}
-
-
-function simulateOneCompany(type, p){
-  const reserve = STOCK_TYPE_RESERVE[type] || STOCK_TYPE_RESERVE.garp;
-  const totalReserve = reserve.green + reserve.red + reserve.white;
-  const greenP = totalReserve>0 ? reserve.green/totalReserve : 1/3;
-  const redP = totalReserve>0 ? reserve.red/totalReserve : 1/3;
-  const moveDist = STOCK_TYPE_MOVE_DIST[type] || STOCK_TYPE_MOVE_DIST.garp;
-  const founding = p.startPrice>0 ? p.startPrice : 100;
-  let price = founding;
-  const floorPrice = founding * (p.floorPct/100);
-  const totalRolls = Math.max(0, Math.round(p.years*6));
-  const points = [{x:0, y:price}];
-  let minPrice = price, maxPrice = price, collapsed = false;
-  for(let roll=1; roll<=totalRolls && !collapsed; roll++){
-    const n = p.drawsMin + Math.floor(Math.random()*(Math.max(p.drawsMin,p.drawsMax)-p.drawsMin+1));
-    for(let i=0;i<n;i++){
-      const rnd = Math.random();
-      const color = rnd<greenP ? 'green' : (rnd<greenP+redP ? 'red' : 'white');
-      if(color==='white') continue;
-      const pct = pickWeighted(moveDist);
-      price *= (color==='green') ? (1+pct) : (1-pct);
-      if(price<0) price = 0;
-    }
-    if(price<floorPrice){ price = 0; collapsed = true; }
-    points.push({x:roll, y:price});
-    if(price<minPrice) minPrice = price;
-    if(price>maxPrice) maxPrice = price;
-  }
-  return {points, finalPrice:price, minPrice, maxPrice, collapsed};
-}
-
-
-function runStockSimulation(p){
-  const byType = {};
-  COMPANY_TYPES.forEach(t=>{
-    const trials = [];
-    for(let i=0;i<Math.max(1,Math.round(p.trialsPerType));i++){
-      trials.push(simulateOneCompany(t.key, p));
-    }
-    const finals = trials.map(tr=>tr.finalPrice);
-    byType[t.key] = {
-      trials,
-      avgFinal: finals.reduce((s,v)=>s+v,0)/finals.length,
-      minFinal: Math.min(...finals),
-      maxFinal: Math.max(...finals),
-      collapsedCount: trials.filter(tr=>tr.collapsed).length,
-    };
-  });
-  return { byType, params: Object.assign({}, p) };
-}
-
-
-function simFmtIndex(n){
-  n = Number(n)||0;
-  return n.toFixed(2);
-}
-
-function renderSimulation(){
-  if(simParams===null) simParams = simDefaultParams();
-  const p = simParams;
-
-  
-  
-  
-  
-  
-  const typeInfoRows = COMPANY_TYPES.map(t=>{
-    const res = STOCK_TYPE_RESERVE[t.key] || STOCK_TYPE_RESERVE.garp;
-    return `<tr><td>${esc(t.label)}</td><td>${res.green}V / ${res.red}R / ${res.white}B</td><td>${(expectedMovePct(t.key)*100).toFixed(2)}%</td></tr>`;
-  }).join('');
-
-  const resultsHtml = (()=>{
-    if(!simResults) return '<div class="empty">Aucune simulation lancée pour le moment — ajustez les paramètres ci-dessus si désiré, puis cliquez sur « ▶️ Lancer la simulation ».</div>';
-    
-    
-    const TYPE_COLORS = COMPANY_TYPE_COLORS;
-    const series = [];
-    COMPANY_TYPES.forEach(t=>{
-      simResults.byType[t.key].trials.forEach((trial, i)=>{
-        series.push({ label: `${t.label} #${i+1}`, color: TYPE_COLORS[t.key]||'#999', points: trial.points });
-      });
-    });
-    const chartHtml = `${svgLineChart(series, simFmtIndex)}${tvChartLegend(series)}`;
-    const statsRows = COMPANY_TYPES.map(t=>{
-      const st = simResults.byType[t.key];
-      const startP = simResults.params.startPrice;
-      const pct = startP>0 ? ((st.avgFinal-startP)/startP*100) : 0;
-      return `<tr>
-        <td>${esc(t.label)}</td>
-        <td class="money">${simFmtIndex(st.avgFinal)}</td>
-        <td class="money" style="color:${pct>=0?'#047857':'var(--brick)'};">${pct>=0?'+':''}${pct.toFixed(1)}%</td>
-        <td class="money">${simFmtIndex(st.minFinal)}</td>
-        <td class="money">${simFmtIndex(st.maxFinal)}</td>
-        <td>${st.collapsedCount>0 ? `⚠️ ${st.collapsedCount}/${st.trials.length}` : '—'}</td>
-      </tr>`;
-    }).join('');
-    return `
-    <div class="small" style="margin-bottom:8px;">Simulation de ${simResults.params.years} année(s) (${simResults.params.years*6} lancers), ${simResults.params.trialsPerType} essai(s) indépendant(s) par type, prix de départ ${simFmtIndex(simResults.params.startPrice)} pour tous.</div>
-    ${chartHtml}
-    <table style="margin-top:10px;">
-      <tr><th>Type</th><th>Prix final moyen</th><th>Variation moy.</th><th>Min observé</th><th>Max observé</th><th>Effondrements</th></tr>
-      ${statsRows}
-    </table>`;
-  })();
-
-  return `
-  <div class="section-title">Simulation — équilibrage du moteur boursier</div>
-  <div class="small" style="margin-bottom:10px;">Outil de test réservé au créateur de la partie. Simule des compagnies FICTIVES (jamais la partie en cours) sur plusieurs années de lancers de dés, pour comparer visuellement la trajectoire de prix des différents types de compagnie et ajuster les paramètres du moteur au besoin. Aucun changement ici n'affecte la partie réelle ni les autres appareils.</div>
-  <div class="section-title" style="margin-top:14px;font-size:0.95em;">Paramètres de simulation</div>
-  <table>
-    <tr><td>Années à simuler</td><td><input type="number" step="1" min="1" max="200" id="simYears" value="${p.years}" style="width:80px;"></td></tr>
-    <tr><td>Essais indépendants par type</td><td><input type="number" step="1" min="1" max="20" id="simTrials" value="${p.trialsPerType}" style="width:80px;"></td></tr>
-    <tr><td>Prix de départ (indice, identique pour tous)</td><td><input type="number" step="1" min="1" id="simStartPrice" value="${p.startPrice}" style="width:80px;"></td></tr>
-  </table>
-  <div class="section-title" style="margin-top:14px;font-size:0.95em;">Réserve de départ et mouvement moyen par type (moteur réel)</div>
-  <div class="small" style="margin-bottom:6px;">Lecture seule — reflète directement STOCK_TYPE_RESERVE/STOCK_TYPE_MOVE_DIST du moteur réel, plus éditables individuellement depuis cet outil simplifié (la personnalité de chaque type n'est plus un simple facteur unique — voir claude/RESUME_CALIBRATION_4TYPES.md).</div>
-  <table><tr><th>Type</th><th>Réserve (V/R/B)</th><th>Mouvement moyen pondéré</th></tr>${typeInfoRows}</table>
-  <div class="section-title" style="margin-top:14px;font-size:0.95em;">Paramètres avancés du moteur</div>
-  <table>
-    <tr><td>Tirages par lancer — minimum</td><td><input type="number" step="1" min="1" id="simDrawsMin" value="${p.drawsMin}" style="width:80px;"></td></tr>
-    <tr><td>Tirages par lancer — maximum</td><td><input type="number" step="1" min="1" id="simDrawsMax" value="${p.drawsMax}" style="width:80px;"></td></tr>
-    <tr><td>Seuil de fin de partie (% du prix de départ)</td><td><input type="number" step="0.1" min="0" max="100" id="simFloorPct" value="${p.floorPct}" style="width:80px;"></td></tr>
-  </table>
-  <div class="row" style="gap:10px;margin:14px 0;">
-    <button class="btn btn-gold" id="simRunBtn">▶️ Lancer la simulation</button>
-    <button class="btn btn-ghost" id="simResetBtn">↺ Réinitialiser les valeurs par défaut</button>
-  </div>
-  <div class="section-title" style="margin-top:14px;font-size:0.95em;">Résultats</div>
-  ${resultsHtml}`;
 }
 
 
@@ -10280,6 +10313,22 @@ function maybeShowDiceRollTurnPopup(){
   if(!co) return; 
   showDiceRollTurnPopup(co, roll);
 }
+
+function maybeShowCeoAnnouncementExecutionPopup(){
+  if(!state || !state.ceoAnnouncementExecutions || isSpectator || !myPlayerId) return;
+  const exec = state.ceoAnnouncementExecutions.find(e=>e.ceoId===myPlayerId && !seenCeoAnnouncementExecutionIds.has(e.id));
+  if(!exec) return;
+  
+  
+  
+  
+  const modalHost = document.getElementById('modalHost');
+  if(modalHost && modalHost.innerHTML && modalHost.innerHTML.trim()!=='') return;
+  seenCeoAnnouncementExecutionIds.add(exec.id);
+  const co = companyById(exec.companyId);
+  const dirLabel = exec.direction==='buy' ? 'Achat' : 'Vente';
+  showTransactionPopup(`Annonce CEO exécutée — ${dirLabel} — ${co ? co.name : ''}`, exec.entries);
+}
 function showDiceRollTurnPopup(co, roll){
   const ledgerThisRoll = state.finLedger.filter(e=>e.companyId===co.id && e.roll===roll);
   const gained = ledgerThisRoll.filter(e=>e.category==='rent_revenue').reduce((s,e)=>s+e.amount, 0);
@@ -10605,7 +10654,7 @@ function transferAssetShare(asset, fromCompanyId, toCompanyId, pct){
   props.forEach(p=>{ p.owners = newOwners.map(o=>({...o})); });
   return true;
 }
-async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBType, assetBId, companyBId, pctB){
+async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBType, assetBId, companyBId, pctB, opts){
   
   
   
@@ -10614,22 +10663,28 @@ async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBTy
   
   
   
+  
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const assetA = {type:assetAType, id:assetAId};
   const assetB = {type:assetBType, id:assetBId};
   const shareA = assetOwnedShare(assetA, companyAId);
   const shareB = assetOwnedShare(assetB, companyBId);
-  if(pctA<=0 || pctA>shareA){ alert('Pourcentage invalide pour le premier actif.'); return; }
-  if(pctB<=0 || pctB>shareB){ alert('Pourcentage invalide pour le second actif.'); return; }
+  if(pctA<=0 || pctA>shareA) return fail('Pourcentage invalide pour le premier actif.');
+  if(pctB<=0 || pctB>shareB) return fail('Pourcentage invalide pour le second actif.');
   const companyA = companyById(companyAId);
   const companyB = companyById(companyBId);
   const labelA = tradableAssets().find(a=>a.type===assetAType && a.id===assetAId)?.label || '?';
   const labelB = tradableAssets().find(a=>a.type===assetBType && a.id===assetBId)?.label || '?';
   
   
-  if(!transferAssetShare(assetA, companyAId, companyBId, pctA)){ alert('Échange impossible sur '+labelA+'.'); return; }
-  if(!transferAssetShare(assetB, companyBId, companyAId, pctB)){ alert('Échange impossible sur '+labelB+'.'); return; }
+  if(!transferAssetShare(assetA, companyAId, companyBId, pctA)) return fail('Échange impossible sur '+labelA+'.');
+  if(!transferAssetShare(assetB, companyBId, companyAId, pctB)) return fail('Échange impossible sur '+labelB+'.');
   log(`${companyA.name} échange ${pctA}% de ${labelA} contre ${pctB}% de ${labelB} détenu par ${companyB.name}.`);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 
 
@@ -10707,34 +10762,37 @@ async function mergeGroup(group){
   log(`Le lot ${GROUPS[group].label} est regroupé (${newOwners.map(o=>`${companyById(o.companyId)?.name||'?'} ${o.share}%`).join(', ')}).`);
   await saveGame(); render();
 }
-async function sellMergedShare(mergeId, sellerId, buyerId, pct, price){
+async function sellMergedShare(mergeId, sellerId, buyerId, pct, price, opts){
   
   
   
   
+  
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const props = state.properties.filter(p=>p.groupMergeId===mergeId);
-  if(props.length===0) return;
+  if(props.length===0) return fail(null);
   const owners = props[0].owners;
   const sellerOwn = owners.find(o=>o.companyId===sellerId);
-  if(!sellerOwn || pct<=0 || pct>sellerOwn.share){ alert('Pourcentage invalide.'); return; }
+  if(!sellerOwn || pct<=0 || pct>sellerOwn.share) return fail('Pourcentage invalide.');
   
   
-  if(!(price>0)){ alert('Le prix convenu doit être positif.'); return; }
+  if(!(price>0)) return fail('Le prix convenu doit être positif.');
   
   
   
   const mortgageHost = lotMortgageHost(mergeId);
   if(mortgageHost && (mortgageHost.mortgages||[]).some(m=>m.companyId===sellerId)){
     const sellerCoName = companyById(sellerId)?.name || 'Cette entreprise';
-    alert(`${sellerCoName} a hypothéqué sa part de ce lot — remboursez l'hypothèque (repayMortgageLot) avant de pouvoir la vendre.`);
-    return;
+    return fail(`${sellerCoName} a hypothéqué sa part de ce lot — remboursez l'hypothèque (repayMortgageLot) avant de pouvoir la vendre.`);
   }
   if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
     
     
     
-    alert(`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie), sauf si vous vendez la totalité de votre part (${sellerOwn.share}%). Vendre à un autre joueur n'a pas de minimum.`);
-    return;
+    return fail(`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie), sauf si vous vendez la totalité de votre part (${sellerOwn.share}%). Vendre à un autre joueur n'a pas de minimum.`);
   }
   let newOwners = owners.map(o=>({...o}));
   const sOwn = newOwners.find(o=>o.companyId===sellerId);
@@ -10765,7 +10823,8 @@ async function sellMergedShare(mergeId, sellerId, buyerId, pct, price){
       [{label:`${buyer.name} (achat)`, amount:-price}, {label:`${seller.name} (vente)`, amount:price}]);
   }
   props.forEach(p=>{ p.owners = newOwners.map(o=>({...o})); });
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 
 
@@ -10783,13 +10842,23 @@ function purchasableBankShareLot(mergeId){
   const owned = props[0].owners.reduce((s,o)=>s+o.share,0);
   return Math.max(0, maxPlayerOwnPct() - owned);
 }
-async function buyMergedShareFromBank(mergeId, buyerId, pct, price){
+
+
+
+
+async function buyMergedShareFromBank(mergeId, buyerId, pct, price, opts){
+  opts = opts || {};
+  
+  
+  
+  
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const props = state.properties.filter(p=>p.groupMergeId===mergeId);
-  if(props.length===0) return;
+  if(props.length===0) return fail(null);
   const buyer = companyById(buyerId);
-  if(!buyer){ alert('Entreprise introuvable.'); return; }
-  if(!(pct>0) || pct>purchasableBankShareLot(mergeId)+1e-9){ alert('Pourcentage invalide — dépasse la part actuellement rachetable à la banque pour ce lot.'); return; }
-  if(!(price>0)){ alert('Le prix convenu doit être positif.'); return; }
+  if(!buyer) return fail('Entreprise introuvable.');
+  if(!(pct>0) || pct>purchasableBankShareLot(mergeId)+1e-9) return fail('Pourcentage invalide — dépasse la part actuellement rachetable à la banque pour ce lot.');
+  if(!(price>0)) return fail('Le prix convenu doit être positif.');
   buyer.cash -= price;
   logFin(buyer.id, 'land_purchase', -price);
   addRealEstateCapex(realEstateKeyFor(props[0]), buyer.id, price);
@@ -10804,7 +10873,8 @@ async function buyMergedShareFromBank(mergeId, buyerId, pct, price){
   props.forEach(p=>{ p.owners = newOwners.map(o=>({...o})); });
   log(`${buyer.name} rachète ${pct}% du lot ${GROUPS[props[0].group].label} à la banque pour ${price.toFixed(2)}.`,
     [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:'Banque', amount:price}]);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 function modalBuyMergedShare(mergeId){
   const props = state.properties.filter(p=>p.groupMergeId===mergeId);
@@ -10825,6 +10895,7 @@ function modalBuyMergedShare(mergeId){
     <input type="number" min="1" max="${cap}" step="1" id="mPct" value="${cap}">
     <label>Prix convenu (pour ce pourcentage, en ${esc(state.unit)})</label>
     <input type="number" step="0.01" min="0.01" id="mPrice" value="${suggestedPrice.toFixed(2)}">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer l'achat</button>
@@ -10834,9 +10905,26 @@ function modalBuyMergedShare(mergeId){
     const buyerId = document.getElementById('mBuyer').value;
     const pct = parseInt(document.getElementById('mPct').value)||0;
     const price = parseFloat(document.getElementById('mPrice').value)||0;
-    closeModal();
-    await buyMergedShareFromBank(mergeId, buyerId, pct, price);
+    
+    
+    
+    
+    await runModalActionWithRetry(()=>buyMergedShareFromBank(mergeId, buyerId, pct, price, {silent:true}));
   });
+}
+
+async function runModalActionWithRetry(applyFn, {maxAttempts}={}){
+  const okBtn = document.getElementById('mOk');
+  const statusEl = document.getElementById('mRetryStatus');
+  if(okBtn) okBtn.disabled = true;
+  const res = await attemptActionWithRetry(applyFn, {
+    maxAttempts,
+    onRetry: (attempt)=>{ if(statusEl) statusEl.textContent = `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; },
+  });
+  if(okBtn) okBtn.disabled = false;
+  if(!res || !res.ok){ if(res && res.error) alert(res.error); return res; }
+  closeModal(); render();
+  return res;
 }
 
 
@@ -10848,14 +10936,19 @@ async function setHousesAvailable(n){
   await saveGame(); render();
 }
 
-async function submitHouseBid(companyId, qty, price){
-  if(!yearEndWindowOpen()){ alert(`L'enchère de maisons n'est possible qu'à la fin d'une année financière (dans ${rollsUntilYearEnd()} lancer(s)).`); return; }
-  if(qty<=0 || price<0) return;
+async function submitHouseBid(companyId, qty, price, opts){
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  if(!yearEndWindowOpen()) return fail(`L'enchère de maisons n'est possible qu'à la fin d'une année financière (dans ${rollsUntilYearEnd()} lancer(s)).`);
+  if(qty<=0 || price<0) return fail(null);
   state.houseAuction.bids = state.houseAuction.bids.filter(b=>b.companyId!==companyId);
   state.houseAuction.bids.push({id:uid(), companyId, qty, price});
   const co = companyById(companyId);
   log(`${co.name} offre ${price.toFixed(2)}/maison pour ${qty} maison(s).`);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 async function removeHouseBid(companyId){
   state.houseAuction.bids = state.houseAuction.bids.filter(b=>b.companyId!==companyId);
@@ -10913,14 +11006,18 @@ async function adjustHouseReserve(companyId, delta){
   await saveGame(); render();
 }
 
-async function sellHousesToCompany(sellerId, buyerId, qty, pricePerHouse){
-  if(sellerId===buyerId){ alert('Une entreprise ne peut pas se vendre des maisons à elle-même — choisissez une entreprise acheteuse différente.'); return; }
+async function sellHousesToCompany(sellerId, buyerId, qty, pricePerHouse, opts){
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  if(sellerId===buyerId) return fail('Une entreprise ne peut pas se vendre des maisons à elle-même — choisissez une entreprise acheteuse différente.');
   const seller = companyById(sellerId);
   const buyer = companyById(buyerId);
-  if(!seller || !buyer){ alert('Entreprise introuvable.'); return; }
-  if(!(Number.isInteger(qty) && qty>0)){ alert('Le nombre de maisons à vendre doit être un entier positif.'); return; }
-  if(seller.houseReserve<qty){ alert(`${seller.name} n'a que ${seller.houseReserve} maison(s) en réserve non placée — impossible d'en vendre ${qty}.`); return; }
-  if(!(pricePerHouse>=0)){ alert('Le prix par maison doit être positif ou nul.'); return; }
+  if(!seller || !buyer) return fail('Entreprise introuvable.');
+  if(!(Number.isInteger(qty) && qty>0)) return fail('Le nombre de maisons à vendre doit être un entier positif.');
+  if(seller.houseReserve<qty) return fail(`${seller.name} n'a que ${seller.houseReserve} maison(s) en réserve non placée — impossible d'en vendre ${qty}.`);
+  if(!(pricePerHouse>=0)) return fail('Le prix par maison doit être positif ou nul.');
   const totalPrice = qty*pricePerHouse;
   buyer.cash -= totalPrice;
   seller.cash += totalPrice;
@@ -10930,7 +11027,8 @@ async function sellHousesToCompany(sellerId, buyerId, qty, pricePerHouse){
   buyer.houseReserve += qty;
   log(`${seller.name} vend ${qty} maison(s) à ${buyer.name} pour ${fmt(totalPrice)} (${fmt(pricePerHouse)}/maison).`,
     [{label:`${buyer.name} (achat maisons)`, amount:-totalPrice}, {label:`${seller.name} (vente maisons)`, amount:totalPrice}]);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 
 
@@ -11057,15 +11155,20 @@ function mortgagedCompanyIds(p){
   }
   return (p.mortgages||[]).map(m=>m.companyId);
 }
-async function issueMortgage(propId, borrowerId, lenderId){
+async function issueMortgage(propId, borrowerId, lenderId, opts){
   
   
+  
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const p = state.properties.find(x=>x.id===propId);
-  if(!p) return;
+  if(!p) return fail(null);
   const share = propertyOwnedShare(p, borrowerId);
-  if(share<=0){ alert('Vous ne possédez pas de part de ce terrain.'); return; }
+  if(share<=0) return fail('Vous ne possédez pas de part de ce terrain.');
   if(!p.mortgages) p.mortgages = [];
-  if(p.mortgages.some(m=>m.companyId===borrowerId)){ alert('Vous avez déjà hypothéqué votre part de ce terrain.'); return; }
+  if(p.mortgages.some(m=>m.companyId===borrowerId)) return fail('Vous avez déjà hypothéqué votre part de ce terrain.');
   const borrower = companyById(borrowerId);
   const principal = maxMortgage(p, borrowerId);
   const rate = riskAdjustedRate(state.settings.mortgageRate, borrower);
@@ -11079,7 +11182,8 @@ async function issueMortgage(propId, borrowerId, lenderId){
   p.mortgages.push({companyId:borrowerId, principal, rate, lenderId});
   log(`${borrower.name} hypothèque sa part (${share}%) de ${p.name} auprès de ${insurerLabel(lenderId)} pour ${principal.toFixed(2)} à ${(rate*100).toFixed(1)}%/an. ${state.settings.mortgageRentContinues?'Le loyer de cette part continue d\u2019être perçu.':'Cette part ne rapportera plus de loyer tant qu\u2019active.'}`,
     [{label:`${borrower.name} (emprunt)`, amount:principal}, {label:`${insurerLabel(lenderId)} (prêteur)`, amount:-principal}]);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 async function repayMortgage(propId, borrowerId){
   if(!state.stockMarket.tradingOpen){ alert('Le remboursement d\u2019hypothèque n\u2019est possible que lorsque la fenêtre de transactions annuelle est ouverte.'); return; }
@@ -11098,13 +11202,17 @@ async function repayMortgage(propId, borrowerId){
   p.mortgages = p.mortgages.filter(x=>x!==m);
   await saveGame(); render();
 }
-async function issueMortgageLot(mergeId, borrowerId, lenderId){
+async function issueMortgageLot(mergeId, borrowerId, lenderId, opts){
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const host = lotMortgageHost(mergeId);
-  if(!host) return;
+  if(!host) return fail(null);
   const share = propertyOwnedShare(host, borrowerId);
-  if(share<=0){ alert('Vous ne possédez pas de part de ce lot.'); return; }
+  if(share<=0) return fail('Vous ne possédez pas de part de ce lot.');
   if(!host.mortgages) host.mortgages = [];
-  if(host.mortgages.some(m=>m.companyId===borrowerId)){ alert('Vous avez déjà hypothéqué votre part de ce lot.'); return; }
+  if(host.mortgages.some(m=>m.companyId===borrowerId)) return fail('Vous avez déjà hypothéqué votre part de ce lot.');
   const borrower = companyById(borrowerId);
   const principal = maxMortgageLot(mergeId, borrowerId);
   const rate = riskAdjustedRate(state.settings.mortgageRate, borrower);
@@ -11118,7 +11226,8 @@ async function issueMortgageLot(mergeId, borrowerId, lenderId){
   host.mortgages.push({companyId:borrowerId, principal, rate, lenderId});
   log(`${borrower.name} hypothèque sa part (${share}%) du lot ${GROUPS[host.group].label} auprès de ${insurerLabel(lenderId)} pour ${principal.toFixed(2)} à ${(rate*100).toFixed(1)}%/an. ${state.settings.mortgageRentContinues?'Le loyer de cette part continue d\u2019être perçu.':'Cette part ne rapportera plus de loyer tant qu\u2019active.'}`,
     [{label:`${borrower.name} (emprunt)`, amount:principal}, {label:`${insurerLabel(lenderId)} (prêteur)`, amount:-principal}]);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 async function repayMortgageLot(mergeId, borrowerId){
   if(!state.stockMarket.tradingOpen){ alert('Le remboursement d\u2019hypothèque n\u2019est possible que lorsque la fenêtre de transactions annuelle est ouverte.'); return; }
@@ -11232,13 +11341,18 @@ async function createRentSwap(propA, companyA, propB, companyB, years, capA, cap
 
 
 
-async function proposeRentSwap(propA, companyA, propB, companyB, years, capA, capB){
+async function proposeRentSwap(propA, companyA, propB, companyB, years, capA, capB, opts){
   
   
-  if(!(years>0) || !Number.isInteger(years)){ alert('La durée doit être un nombre entier d’années positif.'); return; }
-  if(samePropertyOrLot(propA,propB)){ alert('Choisissez deux terrains différents (deux terrains du même lot regroupé comptent comme un seul actif).'); return; }
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  
+  
+  if(!(years>0) || !Number.isInteger(years)) return fail('La durée doit être un nombre entier d’années positif.');
+  if(samePropertyOrLot(propA,propB)) return fail('Choisissez deux terrains différents (deux terrains du même lot regroupé comptent comme un seul actif).');
   const coA = companyById(companyA), coB = companyById(companyB);
-  if(!coA || !coB || companyA===companyB){ alert('Choisissez deux entreprises différentes.'); return; }
+  if(!coA || !coB || companyA===companyB) return fail('Choisissez deux entreprises différentes.');
   
   
   
@@ -11247,14 +11361,15 @@ async function proposeRentSwap(propA, companyA, propB, companyB, years, capA, ca
   
   const propAObj = state.properties.find(x=>x.id===propA);
   const propBObj = state.properties.find(x=>x.id===propB);
-  if(!propAObj || propertyOwnedShare(propAObj, companyA)<=0){ alert(`${coA.name} ne possède aucune part de ce terrain — impossible de le proposer dans un swap.`); return; }
-  if(!propBObj || propertyOwnedShare(propBObj, companyB)<=0){ alert(`${coB.name} ne possède aucune part de ce terrain — impossible de le proposer dans un swap.`); return; }
+  if(!propAObj || propertyOwnedShare(propAObj, companyA)<=0) return fail(`${coA.name} ne possède aucune part de ce terrain — impossible de le proposer dans un swap.`);
+  if(!propBObj || propertyOwnedShare(propBObj, companyB)<=0) return fail(`${coB.name} ne possède aucune part de ce terrain — impossible de le proposer dans un swap.`);
   state.rentSwapOffers.push({id:uid(), fromCompanyId:companyA, propA, capA:capA||null,
     toCompanyId:companyB, propB, capB:capB||null, years});
   const propAName = state.properties.find(x=>x.id===propA).name, propBName = state.properties.find(x=>x.id===propB).name;
   const capText = (capA||capB) ? ` (plafond: ${capA?fmt(capA):'illimité'} / ${capB?fmt(capB):'illimité'})` : '';
   log(`${coA.name} propose un swap de loyers à ${coB.name}: ${propAName} ⇄ ${propBName} pour ${years} an(s)${capText} — en attente de sa réponse (onglet Mon Entreprise du CEO de ${coB.name}).`);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 
 async function acceptRentSwapOffer(id){
@@ -11342,18 +11457,27 @@ function settleRentCompensation(c){
 }
 
 
-async function proposeRentCompensation(fromCompanyId, toCompanyId, interestRatePct){
+async function proposeRentCompensation(fromCompanyId, toCompanyId, interestRatePct, opts){
   
   
   
-  if(!fromCompanyId || !toCompanyId || fromCompanyId===toCompanyId){ alert('Choisissez deux entreprises différentes.'); return false; }
-  if(findRentCompensation(fromCompanyId, toCompanyId)){ alert('Un accord de compensation existe déjà entre ces deux entreprises.'); return false; }
+  
+  
+  
+  
+  
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ opts.lastError = msg; if(!opts.silent && msg) alert(msg); return false; };
+  if(!fromCompanyId || !toCompanyId || fromCompanyId===toCompanyId) return fail('Choisissez deux entreprises différentes.');
+  if(findRentCompensation(fromCompanyId, toCompanyId)) return fail('Un accord de compensation existe déjà entre ces deux entreprises.');
   const coA = companyById(fromCompanyId), coB = companyById(toCompanyId);
-  if(!coA || !coB) return false;
+  if(!coA || !coB) return fail(null);
   const interestRate = Math.max(0, interestRatePct||0)/100;
   state.rentCompensationOffers.push({id:uid(), fromCompanyId, toCompanyId, interestRate});
   log(`${coA.name} propose un accord de compensation de loyer à ${coB.name} (intérêt de règlement: ${(interestRate*100).toFixed(1)}%) — en attente de sa réponse (onglet Mon Entreprise du CEO de ${coB.name}).`);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
   return true;
 }
 
@@ -11411,23 +11535,28 @@ function loanLenderLabel(loan){
   return co ? co.name : '?';
 }
 
-async function postLoanRequest(companyId, principal){
+async function postLoanRequest(companyId, principal, opts){
+  
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const co = companyById(companyId);
-  if(!co){ alert('Entreprise introuvable.'); return; }
+  if(!co) return fail('Entreprise introuvable.');
   
   
   
-  if(state.gameEndedReason){ alert('La partie est terminée — plus aucune action de prêt n’est possible.'); return; }
-  if(!(principal>0)){ alert('Le montant demandé doit être positif.'); return; }
+  if(state.gameEndedReason) return fail('La partie est terminée — plus aucune action de prêt n’est possible.');
+  if(!(principal>0)) return fail('Le montant demandé doit être positif.');
   const remainingCap = loanCapRemaining(companyId);
   if(state.settings.loanMaxPrincipal>0 && principal>remainingCap+1e-9){
-    alert(`Le montant demandé dépasse la capacité d'emprunt encore disponible pour cette partie — déjà emprunté (actif): ${fmt(activeLoanPrincipalSum(companyId))}/${fmt(state.settings.loanMaxPrincipal)}, il reste ${fmt(remainingCap)} disponible.`);
-    return;
+    return fail(`Le montant demandé dépasse la capacité d'emprunt encore disponible pour cette partie — déjà emprunté (actif): ${fmt(activeLoanPrincipalSum(companyId))}/${fmt(state.settings.loanMaxPrincipal)}, il reste ${fmt(remainingCap)} disponible.`);
   }
-  if(activeLoanRequestOf(companyId)){ alert('Cette entreprise a déjà une demande d’emprunt ouverte — annulez-la avant d’en poster une nouvelle.'); return; }
+  if(activeLoanRequestOf(companyId)) return fail('Cette entreprise a déjà une demande d’emprunt ouverte — annulez-la avant d’en poster une nouvelle.');
   state.loanRequests.push({id:uid(), borrowerId:companyId, principal, createdAt:nowLabel()});
   log(`${co.name} publie une demande d'emprunt de ${fmt(principal)} — un avis est envoyé à tous les joueurs, qui peuvent proposer leurs conditions (% des loyers retenu, multiple de remboursement).`);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 
 async function cancelLoanRequest(requestId){
@@ -11495,25 +11624,34 @@ async function acceptLoanOffer(offerId){
   await saveGame(); render();
 }
 
-async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multiple, secured){
-  if(!lenderId || !borrowerId || lenderId===borrowerId){ alert('Choisissez un prêteur et un emprunteur différents.'); return false; }
+async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multiple, secured, opts){
   
   
   
-  if(state.gameEndedReason){ alert('La partie est terminée — plus aucune action de prêt n’est possible.'); return false; }
-  if(!(principal>0)){ alert('Le montant du prêt doit être positif.'); return false; }
+  
+  
+  
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ opts.lastError = msg; if(!opts.silent && msg) alert(msg); return false; };
+  if(!lenderId || !borrowerId || lenderId===borrowerId) return fail('Choisissez un prêteur et un emprunteur différents.');
+  
+  
+  
+  if(state.gameEndedReason) return fail('La partie est terminée — plus aucune action de prêt n’est possible.');
+  if(!(principal>0)) return fail('Le montant du prêt doit être positif.');
   const remainingCap = loanCapRemaining(borrowerId);
   if(state.settings.loanMaxPrincipal>0 && principal>remainingCap+1e-9){
-    alert(`Le montant du prêt dépasse la capacité d'emprunt encore disponible pour cette entreprise — déjà emprunté (actif): ${fmt(activeLoanPrincipalSum(borrowerId))}/${fmt(state.settings.loanMaxPrincipal)}, il reste ${fmt(remainingCap)} disponible.`);
-    return false;
+    return fail(`Le montant du prêt dépasse la capacité d'emprunt encore disponible pour cette entreprise — déjà emprunté (actif): ${fmt(activeLoanPrincipalSum(borrowerId))}/${fmt(state.settings.loanMaxPrincipal)}, il reste ${fmt(remainingCap)} disponible.`);
   }
   const borrower = companyById(borrowerId);
-  if(!borrower){ alert('Emprunteur introuvable.'); return false; }
+  if(!borrower) return fail('Emprunteur introuvable.');
   const lenderPlayer = lenderId!=='BANK' ? state.players.find(p=>p.id===lenderId) : null;
   const lenderCo = (lenderId!=='BANK' && !lenderPlayer) ? companyById(lenderId) : null;
   const lenderKind = lenderId==='BANK' ? 'bank' : (lenderPlayer ? 'player' : 'company');
-  if(lenderKind==='player' && (lenderPlayer.cash||0)<principal){ alert('Le prêteur n’a pas assez d’encaisse pour ce prêt.'); return false; }
-  if(lenderKind==='company' && insurerCash(lenderId)<principal){ alert('Le prêteur n’a pas assez d’encaisse pour ce prêt.'); return false; }
+  if(lenderKind==='player' && (lenderPlayer.cash||0)<principal) return fail('Le prêteur n’a pas assez d’encaisse pour ce prêt.');
+  if(lenderKind==='company' && insurerCash(lenderId)<principal) return fail('Le prêteur n’a pas assez d’encaisse pour ce prêt.');
   if(lenderKind==='bank') state.bank.cash -= principal;
   else if(lenderKind==='player') lenderPlayer.cash -= principal; 
   else { lenderCo.cash -= principal; logFin(lenderCo.id, 'loan_investment_outflow', -principal); }
@@ -11531,7 +11669,7 @@ async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multip
   state.loans.push(loan);
   log(`Prêt ${secured?'GARANTI':'non garanti'} de ${fmt(principal)} accordé par ${loanLenderLabel(loan)} à ${borrower.name}. ${Math.round(withholdingPct*100)}% de tous ses loyers reçus seront retenus automatiquement jusqu'à ${fmt(totalDue)} au total (${multiple}× le capital).`,
     [{label:`${loanLenderLabel(loan)} (capital prêté)`, amount:-principal}, {label:`${borrower.name} (capital reçu)`, amount:principal}]);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
   return true;
 }
 
@@ -12843,33 +12981,8 @@ function bindTabEvents(t){
       sellEtfUnits(id, myCo.id, buyerId, pct, price);
     }));
   }
-  if(t==='simulation'){
-    
-    
-    
-    
-    const readSimFormIntoParams = ()=>{
-      const num = (id, fallback)=>{ const el = document.getElementById(id); const v = el ? parseFloat(el.value) : NaN; return Number.isFinite(v) ? v : fallback; };
-      simParams.years = num('simYears', simParams.years);
-      simParams.trialsPerType = num('simTrials', simParams.trialsPerType);
-      simParams.startPrice = num('simStartPrice', simParams.startPrice);
-      simParams.drawsMin = num('simDrawsMin', simParams.drawsMin);
-      simParams.drawsMax = num('simDrawsMax', simParams.drawsMax);
-      simParams.floorPct = num('simFloorPct', simParams.floorPct);
-    };
-    const runBtn = document.getElementById('simRunBtn');
-    if(runBtn) runBtn.addEventListener('click', ()=>{
-      readSimFormIntoParams();
-      simResults = runStockSimulation(simParams);
-      render();
-    });
-    const resetBtn = document.getElementById('simResetBtn');
-    if(resetBtn) resetBtn.addEventListener('click', ()=>{
-      simParams = simDefaultParams();
-      simResults = null;
-      render();
-    });
-  }
+  
+  
 }
 
 function playerOptions(selectedId){
@@ -12924,6 +13037,7 @@ function modalAdjustPlayer(pid){
     <input type="number" step="0.01" id="mAmount" value="0">
     <label>Motif</label>
     <input type="text" id="mReason" placeholder="ex: taxes, ajustement, prêt...">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
@@ -12932,11 +13046,18 @@ function modalAdjustPlayer(pid){
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const amt = parseFloat(document.getElementById('mAmount').value)||0;
     const reason = document.getElementById('mReason').value.trim() || 'ajustement';
-    p.cash += amt;
-    state.bank.cash -= amt;
-    log(`${p.name}: ${amt>=0?'+':''}${amt.toFixed(2)} (${reason})`,
-      [{label:`${p.name} (${reason})`, amount:amt}, {label:'Banque', amount:-amt}]);
-    await saveGame(); closeModal(); render();
+    await runModalActionWithRetry(()=>{
+      
+      
+      
+      const pl = state.players.find(x=>x.id===pid);
+      if(!pl) return {ok:false, error:'Joueur introuvable.'};
+      pl.cash += amt;
+      state.bank.cash -= amt;
+      log(`${pl.name}: ${amt>=0?'+':''}${amt.toFixed(2)} (${reason})`,
+        [{label:`${pl.name} (${reason})`, amount:amt}, {label:'Banque', amount:-amt}]);
+      return {ok:true};
+    });
   });
 }
 
@@ -12952,6 +13073,7 @@ function modalAdjustCompany(companyId){
     <input type="number" step="0.01" id="mAmount" value="0">
     <label>Motif</label>
     <input type="text" id="mReason" placeholder="ex: correction, ajustement...">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
@@ -12960,12 +13082,16 @@ function modalAdjustCompany(companyId){
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const amt = parseFloat(document.getElementById('mAmount').value)||0;
     const reason = document.getElementById('mReason').value.trim() || 'ajustement';
-    c.cash += amt;
-    logFin(c.id, 'admin_adjustment', amt);
-    state.bank.cash -= amt;
-    log(`${c.name}: ${amt>=0?'+':''}${amt.toFixed(2)} (${reason})`,
-      [{label:`${c.name} (${reason})`, amount:amt}, {label:'Banque', amount:-amt}]);
-    await saveGame(); closeModal(); render();
+    await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      if(!co) return {ok:false, error:'Entreprise introuvable.'};
+      co.cash += amt;
+      logFin(co.id, 'admin_adjustment', amt);
+      state.bank.cash -= amt;
+      log(`${co.name}: ${amt>=0?'+':''}${amt.toFixed(2)} (${reason})`,
+        [{label:`${co.name} (${reason})`, amount:amt}, {label:'Banque', amount:-amt}]);
+      return {ok:true};
+    });
   });
 }
 
@@ -12974,6 +13100,7 @@ function modalAdjustBank(){
     <h3>Ajuster la banque</h3>
     <label>Montant (+ pour crédit, - pour débit, en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mAmount" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
@@ -12981,9 +13108,11 @@ function modalAdjustBank(){
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const amt = parseFloat(document.getElementById('mAmount').value)||0;
-    state.bank.cash += amt;
-    log(`Banque ajustée de ${amt>=0?'+':''}${amt.toFixed(2)}`, [{label:'Banque (ajustement)', amount:amt}]);
-    await saveGame(); closeModal(); render();
+    await runModalActionWithRetry(()=>{
+      state.bank.cash += amt;
+      log(`Banque ajustée de ${amt>=0?'+':''}${amt.toFixed(2)}`, [{label:'Banque (ajustement)', amount:amt}]);
+      return {ok:true};
+    });
   });
 }
 
@@ -13114,6 +13243,7 @@ function modalBuyShares(pid){
     <div id="mBuyerRows"></div>
     <button type="button" class="btn btn-ghost" id="mAddBuyerRow" style="margin:6px 0;">+ Ajouter une entreprise</button>
     <div class="small" id="mBuyerTotalText"></div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer l'achat</button>
@@ -13130,47 +13260,58 @@ function modalBuyShares(pid){
   document.getElementById('mOk').addEventListener('click', async ()=>{
     captureFromDom();
     const price = parseFloat(document.getElementById('mPrice').value)||0;
-    
-    
-    if(!(price>0)){ alert('Le prix convenu doit être positif.'); return; }
-    const entries = rows.filter(r=>r.pct>0);
-    if(entries.length===0){ alert('Sélectionnez au moins une entreprise avec un pourcentage supérieur à 0.'); return; }
-    const seen = new Set();
-    for(const e of entries){
-      if(seen.has(e.companyId)){ alert('Chaque entreprise ne peut apparaître qu’une seule fois dans la répartition.'); return; }
-      seen.add(e.companyId);
-    }
-    const totalPct = entries.reduce((s,e)=>s+e.pct,0);
-    if(totalPct>cap){ alert(`Le total réparti (${totalPct}%) dépasse le maximum rachetable à la banque pour ce terrain (${cap}%).`); return; }
-    
-    
-    
-    const existingNotInEntries = existingOwnerIds.filter(id=>!seen.has(id));
-    const finalCount = existingNotInEntries.length + seen.size;
-    if(finalCount>state.settings.maxOwners){
-      const newOnes = entries.filter(e=>!existingOwnerIds.includes(e.companyId)).map(e=>companyById(e.companyId)?.name||'?').join(', ');
-      alert(`Maximum ${state.settings.maxOwners} entreprises copropriétaires simultanées pour ce terrain — cette opération en compterait ${finalCount}${newOnes?` (nouvelles: ${newOnes})`:''}.`);
-      return;
-    }
-    
-    
-    for(const e of entries){
-      const buyerCo = companyById(e.companyId);
-      if(!buyerCo) continue;
-      const cost = price * (e.pct/100);
-      buyerCo.cash -= cost;
-      logFin(buyerCo.id, 'land_purchase', -cost);
-      addRealEstateCapex(realEstateKeyFor(p), buyerCo.id, cost); 
-      const buyerPl = state.players.find(x=>x.id===buyerCo.ceoId); 
-      if(buyerPl) buyerPl.stats.spentBuying += cost;
-      state.bank.cash += cost;
-      const existing = p.owners.find(o=>o.companyId===buyerCo.id);
-      if(existing) existing.share += e.pct; else p.owners.push({companyId: buyerCo.id, share: e.pct});
-      log(`${buyerCo.name} achète ${e.pct}% de ${p.name} pour ${cost.toFixed(2)} (prix convenu ${price.toFixed(2)} pour 100%)`,
-        [{label:`${buyerCo.name} (achat ${e.pct}% de ${p.name})`, amount:-cost}, {label:'Banque', amount:cost}]);
-    }
-    p.acquisitionPrice = price;
-    await saveGame(); closeModal(); render();
+    const formEntries = rows.filter(r=>r.pct>0).map(r=>({companyId:r.companyId, pct:r.pct}));
+    await runModalActionWithRetry(()=>{
+      
+      
+      
+      
+      
+      
+      const prop = state.properties.find(x=>x.id===pid);
+      if(!prop) return {ok:false, error:'Terrain introuvable.'};
+      
+      
+      if(!(price>0)) return {ok:false, error:'Le prix convenu doit être positif.'};
+      if(formEntries.length===0) return {ok:false, error:'Sélectionnez au moins une entreprise avec un pourcentage supérieur à 0.'};
+      const seen = new Set();
+      for(const e of formEntries){
+        if(seen.has(e.companyId)) return {ok:false, error:'Chaque entreprise ne peut apparaître qu’une seule fois dans la répartition.'};
+        seen.add(e.companyId);
+      }
+      const freshCap = purchasableBankShare(prop);
+      const totalPct = formEntries.reduce((s,e)=>s+e.pct,0);
+      if(totalPct>freshCap) return {ok:false, error:`Le total réparti (${totalPct}%) dépasse le maximum rachetable à la banque pour ce terrain (${freshCap}%).`};
+      
+      
+      
+      const freshExistingOwnerIds = prop.owners.map(o=>o.companyId);
+      const existingNotInEntries = freshExistingOwnerIds.filter(id=>!seen.has(id));
+      const finalCount = existingNotInEntries.length + seen.size;
+      if(finalCount>state.settings.maxOwners){
+        const newOnes = formEntries.filter(e=>!freshExistingOwnerIds.includes(e.companyId)).map(e=>companyById(e.companyId)?.name||'?').join(', ');
+        return {ok:false, error:`Maximum ${state.settings.maxOwners} entreprises copropriétaires simultanées pour ce terrain — cette opération en compterait ${finalCount}${newOnes?` (nouvelles: ${newOnes})`:''}.`};
+      }
+      
+      
+      for(const e of formEntries){
+        const buyerCo = companyById(e.companyId);
+        if(!buyerCo) continue;
+        const cost = price * (e.pct/100);
+        buyerCo.cash -= cost;
+        logFin(buyerCo.id, 'land_purchase', -cost);
+        addRealEstateCapex(realEstateKeyFor(prop), buyerCo.id, cost); 
+        const buyerPl = state.players.find(x=>x.id===buyerCo.ceoId); 
+        if(buyerPl) buyerPl.stats.spentBuying += cost;
+        state.bank.cash += cost;
+        const existing = prop.owners.find(o=>o.companyId===buyerCo.id);
+        if(existing) existing.share += e.pct; else prop.owners.push({companyId: buyerCo.id, share: e.pct});
+        log(`${buyerCo.name} achète ${e.pct}% de ${prop.name} pour ${cost.toFixed(2)} (prix convenu ${price.toFixed(2)} pour 100%)`,
+          [{label:`${buyerCo.name} (achat ${e.pct}% de ${prop.name})`, amount:-cost}, {label:'Banque', amount:cost}]);
+      }
+      prop.acquisitionPrice = price;
+      return {ok:true};
+    });
   });
 }
 
@@ -13196,6 +13337,7 @@ function modalSellShare(pid){
     ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque, sauf si vous vendez la TOTALITÉ de la part détenue par le vendeur choisi (même si elle est inférieure au minimum) — aucun minimum pour une vente à un autre joueur.</div>`:''}
     <label>Prix convenu (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" min="0.01" id="mPrice" value="${suggestedSellPrice}">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer la vente</button>
@@ -13206,59 +13348,64 @@ function modalSellShare(pid){
     const buyerId = document.getElementById('mBuyer').value;
     const pct = parseInt(document.getElementById('mPct').value)||0;
     const price = parseFloat(document.getElementById('mPrice').value)||0;
-    const sellerOwn = p.owners.find(o=>o.companyId===sellerId);
-    
-    
-    
-    
-    if(!sellerOwn || pct<=0 || pct>sellerOwn.share){ alert('Pourcentage invalide.'); return; }
-    if(!(price>0)){ alert('Le prix convenu doit être positif.'); return; }
-    
-    
-    
-    
-    if((p.mortgages||[]).some(m=>m.companyId===sellerId)){
-      alert(`${companyById(sellerId)?.name||'Cette entreprise'} a hypothéqué sa part de ${p.name} — remboursez l'hypothèque (repayMortgage) avant de pouvoir la vendre.`);
-      return;
-    }
-    if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
+    await runModalActionWithRetry(()=>{
       
       
       
-      alert(`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie), sauf si vous vendez la totalité de votre part (${sellerOwn.share}%). Vendre à un autre joueur n'a pas de minimum.`);
-      return;
-    }
-    sellerOwn.share -= pct;
-    if(sellerOwn.share<=0) p.owners = p.owners.filter(o=>o.companyId!==sellerId);
-    const seller = companyById(sellerId);
-    const sellerPl = seller ? state.players.find(x=>x.id===seller.ceoId) : null;
-    if(buyerId==='BANK'){
-      seller.cash += price;
-      logFin(seller.id, 'land_sale', price);
-      if(sellerPl) sellerPl.stats.salesRevenue += price;
-      state.bank.cash -= price;
-      log(`${seller.name} a vendu ${pct}% de ${p.name} à la banque pour ${price.toFixed(2)}`,
-        [{label:`${seller.name} (vente ${pct}%)`, amount:price}, {label:'Banque', amount:-price}]);
-    } else {
+      const prop = state.properties.find(x=>x.id===pid);
+      if(!prop) return {ok:false, error:'Terrain introuvable.'};
+      const sellerOwn = prop.owners.find(o=>o.companyId===sellerId);
       
       
       
       
+      if(!sellerOwn || pct<=0 || pct>sellerOwn.share) return {ok:false, error:'Pourcentage invalide.'};
+      if(!(price>0)) return {ok:false, error:'Le prix convenu doit être positif.'};
       
-      const buyer = companyById(buyerId);
-      const buyerPl = buyer ? state.players.find(x=>x.id===buyer.ceoId) : null;
-      buyer.cash -= price; seller.cash += price;
-      logFin(buyer.id, 'land_purchase', -price);
-      logFin(seller.id, 'land_sale', price);
-      addRealEstateCapex(realEstateKeyFor(p), buyer.id, price); 
-      if(buyerPl) buyerPl.stats.spentBuying += price;
-      if(sellerPl) sellerPl.stats.salesRevenue += price;
-      const existing = p.owners.find(o=>o.companyId===buyerId);
-      if(existing) existing.share += pct; else p.owners.push({companyId:buyerId, share:pct});
-      log(`${seller.name} a vendu ${pct}% de ${p.name} à ${buyer.name} pour ${price.toFixed(2)}`,
-        [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:`${seller.name} (vente ${pct}%)`, amount:price}]);
-    }
-    await saveGame(); closeModal(); render();
+      
+      
+      
+      if((prop.mortgages||[]).some(m=>m.companyId===sellerId)){
+        return {ok:false, error:`${companyById(sellerId)?.name||'Cette entreprise'} a hypothéqué sa part de ${prop.name} — remboursez l'hypothèque (repayMortgage) avant de pouvoir la vendre.`};
+      }
+      if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
+        
+        
+        
+        return {ok:false, error:`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie), sauf si vous vendez la totalité de votre part (${sellerOwn.share}%). Vendre à un autre joueur n'a pas de minimum.`};
+      }
+      sellerOwn.share -= pct;
+      if(sellerOwn.share<=0) prop.owners = prop.owners.filter(o=>o.companyId!==sellerId);
+      const seller = companyById(sellerId);
+      const sellerPl = seller ? state.players.find(x=>x.id===seller.ceoId) : null;
+      if(buyerId==='BANK'){
+        seller.cash += price;
+        logFin(seller.id, 'land_sale', price);
+        if(sellerPl) sellerPl.stats.salesRevenue += price;
+        state.bank.cash -= price;
+        log(`${seller.name} a vendu ${pct}% de ${prop.name} à la banque pour ${price.toFixed(2)}`,
+          [{label:`${seller.name} (vente ${pct}%)`, amount:price}, {label:'Banque', amount:-price}]);
+      } else {
+        
+        
+        
+        
+        
+        const buyer = companyById(buyerId);
+        const buyerPl = buyer ? state.players.find(x=>x.id===buyer.ceoId) : null;
+        buyer.cash -= price; seller.cash += price;
+        logFin(buyer.id, 'land_purchase', -price);
+        logFin(seller.id, 'land_sale', price);
+        addRealEstateCapex(realEstateKeyFor(prop), buyer.id, price); 
+        if(buyerPl) buyerPl.stats.spentBuying += price;
+        if(sellerPl) sellerPl.stats.salesRevenue += price;
+        const existing = prop.owners.find(o=>o.companyId===buyerId);
+        if(existing) existing.share += pct; else prop.owners.push({companyId:buyerId, share:pct});
+        log(`${seller.name} a vendu ${pct}% de ${prop.name} à ${buyer.name} pour ${price.toFixed(2)}`,
+          [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:`${seller.name} (vente ${pct}%)`, amount:price}]);
+      }
+      return {ok:true};
+    });
   });
 }
 
@@ -13647,13 +13794,21 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
 
 
 
-async function buildHouse(pid, sourceCompanyId, compensationTotal){
-  if(!yearEndWindowOpen()){ alert(`La construction de maisons n'est possible qu'à la fin d'une année financière (dans ${rollsUntilYearEnd()} lancer(s)).`); return; }
+async function buildHouse(pid, sourceCompanyId, compensationTotal, opts){
+  
+  
+  
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  if(!yearEndWindowOpen()) return fail(`La construction de maisons n'est possible qu'à la fin d'une année financière (dans ${rollsUntilYearEnd()} lancer(s)).`);
   const p = state.properties.find(x=>x.id===pid);
-  if(!p.groupMergeId){ alert('La construction de maisons n’est possible que sur un terrain regroupé en lot (voir le bouton « Regrouper le lot »).'); return; }
-  if(p.houses>=hotelLevel()) return;
+  if(!p) return fail(null);
+  if(!p.groupMergeId) return fail('La construction de maisons n’est possible que sur un terrain regroupé en lot (voir le bouton « Regrouper le lot »).');
+  if(p.houses>=hotelLevel()) return fail(null);
   const cost = HOUSE_COST_BY_GROUP[p.group] || 0;
-  if(p.owners.length===0){ alert('Aucun propriétaire pour payer la construction — ce terrain appartient encore à la banque.'); return; }
+  if(p.owners.length===0) return fail('Aucun propriétaire pour payer la construction — ce terrain appartient encore à la banque.');
   if(cost>0){
     const insufficient = p.owners.find(o=>{
       const owner = companyById(o.companyId);
@@ -13661,8 +13816,7 @@ async function buildHouse(pid, sourceCompanyId, compensationTotal){
     });
     if(insufficient){
       const co = companyById(insufficient.companyId);
-      alert(`${co?co.name:'?'} n'a pas assez d'encaisse pour payer sa part de la construction (${fmt(cost*(insufficient.share/100))}).`);
-      return;
+      return fail(`${co?co.name:'?'} n'a pas assez d'encaisse pour payer sa part de la construction (${fmt(cost*(insufficient.share/100))}).`);
     }
   }
   const entries = [];
@@ -13720,8 +13874,12 @@ async function buildHouse(pid, sourceCompanyId, compensationTotal){
     }
   }
 
-  await saveGame(); render();
-  if(entries.length) showTransactionPopup(`Construction${sourceCompanyId?' & compensation':''} — ${p.name}`, entries);
+  const label = `Construction${sourceCompanyId?' & compensation':''} — ${p.name}`;
+  if(!opts.silent){
+    await saveGame(); render();
+    if(entries.length) showTransactionPopup(label, entries);
+  }
+  return {ok:true, entries, label};
 }
 
 function modalBuildHouseSource(pid){
@@ -13777,6 +13935,7 @@ function modalHouseCompensation(pid, sourceId){
     <input type="number" step="0.01" min="0" id="mCompAmount" value="0">
     <div class="small" id="mCompBreakdown" style="margin-top:6px;">${breakdown(0)}</div>
     `}
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Construire</button>
@@ -13788,8 +13947,8 @@ function modalHouseCompensation(pid, sourceId){
   });
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const amount = amountInput ? (parseFloat(amountInput.value)||0) : 0;
-    closeModal();
-    await buildHouse(pid, sourceId, amount);
+    const res = await runModalActionWithRetry(()=>buildHouse(pid, sourceId, amount, {silent:true}));
+    if(res && res.ok && res.entries && res.entries.length) showTransactionPopup(res.label, res.entries);
   });
 }
 async function removeHouse(pid){
@@ -13828,6 +13987,7 @@ function modalShareSwap(){
     <select id="mAssetB">${allAssets.map(a=>`<option value="${optVal(a)}">${esc(a.label)}</option>`).join('')}</select>
     <label>Pourcentage donné par B</label>
     <input type="number" min="1" max="100" id="mPctB" value="50">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer l'échange</button>
@@ -13840,9 +14000,10 @@ function modalShareSwap(){
     const companyBId = document.getElementById('mCompanyB').value;
     const [typeB, idB] = document.getElementById('mAssetB').value.split(':');
     const pctB = parseInt(document.getElementById('mPctB').value)||0;
-    if(companyAId===companyBId){ alert('Choisissez deux entreprises différentes.'); return; }
-    closeModal();
-    await executeShareSwap(typeA, idA, companyAId, pctA, typeB, idB, companyBId, pctB);
+    await runModalActionWithRetry(()=>{
+      if(companyAId===companyBId) return {ok:false, error:'Choisissez deux entreprises différentes.'};
+      return executeShareSwap(typeA, idA, companyAId, pctA, typeB, idB, companyBId, pctB, {silent:true});
+    });
   });
 }
 
@@ -13867,22 +14028,26 @@ function modalIssueLoanAdmin(){
     <label>Multiple de remboursement (entre ${multMin}× et ${multMax}×)</label>
     <input type="number" step="0.1" min="${multMin}" max="${multMax}" id="mLoanMultAdmin" value="${multMin}">
     <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="mLoanSecuredAdmin"> Obligation garantie (voir RESUME_ET_REGLES.md section 233 — met en jeu les parts du CEO emprunteur en fin de partie)</label>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Accorder le prêt</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
-  document.getElementById('mOk').addEventListener('click', ()=>{
+  document.getElementById('mOk').addEventListener('click', async ()=>{
     const lenderId = document.getElementById('mLoanLenderAdmin').value;
     const borrowerId = document.getElementById('mLoanBorrowerAdmin').value;
     const principal = parseFloat(document.getElementById('mLoanPrincipalAdmin').value)||0;
     const withholdingPct = (parseFloat(document.getElementById('mLoanPctAdmin').value)||0)/100;
     const multiple = parseFloat(document.getElementById('mLoanMultAdmin').value)||1;
     const secured = !!document.getElementById('mLoanSecuredAdmin').checked;
-    const borrowerCo = companyById(borrowerId);
-    if(borrowerCo && borrowerCo.ceoId===lenderId){ alert('Le CEO d’une entreprise ne peut pas prêter à sa propre compagnie — délit d’initié intégré au jeu.'); return; }
-    closeModal();
-    issueLoan(lenderId, borrowerId, principal, withholdingPct, multiple, secured);
+    await runModalActionWithRetry(async ()=>{
+      const borrowerCo = companyById(borrowerId);
+      if(borrowerCo && borrowerCo.ceoId===lenderId) return {ok:false, error:'Le CEO d’une entreprise ne peut pas prêter à sa propre compagnie — délit d’initié intégré au jeu.'};
+      const loanOpts = {silent:true};
+      const ok = await issueLoan(lenderId, borrowerId, principal, withholdingPct, multiple, secured, loanOpts);
+      return ok ? {ok:true} : {ok:false, error: loanOpts.lastError};
+    });
   });
 }
 
@@ -13905,6 +14070,7 @@ function modalSellMergedShare(mergeId){
     ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque, sauf si vous vendez la TOTALITÉ de la part détenue par le vendeur choisi (même si elle est inférieure au minimum) — aucun minimum pour une vente à un autre joueur.</div>`:''}
     <label>Prix convenu (pour tout le lot, en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mPrice" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
@@ -13915,8 +14081,7 @@ function modalSellMergedShare(mergeId){
     const buyerId = document.getElementById('mBuyer').value;
     const pct = parseInt(document.getElementById('mPct').value)||0;
     const price = parseFloat(document.getElementById('mPrice').value)||0;
-    closeModal();
-    await sellMergedShare(mergeId, sellerId, buyerId, pct, price);
+    await runModalActionWithRetry(()=>sellMergedShare(mergeId, sellerId, buyerId, pct, price, {silent:true}));
   });
 }
 
@@ -13935,6 +14100,7 @@ function modalMortgageLot(mergeId){
     <div class="small">Emprunteur: ${esc(myCo.name)} · Votre part: ${share}% · Montant: ${fmt(principal)} (${Math.round(state.settings.mortgageLTV*100)}% de votre part de la valeur intrinsèque du lot) · Taux: ${(rate*100).toFixed(1)}%/an (inclut la prime de risque selon l'endettement). ${state.settings.mortgageRentContinues?'Le loyer continue d\u2019être perçu normalement pendant l\u2019hypothèque.':'Votre part ne rapportera plus de loyer tant que l\u2019hypothèque est active.'} Si l'intérêt annuel ne peut être payé, votre part est saisie par le prêteur sur tous les terrains du lot.</div>
     <label>Prêteur (doit pouvoir avancer ${fmt(principal)})</label>
     <select id="mLender">${insurerOptionsHtml(myCo.id, principal)}</select>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
@@ -13942,8 +14108,7 @@ function modalMortgageLot(mergeId){
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const lenderId = document.getElementById('mLender').value;
-    closeModal();
-    await issueMortgageLot(mergeId, myCo.id, lenderId);
+    await runModalActionWithRetry(()=>issueMortgageLot(mergeId, myCo.id, lenderId, {silent:true}));
   });
 }
 
@@ -13961,6 +14126,7 @@ function modalMortgage(pid){
     <div class="small">Emprunteur: ${esc(myCo.name)} · Votre part: ${share}% · Montant: ${fmt(principal)} (${Math.round(state.settings.mortgageLTV*100)}% de votre part du prix de base — la valeur normale du terrain au Monopoly) · Taux: ${(rate*100).toFixed(1)}%/an (inclut la prime de risque selon l'endettement). ${state.settings.mortgageRentContinues?'Le loyer continue d\u2019être perçu normalement pendant l\u2019hypothèque.':'Votre part ne rapportera plus de loyer tant que l\u2019hypothèque est active.'} Si l'intérêt annuel ne peut être payé, votre part est saisie par le prêteur.</div>
     <label>Prêteur (doit pouvoir avancer ${fmt(principal)})</label>
     <select id="mLender">${insurerOptionsHtml(myCo.id, principal)}</select>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
@@ -13968,8 +14134,7 @@ function modalMortgage(pid){
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const lenderId = document.getElementById('mLender').value;
-    closeModal();
-    await issueMortgage(pid, myCo.id, lenderId);
+    await runModalActionWithRetry(()=>issueMortgage(pid, myCo.id, lenderId, {silent:true}));
   });
 }
 
@@ -14140,6 +14305,7 @@ function modalHouseBid(){
     <input type="number" min="1" step="1" id="mHouseBidQty" value="${myBid?myBid.qty:1}">
     <label>Prix prêt à payer par maison (en ${esc(state.unit)})</label>
     <input type="number" min="0" step="0.01" id="mHouseBidPrice" value="${myBid?myBid.price:0}">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       ${myBid?'<button class="btn btn-ghost" id="mRemoveBid">Retirer mon offre</button>':''}
@@ -14148,11 +14314,10 @@ function modalHouseBid(){
   document.getElementById('mCancel').addEventListener('click', closeModal);
   const removeBtn = document.getElementById('mRemoveBid');
   if(removeBtn) removeBtn.addEventListener('click', ()=>{ closeModal(); removeHouseBid(myCo.id); });
-  document.getElementById('mOk').addEventListener('click', ()=>{
+  document.getElementById('mOk').addEventListener('click', async ()=>{
     const qty = parseInt(document.getElementById('mHouseBidQty').value)||0;
     const price = parseFloat(document.getElementById('mHouseBidPrice').value)||0;
-    closeModal();
-    submitHouseBid(myCo.id, qty, price);
+    await runModalActionWithRetry(()=>submitHouseBid(myCo.id, qty, price, {silent:true}));
   });
 }
 
@@ -14187,6 +14352,7 @@ function modalSellHouses(){
     <label>Prix par maison (en ${esc(state.unit)})</label>
     <input type="number" min="0" step="0.01" id="mSellHousesPrice" value="0">
     <div class="small" id="mSellHousesTotal" style="margin-top:6px;font-weight:600;"></div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Vendre</button>
@@ -14203,12 +14369,11 @@ function modalSellHouses(){
   qtyInput.addEventListener('input', updateTotal);
   priceInput.addEventListener('input', updateTotal);
   updateTotal();
-  document.getElementById('mOk').addEventListener('click', ()=>{
+  document.getElementById('mOk').addEventListener('click', async ()=>{
     const buyerId = document.getElementById('mSellHousesBuyer').value;
     const qty = parseInt(qtyInput.value)||0;
     const price = parseFloat(priceInput.value)||0;
-    closeModal();
-    sellHousesToCompany(myCo.id, buyerId, qty, price);
+    await runModalActionWithRetry(()=>sellHousesToCompany(myCo.id, buyerId, qty, price, {silent:true}));
   });
 }
 
@@ -14397,6 +14562,7 @@ function modalInsureBundle(claimMode, term, isRegenerate){
     <div class="small" style="margin-bottom:10px;">${termRollsText}${isSub ? '' : ` La probabilité (et donc la prime) de chaque ligne ci-dessous est recalculée exactement sur ce nombre de lancers restants — elle change si vous changez de terme. Le contrat signé expire réellement à la fin de ce terme: fin du semestre en cours si « Semestre » est choisi, fin de l'année financière en cours si « Année financière » est choisi.`}</div>
     <div id="bundleRows">${rows}</div>
     <div id="bundleSubtotal" class="small" style="margin-top:8px;font-weight:700;">Sous-total (0 case cochée): ${fmt(0)}</div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer la sélection</button>
@@ -14432,8 +14598,8 @@ function modalInsureBundle(claimMode, term, isRegenerate){
       const idx = c.dataset.idx;
       selections.push({item:items[idx], insurerId:'BANK', premium:premiums[idx]});
     });
-    closeModal();
-    await purchaseInsuranceBundle(selections, claimMode, term);
+    const res = await runModalActionWithRetry(()=>purchaseInsuranceBundle(selections, claimMode, term, {silent:true}));
+    if(res && res.ok && res.alreadyCovered && res.alreadyCovered.length) alert(`Déjà assuré(e) entretemps par une autre entreprise, ignoré(e): ${res.alreadyCovered.join(', ')}.`);
   });
 }
 
@@ -14487,85 +14653,101 @@ function modalAnnounceDividend(){
     <div class="small" style="margin-bottom:8px;">Trésorerie actuelle: <b>${fmt(myCo.cash)}</b>${inGracePeriod?` &nbsp;|&nbsp; Maximum autorisé pendant le délai de grâce: <b>${fmt(graceDividendCap)}</b>`:''}</div>
     <label>Montant total à annoncer (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" min="0" max="${Math.min(myCo.cash, graceDividendCap)}" id="mDividendAmount" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Annoncer</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  const companyId = myCo.id;
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const amount = parseFloat(document.getElementById('mDividendAmount').value)||0;
-    if(!(amount>0)){ alert('Le montant du dividende doit être positif.'); return; }
-    if(amount>myCo.cash+1e-9){ alert('Montant supérieur à la trésorerie disponible de l’entreprise.'); return; }
-    if(inGracePeriod && amount>graceDividendCap+1e-9){ alert(`En délai de grâce, le dividende ne peut pas dépasser la moyenne historique de vos annonces (${fmt(graceDividendCap)}).`); return; }
-    const realHolders = myCo.shareholders.filter(s=>s.playerId!=='BANK' && s.shares>1e-9);
-    const totalRealShares = realHolders.reduce((s,h)=>s+h.shares,0);
-    if(totalRealShares<=0){ alert('Aucun actionnaire réel — impossible d’annoncer un dividende.'); return; }
     
     
     
     
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    const curSemesterIdx = Math.floor(state.gameClock.rollCount/3);
-    const refSemesterIdx = curSemesterIdx>0 ? curSemesterIdx-1 : curSemesterIdx;
-    const netIncomeNow = incomeStatementFor(myCo.id, refSemesterIdx).netIncome;
-    const isBadDividend = netIncomeNow<0 || amount>netIncomeNow;
-    
-    
-    
-    
-    
-    
-    
-    myCo.cash -= amount;
-    logFin(myCo.id, 'dividend_payout', -amount);
-    const payAtRoll = (Math.floor(state.gameClock.rollCount/3)+1)*3; 
-    
-    
-    
-    
-    
-    
-    
-    state.dividendAnnouncements.push({
-      id: uid(), companyId: myCo.id, amount,
-      announcedAtRoll: state.gameClock.rollCount, payAtRoll,
-      recordHolders: realHolders.map(h=>({playerId:h.playerId, shares:h.shares})),
-      totalSharesAtAnnouncement: myCo.sharesIssued,
-    });
-    const entries = [{label:`${myCo.name} (dividende annoncé — immobilisé)`, amount:-amount}];
-    log(`${myCo.name} annonce un dividende total de ${fmt(amount)}, immobilisé et versé au prochain semestre (dans ${rollsUntilSemesterEnd()} lancer(s)) aux actionnaires actuels, au prorata de LEUR participation À CE MOMENT.`, entries);
-    
-    
-    
-    
-    
-    if(isBadDividend){
-      myCo.badDividendStreak = (myCo.badDividendStreak||0) + 1;
-      let qtyMin, qtyMax;
-      if(myCo.badDividendStreak<=1){
-        qtyMin = STOCK_TRIGGER_BAD_DIVIDEND_FIRST_MIN; qtyMax = STOCK_TRIGGER_BAD_DIVIDEND_FIRST_MAX;
+    const res = await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      if(!co) return {ok:false, error:null};
+      if(!(amount>0)) return {ok:false, error:'Le montant du dividende doit être positif.'};
+      
+      
+      if(co.preferredDividendArrears>0) return {ok:false, error:`${co.name} a un arriérage de dividende préférentiel de ${fmt(co.preferredDividendArrears)} à régler avant de pouvoir annoncer un dividende ordinaire — utilisez le bouton « Payer l'arriérage » dans Mon Entreprise.`};
+      const inGrace = co.bankOwnedGraceExpiry !== undefined;
+      const graceCap = inGrace ? companyAverageDividendAnnounced(co.id) : Infinity;
+      if(amount>co.cash+1e-9) return {ok:false, error:'Montant supérieur à la trésorerie disponible de l’entreprise.'};
+      if(inGrace && amount>graceCap+1e-9) return {ok:false, error:`En délai de grâce, le dividende ne peut pas dépasser la moyenne historique de vos annonces (${fmt(graceCap)}).`};
+      const realHolders = co.shareholders.filter(s=>s.playerId!=='BANK' && s.shares>1e-9);
+      const totalRealShares = realHolders.reduce((s,h)=>s+h.shares,0);
+      if(totalRealShares<=0) return {ok:false, error:'Aucun actionnaire réel — impossible d’annoncer un dividende.'};
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      const curSemesterIdx = Math.floor(state.gameClock.rollCount/3);
+      const refSemesterIdx = curSemesterIdx>0 ? curSemesterIdx-1 : curSemesterIdx;
+      const netIncomeNow = incomeStatementFor(co.id, refSemesterIdx).netIncome;
+      const isBadDividend = netIncomeNow<0 || amount>netIncomeNow;
+      
+      
+      
+      
+      
+      
+      
+      co.cash -= amount;
+      logFin(co.id, 'dividend_payout', -amount);
+      const payAtRoll = (Math.floor(state.gameClock.rollCount/3)+1)*3; 
+      
+      
+      
+      
+      
+      
+      
+      state.dividendAnnouncements.push({
+        id: uid(), companyId: co.id, amount,
+        announcedAtRoll: state.gameClock.rollCount, payAtRoll,
+        recordHolders: realHolders.map(h=>({playerId:h.playerId, shares:h.shares})),
+        totalSharesAtAnnouncement: co.sharesIssued,
+      });
+      const entries = [{label:`${co.name} (dividende annoncé — immobilisé)`, amount:-amount}];
+      log(`${co.name} annonce un dividende total de ${fmt(amount)}, immobilisé et versé au prochain semestre (dans ${rollsUntilSemesterEnd()} lancer(s)) aux actionnaires actuels, au prorata de LEUR participation À CE MOMENT.`, entries);
+      
+      
+      
+      
+      
+      if(isBadDividend){
+        co.badDividendStreak = (co.badDividendStreak||0) + 1;
+        let qtyMin, qtyMax;
+        if(co.badDividendStreak<=1){
+          qtyMin = STOCK_TRIGGER_BAD_DIVIDEND_FIRST_MIN; qtyMax = STOCK_TRIGGER_BAD_DIVIDEND_FIRST_MAX;
+        } else {
+          const bonus = Math.min(co.badDividendStreak-2, 5);
+          qtyMin = STOCK_TRIGGER_BAD_DIVIDEND_REPEAT_MIN + bonus; qtyMax = STOCK_TRIGGER_BAD_DIVIDEND_REPEAT_MAX + bonus;
+        }
+        injectStockCube(co, 'red', qtyMin, qtyMax);
+        const semesterRefLabel = refSemesterIdx===curSemesterIdx ? 'semestre en cours (aucun semestre clos encore disponible)' : 'dernier semestre clos';
+        const why = netIncomeNow<0 ? `le bénéfice du ${semesterRefLabel} est négatif (${fmt(netIncomeNow)})` : `le dividende (${fmt(amount)}) dépasse le bénéfice du ${semesterRefLabel} (${fmt(netIncomeNow)})`;
+        log(`⚠️ ${co.name}: ce dividende est mal perçu par le marché — ${why}${co.badDividendStreak>=2?` (${co.badDividendStreak}e fois consécutive, effet amplifié)`:' (1ère fois, tolérée)'}.`);
       } else {
-        const bonus = Math.min(myCo.badDividendStreak-2, 5);
-        qtyMin = STOCK_TRIGGER_BAD_DIVIDEND_REPEAT_MIN + bonus; qtyMax = STOCK_TRIGGER_BAD_DIVIDEND_REPEAT_MAX + bonus;
+        co.badDividendStreak = 0;
       }
-      injectStockCube(myCo, 'red', qtyMin, qtyMax);
-      const semesterRefLabel = refSemesterIdx===curSemesterIdx ? 'semestre en cours (aucun semestre clos encore disponible)' : 'dernier semestre clos';
-      const why = netIncomeNow<0 ? `le bénéfice du ${semesterRefLabel} est négatif (${fmt(netIncomeNow)})` : `le dividende (${fmt(amount)}) dépasse le bénéfice du ${semesterRefLabel} (${fmt(netIncomeNow)})`;
-      log(`⚠️ ${myCo.name}: ce dividende est mal perçu par le marché — ${why}${myCo.badDividendStreak>=2?` (${myCo.badDividendStreak}e fois consécutive, effet amplifié)`:' (1ère fois, tolérée)'}.`);
-    } else {
-      myCo.badDividendStreak = 0;
-    }
-    await saveGame(); closeModal(); render();
-    showTransactionPopup(`Dividende annoncé — ${myCo.name}`, entries);
+      return {ok:true, entries, coName:co.name};
+    });
+    if(res && res.ok && res.entries) showTransactionPopup(`Dividende annoncé — ${res.coName}`, res.entries);
   });
 }
 
@@ -14599,11 +14781,13 @@ function modalDividendRecurrentSettings(){
       Dividende par part: <b id="mDivPerShare">${fmtPrice(baseBenchmark)}</b>/part<br>
       Coût total par semestre: <b id="mDivTotalCost">${fmt(baseBenchmark*myCo.sharesIssued)}</b>
     </div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  const companyId = myCo.id;
   const tierInput = document.getElementById('mDivTier');
   const updatePreview = ()=>{
     const tier = parseInt(tierInput.value, 10);
@@ -14620,24 +14804,31 @@ function modalDividendRecurrentSettings(){
     
     
     
-    if(wantsAutoPay && myCo.dividendRecurrentNeedsReset){
-      myCo.dividendBenchmarkPerShare = myCo.dividendBenchmarkFounding;
-      myCo.dividendRecurrentNeedsReset = false;
-    }
-    myCo.dividendAutoPay = wantsAutoPay;
-    
-    
-    
-    
-    if(wantsAutoPay){
-      const pct = DIVIDEND_RECURRENT_TIER_PCT[tier-1];
-      const amount = myCo.dividendBenchmarkPerShare * pct * myCo.sharesIssued;
-      const tierReached = applyDividendGaugeTier(myCo, amount);
-      if(tierReached!==null && tierReached!==3){
-        log(`${myCo.name}: dividende récurrent ajusté au palier ${tierReached}/7 (nouveau benchmark: ${fmtPrice(myCo.dividendBenchmarkPerShare)}/part).`);
+    await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      if(!co) return {ok:false, error:null};
+      
+      
+      
+      if(wantsAutoPay && co.dividendRecurrentNeedsReset){
+        co.dividendBenchmarkPerShare = co.dividendBenchmarkFounding;
+        co.dividendRecurrentNeedsReset = false;
       }
-    }
-    await saveGame(); closeModal(); render();
+      co.dividendAutoPay = wantsAutoPay;
+      
+      
+      
+      
+      if(wantsAutoPay){
+        const pct = DIVIDEND_RECURRENT_TIER_PCT[tier-1];
+        const amount = co.dividendBenchmarkPerShare * pct * co.sharesIssued;
+        const tierReached = applyDividendGaugeTier(co, amount);
+        if(tierReached!==null && tierReached!==3){
+          log(`${co.name}: dividende récurrent ajusté au palier ${tierReached}/7 (nouveau benchmark: ${fmtPrice(co.dividendBenchmarkPerShare)}/part).`);
+        }
+      }
+      return {ok:true};
+    });
   });
 }
 
@@ -14653,17 +14844,23 @@ function modalIssueNewShares(){
     <div class="small" style="margin-bottom:8px;">Prix actuel: <b>${fmtPrice(myCo.stockPrice)}</b>/part &nbsp;|&nbsp; Marge d'émission restante: <b>${fmtShares(remaining)}</b> part(s) (10% de ${fmtShares(myCo.totalShares)})</div>
     <label>Quantité de parts à émettre</label>
     <input type="number" step="1" min="0" max="${remaining}" id="mIssueSharesQty" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Émettre</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  const companyId = myCo.id;
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const qty = parseFloat(document.getElementById('mIssueSharesQty').value)||0;
-    const res = issueNewShares(myCo, qty);
-    if(!res.ok){ alert(res.error); return; }
-    await saveGame(); closeModal(); render();
-    showTransactionPopup(`Émission de nouvelles actions — ${myCo.name}`, res.entries);
+    
+    
+    const res = await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      if(!co) return {ok:false, error:null};
+      return issueNewShares(co, qty);
+    });
+    if(res && res.ok && res.entries) showTransactionPopup(`Émission de nouvelles actions — ${myCo.name}`, res.entries);
   });
 }
 
@@ -14676,17 +14873,21 @@ function modalBuybackShares(){
     <div class="small" style="margin-bottom:8px;">Prix actuel: <b>${fmtPrice(myCo.stockPrice)}</b>/part &nbsp;|&nbsp; Trésorerie actuelle: <b>${fmt(myCo.cash)}</b></div>
     <label>Quantité de parts à racheter</label>
     <input type="number" step="1" min="0" id="mBuybackSharesQty" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Racheter</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  const companyId = myCo.id;
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const qty = parseFloat(document.getElementById('mBuybackSharesQty').value)||0;
-    const res = buybackShares(myCo, qty);
-    if(!res.ok){ alert(res.error); return; }
-    await saveGame(); closeModal(); render();
-    showTransactionPopup(`Rachat d'actions — ${myCo.name}`, res.entries);
+    const res = await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      if(!co) return {ok:false, error:null};
+      return buybackShares(co, qty);
+    });
+    if(res && res.ok && res.entries) showTransactionPopup(`Rachat d'actions — ${myCo.name}`, res.entries);
   });
 }
 
@@ -14704,18 +14905,18 @@ function modalIssuePreferredShares(){
     <input type="number" step="0.1" min="0" id="mPrefRate" value="5">
     <label>Prix de rachat (callable, en $/part)</label>
     <input type="number" step="0.01" min="0" id="mPrefCall" value="${((myCo.stockPrice||0)*1e6).toFixed(2)}">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Émettre l'offre</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  const companyId = myCo.id;
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const qty = parseFloat(document.getElementById('mPrefQty').value)||0;
     const rate = (parseFloat(document.getElementById('mPrefRate').value)||0)/100;
     const callPrice = (parseFloat(document.getElementById('mPrefCall').value)||0)/1e6;
-    const res = await issuePreferredShares(myCo.id, qty, rate, callPrice);
-    if(!res.ok){ alert(res.error); return; }
-    closeModal();
+    await runModalActionWithRetry(()=>issuePreferredShares(companyId, qty, rate, callPrice, {silent:true}));
   });
 }
 
@@ -14730,17 +14931,17 @@ function modalCallPreferredShares(issuanceId){
     <div class="small" style="margin-bottom:8px;">Prix de rachat: <b>${fmtPrice(issuance.callPrice)}</b>/part &nbsp;|&nbsp; En circulation: <b>${fmtShares(issuance.qtyOutstanding)}</b> &nbsp;|&nbsp; Trésorerie actuelle: <b>${fmt(myCo.cash)}</b></div>
     <label>Quantité de parts à racheter</label>
     <input type="number" step="1" min="0" max="${issuance.qtyOutstanding}" id="mPrefCallQty" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Racheter</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  const companyId = myCo.id;
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const qty = parseFloat(document.getElementById('mPrefCallQty').value)||0;
-    const res = await callPreferredShares(myCo.id, issuanceId, qty);
-    if(!res.ok){ alert(res.error); return; }
-    closeModal();
-    showTransactionPopup(`Rachat de parts privilégiées — ${myCo.name}`, res.entries);
+    const res = await runModalActionWithRetry(()=>callPreferredShares(companyId, issuanceId, qty, {silent:true}));
+    if(res && res.ok && res.entries) showTransactionPopup(`Rachat de parts privilégiées — ${myCo.name}`, res.entries);
   });
 }
 function modalPublicCeoStatement(){
@@ -14754,30 +14955,39 @@ function modalPublicCeoStatement(){
   openModal(`
     <h3>Sortie publique du CEO — ${esc(myCo.name)}</h3>
     <div class="small" style="margin-bottom:10px;">⚠️ Action gratuite mais irréversible, utilisable une seule fois par partie. Le CEO sort publiquement rassurer le marché sur la santé de l'entreprise, à son entière discrétion. C'est un jugement à risque : si le marché n'est pas réellement défavorable en ce moment, la sortie sonne creux et n'a aucun effet — l'occasion est perdue pour de bon. En cas de succès, le marché se calme sans s'inverser, puis l'apaisement s'estompe progressivement. N'affecte jamais l'endettement ni les fondamentaux réels de l'entreprise.</div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Sortir publiquement</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  const companyId = myCo.id;
   document.getElementById('mOk').addEventListener('click', async ()=>{
-    if(myCo.publicStatementUsed){ alert('Cette entreprise a déjà utilisé sa sortie publique du CEO — une seule fois par partie.'); closeModal(); render(); return; }
-    if(myCo.lastResortLoanUsed){ alert(`${myCo.name} a contracté un prêt de dernier recours — la sortie publique du CEO n'est plus disponible pour cette entreprise.`); closeModal(); render(); return; }
     
     
     
     
-    const result = pressPublicCeoStatement(myCo);
     
     
     
-    
-    state.ceoPublicStatements.push({id: uid(), companyId: myCo.id, ceoId: myCo.ceoId, roll: state.gameClock.rollCount, success: result.success});
-    if(result.success){
-      log(`${myCo.name} — sortie publique du CEO : les marchés se calment.`);
-    } else {
-      log(`${myCo.name} — sortie publique du CEO : aucun effet, le marché n'était pas réellement défavorable à l'entreprise en ce moment — l'occasion est perdue pour le reste de la partie.`);
-    }
-    await saveGame(); closeModal(); render();
+    await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      if(!co) return {ok:false, error:null};
+      if(co.publicStatementUsed) return {ok:false, error:'Cette entreprise a déjà utilisé sa sortie publique du CEO — une seule fois par partie.'};
+      if(co.lastResortLoanUsed) return {ok:false, error:`${co.name} a contracté un prêt de dernier recours — la sortie publique du CEO n'est plus disponible pour cette entreprise.`};
+      const result = pressPublicCeoStatement(co);
+      
+      
+      
+      
+      state.ceoPublicStatements.push({id: uid(), companyId: co.id, ceoId: co.ceoId, roll: state.gameClock.rollCount, success: result.success});
+      if(result.success){
+        log(`${co.name} — sortie publique du CEO : les marchés se calment.`);
+      } else {
+        log(`${co.name} — sortie publique du CEO : aucun effet, le marché n'était pas réellement défavorable à l'entreprise en ce moment — l'occasion est perdue pour le reste de la partie.`);
+      }
+      return {ok:true};
+    });
   });
 }
 
@@ -14801,16 +15011,18 @@ function modalLastResortLoan(){
       <div>• La <b>sortie publique du CEO</b> devient définitivement indisponible pour ${esc(myCo.name)} — pour le reste de la partie (l'annonce CEO différée à 1 an, elle, reste possible).</div>
       <div style="margin-top:6px;">Ces restrictions sont propres à ${esc(myCo.name)} — le trading sur les autres entreprises n'est pas affecté.</div>
     </div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-brick" id="mOk">Je comprends — contracter ce prêt</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  const companyId = myCo.id;
   document.getElementById('mOk').addEventListener('click', async ()=>{
-    const res = triggerLastResortLoan(myCo.id);
-    if(!res.ok){ alert(res.error); closeModal(); render(); return; }
-    await saveGame(); closeModal(); render();
-    showTransactionPopup(`Prêt de dernier recours — ${myCo.name}`, res.entries);
+    
+    
+    const res = await runModalActionWithRetry(()=>triggerLastResortLoan(companyId));
+    if(res && res.ok && res.entries) showTransactionPopup(`Prêt de dernier recours — ${myCo.name}`, res.entries);
   });
 }
 
@@ -14849,6 +15061,7 @@ function modalBuySellShares(direction){
     </select>
     <label id="mTradeAmountLabel">Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
     <input type="number" step="0.01" min="0" id="mTradeAmount" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">${dirLabel}</button>
@@ -14895,19 +15108,26 @@ function modalBuySellShares(direction){
   });
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
-    const co = companyById(document.getElementById('mTradeCompany').value);
+    const companyId = document.getElementById('mTradeCompany').value;
     const unit = document.getElementById('mTradeUnit').value;
     const raw = parseFloat(document.getElementById('mTradeAmount').value)||0;
-    if(!co){ alert('Entreprise introuvable.'); return; }
     
     
     
-    const amount = unit==='shares' ? raw*(co.stockPrice||0) : raw;
-    const res = tradeCompanyShares(co, me, direction, amount);
-    if(!res.ok){ alert(res.error); return; }
-    log(`${me.name} ${direction==='buy'?'achète':'vend'} des actions de ${co.name} pour ${fmt(amount)} (${res.qty.toFixed(4)} part(s), au prix courant de ${fmtPrice(co.stockPrice)}/part).`, res.entries);
-    await saveGame(); closeModal(); render();
-    showTransactionPopup(`${dirLabel} d'actions — ${co.name}`, res.entries);
+    const res = await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      const pl = state.players.find(p=>p.id===myPlayerId);
+      if(!co || !pl) return {ok:false, error:'Entreprise introuvable.'};
+      
+      
+      
+      const amount = unit==='shares' ? raw*(co.stockPrice||0) : raw;
+      const r = tradeCompanyShares(co, pl, direction, amount);
+      if(!r.ok) return r;
+      log(`${pl.name} ${direction==='buy'?'achète':'vend'} des actions de ${co.name} pour ${fmt(amount)} (${r.qty.toFixed(4)} part(s), au prix courant de ${fmtPrice(co.stockPrice)}/part).`, r.entries);
+      return {...r, coName:co.name};
+    });
+    if(res && res.ok && res.entries) showTransactionPopup(`${dirLabel} d'actions — ${res.coName}`, res.entries);
   });
 }
 
@@ -14953,6 +15173,7 @@ function modalShortShares(mode){
     </select>
     <label id="mShortAmountLabel">Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
     <input type="number" step="0.01" min="0" id="mShortAmount" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">${dirLabel}</button>
@@ -15003,16 +15224,22 @@ function modalShortShares(mode){
   });
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
-    const co = companyById(document.getElementById('mShortCompany').value);
+    const companyId = document.getElementById('mShortCompany').value;
     const unit = document.getElementById('mShortUnit').value;
     const raw = parseFloat(document.getElementById('mShortAmount').value)||0;
-    if(!co){ alert('Entreprise introuvable.'); return; }
-    const amount = unit==='shares' ? raw*(co.stockPrice||0) : raw;
-    const res = mode==='open' ? openShortPosition(co, me, amount) : closeShortPosition(co, me, amount);
-    if(!res.ok){ alert(res.error); return; }
-    log(`${me.name} ${mode==='open'?'vend à découvert':'rachète pour clôturer'} des actions de ${co.name} pour ${fmt(amount)} (${res.qty.toFixed(4)} part(s), au prix courant de ${fmtPrice(co.stockPrice)}/part).`, res.entries);
-    await saveGame(); closeModal(); render();
-    showTransactionPopup(`${dirLabel} — ${co.name}`, res.entries);
+    
+    
+    const res = await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      const pl = state.players.find(p=>p.id===myPlayerId);
+      if(!co || !pl) return {ok:false, error:'Entreprise introuvable.'};
+      const amount = unit==='shares' ? raw*(co.stockPrice||0) : raw;
+      const r = mode==='open' ? openShortPosition(co, pl, amount) : closeShortPosition(co, pl, amount);
+      if(!r.ok) return r;
+      log(`${pl.name} ${mode==='open'?'vend à découvert':'rachète pour clôturer'} des actions de ${co.name} pour ${fmt(amount)} (${r.qty.toFixed(4)} part(s), au prix courant de ${fmtPrice(co.stockPrice)}/part).`, r.entries);
+      return {...r, coName:co.name};
+    });
+    if(res && res.ok && res.entries) showTransactionPopup(`${dirLabel} — ${res.coName}`, res.entries);
   });
 }
 
@@ -15038,33 +15265,125 @@ function modalAnnounceCeoTrade(){
   const ceoCapYear = currentGameYear();
   const ceoCapAlreadySold = ceoSharesSoldInYear(myCo.id, ceoCapYear);
   const ceoCapTotal = myCo.totalShares * CEO_SELL_ANNUAL_CAP_PCT;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  const ceoStakeEntry = myCo.shareholders.find(s=>s.playerId===myCo.ceoId);
+  const ceoShares = ceoStakeEntry ? ceoStakeEntry.shares : 0;
   openModal(`
     <h3>Annoncer une transaction — ${esc(myCo.name)}</h3>
     <div class="small" style="margin-bottom:10px;">En tant que CEO, vous ne pouvez pas trader directement les parts de votre propre entreprise (délit d'initié intégré au jeu). Vous pouvez toutefois ANNONCER publiquement une intention d'achat ou de vente — exécutée AUTOMATIQUEMENT dans 1 AN (6 lancers), au prix COURANT à ce moment-là (pas celui d'aujourd'hui). Visible par tous les joueurs dès sa création. <b>Irrévocable</b> : aucune option d'annulation une fois l'annonce faite.</div>
     <div class="small" style="margin-bottom:10px;">⚖️ Plafond légal — à la VENTE seulement (jamais à l'achat) : le CEO ne peut vendre plus de ${(CEO_SELL_ANNUAL_CAP_PCT*100).toFixed(0)}% des parts totales de son entreprise (${fmtShares(myCo.totalShares)} parts) par année financière. ${fmtShares(ceoCapAlreadySold)} part(s) déjà vendue(s) cette année financière sur ${fmtShares(ceoCapTotal)} autorisées — le plafond réel de l'ANNÉE FINANCIÈRE SUIVANTE (celle où cette annonce s'exécutera) n'est vérifié qu'à l'exécution, une fois le prix connu ; une vente qui le dépasserait alors sera intégralement annulée.</div>
     <label>Direction</label>
     <select id="mCeoAnnounceDir"><option value="buy">Achat</option><option value="sell">Vente</option></select>
-    <label>Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
+    <label>Unité</label>
+    <select id="mCeoAnnounceUnit">
+      <option value="dollars">Montant (en ${esc(state.unit)})</option>
+      <option value="shares">Nombre de parts</option>
+    </select>
+    <div class="small" id="mCeoAnnounceInfo" style="margin-bottom:8px;"></div>
+    <label id="mCeoAnnounceAmountLabel">Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
     <input type="number" step="0.01" min="0" id="mCeoAnnounceAmount" value="0">
+    <div class="small" id="mCeoAnnounceSellAllWrap" style="margin:6px 0 10px;display:none;"><span style="cursor:pointer;text-decoration:underline;" id="mCeoAnnounceSellAll">Tout vendre (${fmtShares(ceoShares)} part(s) détenue(s) au prix courant)</span></div>
+    <div class="small" id="mCeoAnnounceRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Annoncer (irrévocable)</button>
     </div>`);
+  let lastCeoAnnounceUnit = 'dollars';
+  const updateCeoAnnounceAmountLabel = ()=>{
+    const unit = document.getElementById('mCeoAnnounceUnit').value;
+    document.getElementById('mCeoAnnounceAmountLabel').innerHTML = unit==='shares'
+      ? 'Nombre de parts'
+      : `Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)`;
+  };
+  const updateCeoAnnounceSellAllVisibility = ()=>{
+    const dir = document.getElementById('mCeoAnnounceDir').value;
+    document.getElementById('mCeoAnnounceSellAllWrap').style.display = dir==='sell' ? 'block' : 'none';
+  };
+  const refreshCeoAnnounceInfo = ()=>{
+    const unit = document.getElementById('mCeoAnnounceUnit').value;
+    const raw = parseFloat(document.getElementById('mCeoAnnounceAmount').value)||0;
+    const price = myCo.stockPrice||0;
+    const qty = unit==='shares' ? raw : (price>0 ? raw/price : 0);
+    const amt = unit==='shares' ? qty*price : raw;
+    document.getElementById('mCeoAnnounceInfo').textContent = unit==='shares'
+      ? `Prix courant: ${fmtPrice(price)}/part — équivaut à ${fmt(amt)} au prix d'aujourd'hui (le nombre RÉEL de parts échangées dans 1 an dépendra du prix futur, inconnu pour l'instant).`
+      : `Prix courant: ${fmtPrice(price)}/part — ${qty.toFixed(4)} part(s) au prix d'aujourd'hui pour ce montant (idem: le nombre réel dans 1 an dépendra du prix futur).`;
+  };
+  updateCeoAnnounceSellAllVisibility();
+  refreshCeoAnnounceInfo();
+  document.getElementById('mCeoAnnounceDir').addEventListener('change', updateCeoAnnounceSellAllVisibility);
+  document.getElementById('mCeoAnnounceAmount').addEventListener('input', refreshCeoAnnounceInfo);
+  document.getElementById('mCeoAnnounceUnit').addEventListener('change', ()=>{
+    
+    
+    
+    const newUnit = document.getElementById('mCeoAnnounceUnit').value;
+    const price = myCo.stockPrice||0;
+    const raw = parseFloat(document.getElementById('mCeoAnnounceAmount').value)||0;
+    if(price>0){
+      const qty = lastCeoAnnounceUnit==='shares' ? raw : raw/price;
+      const amt = lastCeoAnnounceUnit==='shares' ? raw*price : raw;
+      document.getElementById('mCeoAnnounceAmount').value = (newUnit==='shares' ? qty : amt).toFixed(newUnit==='shares'?4:2);
+    }
+    lastCeoAnnounceUnit = newUnit;
+    updateCeoAnnounceAmountLabel();
+    refreshCeoAnnounceInfo();
+  });
+  document.getElementById('mCeoAnnounceSellAll').addEventListener('click', ()=>{
+    const stake = myCo.shareholders.find(s=>s.playerId===myCo.ceoId);
+    const shares = stake ? stake.shares : 0;
+    const unit = document.getElementById('mCeoAnnounceUnit').value;
+    const price = myCo.stockPrice||0;
+    document.getElementById('mCeoAnnounceAmount').value = unit==='shares' ? shares.toFixed(4) : (shares*price).toFixed(2);
+    refreshCeoAnnounceInfo();
+  });
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const direction = document.getElementById('mCeoAnnounceDir').value;
-    const amount = parseFloat(document.getElementById('mCeoAnnounceAmount').value)||0;
-    if(!(amount>0)){ alert('Le montant doit être positif.'); return; }
-    if(state.gameEndedReason){ alert('La partie est terminée — plus aucun trading possible.'); return; }
+    const unit = document.getElementById('mCeoAnnounceUnit').value;
+    const raw = parseFloat(document.getElementById('mCeoAnnounceAmount').value)||0;
+    const companyId = myCo.id;
     
     
     
     
     
-    const announcedAtRoll = state.gameClock.rollCount;
-    state.ceoAnnouncements.push({id: uid(), companyId: myCo.id, ceoId: myCo.ceoId, direction, amount, announcedAtRoll, executeAtRoll: announcedAtRoll+6});
-    log(`${myCo.name} : le CEO annonce publiquement une intention ${direction==='buy'?"d'achat":'de vente'} de ${fmt(amount)} de ses propres parts — exécution automatique dans 1 an, irrévocable.`);
-    await saveGame(); closeModal(); render();
+    
+    const okBtn = document.getElementById('mOk');
+    const statusEl = document.getElementById('mCeoAnnounceRetryStatus');
+    okBtn.disabled = true;
+    const res = await attemptActionWithRetry(()=>{
+      const co = companyById(companyId);
+      if(!co) return {ok:false, error:'Entreprise introuvable.'};
+      if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
+      
+      
+      
+      
+      
+      const amount = unit==='shares' ? raw*(co.stockPrice||0) : raw;
+      if(!(amount>0)) return {ok:false, error:'Le montant doit être positif.'};
+      
+      
+      
+      
+      
+      const announcedAtRoll = state.gameClock.rollCount;
+      state.ceoAnnouncements.push({id: uid(), companyId: co.id, ceoId: co.ceoId, direction, amount, announcedAtRoll, executeAtRoll: announcedAtRoll+6});
+      log(`${co.name} : le CEO annonce publiquement une intention ${direction==='buy'?"d'achat":'de vente'} de ${fmt(amount)} de ses propres parts (au prix d'aujourd'hui de ${fmtPrice(co.stockPrice||0)}/part) — exécution automatique dans 1 an, irrévocable.`);
+      return {ok:true};
+    }, {onRetry: (attempt)=>{ statusEl.textContent = `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; }});
+    okBtn.disabled = false;
+    if(!res.ok){ alert(res.error); return; }
+    closeModal(); render();
   });
 }
 
@@ -15091,6 +15410,7 @@ function modalBonds(mode){
     ${maxInfo}
     <label>Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
     <input type="number" step="0.01" min="0" id="mBondAmount" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">${confirmLabel}</button>
@@ -15098,13 +15418,20 @@ function modalBonds(mode){
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const amount = parseFloat(document.getElementById('mBondAmount').value)||0;
-    const res = mode==='invest' ? buyBonds(me, amount) : mode==='withdraw' ? withdrawBonds(me, amount) : shortBonds(me, amount);
-    if(!res.ok){ alert(res.error); return; }
-    const verbLabel = mode==='invest' ? 'investit' : mode==='withdraw' ? 'retire' : 'emprunte';
-    const prepLabel = mode==='borrow' ? 'à' : (mode==='invest' ? 'dans' : 'de');
-    log(`${me.name} ${verbLabel} ${fmt(amount)} ${prepLabel} ses bons gouvernementaux.`, res.entries);
-    await saveGame(); closeModal(); render();
-    showTransactionPopup(label, res.entries);
+    
+    
+    
+    const res = await runModalActionWithRetry(()=>{
+      const pl = state.players.find(p=>p.id===myPlayerId);
+      if(!pl) return {ok:false, error:null};
+      const r = mode==='invest' ? buyBonds(pl, amount) : mode==='withdraw' ? withdrawBonds(pl, amount) : shortBonds(pl, amount);
+      if(!r.ok) return r;
+      const verbLabel = mode==='invest' ? 'investit' : mode==='withdraw' ? 'retire' : 'emprunte';
+      const prepLabel = mode==='borrow' ? 'à' : (mode==='invest' ? 'dans' : 'de');
+      log(`${pl.name} ${verbLabel} ${fmt(amount)} ${prepLabel} ses bons gouvernementaux.`, r.entries);
+      return r;
+    });
+    if(res && res.ok && res.entries) showTransactionPopup(label, res.entries);
   });
 }
 
@@ -15203,6 +15530,7 @@ function modalOptionTrade(){
     <label>Contrats (levier 100X — 1 contrat = droit sur 100 parts du sous-jacent)</label>
     <input type="number" step="1" min="1" id="mOptShares" value="1">
     <div class="small" id="mOptInfo" style="margin-bottom:8px;"></div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
@@ -15251,19 +15579,26 @@ function modalOptionTrade(){
   document.getElementById('mOptShares').addEventListener('input', refreshInfo);
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
-    const co = companyById(document.getElementById('mOptCompany').value);
+    const companyId = document.getElementById('mOptCompany').value;
     const type = document.getElementById('mOptType').value;
     const side = document.getElementById('mOptSide').value;
     const strike = parseFloat(document.getElementById('mOptStrike').value)||0;
     const expiryRoll = parseInt(document.getElementById('mOptExpiry').value)||0;
     const shares = parseInt(document.getElementById('mOptShares').value)||0;
-    if(!co){ alert('Entreprise introuvable.'); return; }
-    const res = openOptionPosition(co, me, type, side, strike, expiryRoll, shares);
-    if(!res.ok){ alert(res.error); return; }
-    const typeLabel = type==='call' ? 'CALL' : 'PUT';
-    log(`${me.name} ${side==='long'?'achète':'écrit'} une option ${typeLabel} sur ${co.name} (strike ${fmtPrice(strike)}, échéance au lancer ${expiryRoll}, ${res.qty} contrat(s) — levier 100X).`, res.entries);
-    await saveGame(); closeModal(); render();
-    showTransactionPopup(`Nouvelle position d'option — ${co.name}`, res.entries);
+    
+    
+    
+    const res = await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      const pl = state.players.find(p=>p.id===myPlayerId);
+      if(!co || !pl) return {ok:false, error:'Entreprise introuvable.'};
+      const r = openOptionPosition(co, pl, type, side, strike, expiryRoll, shares);
+      if(!r.ok) return r;
+      const typeLabel = type==='call' ? 'CALL' : 'PUT';
+      log(`${pl.name} ${side==='long'?'achète':'écrit'} une option ${typeLabel} sur ${co.name} (strike ${fmtPrice(strike)}, échéance au lancer ${expiryRoll}, ${r.qty} contrat(s) — levier 100X).`, r.entries);
+      return {...r, coName:co.name};
+    });
+    if(res && res.ok && res.entries) showTransactionPopup(`Nouvelle position d'option — ${res.coName}`, res.entries);
   });
 }
 
@@ -15312,6 +15647,7 @@ function modalOptionStrategy(){
     <label>Contrats (levier 100X — même nombre sur les 2 jambes)</label>
     <input type="number" step="1" min="1" id="mOptStratContracts" value="1">
     <div class="small" id="mOptStratInfo" style="margin-bottom:8px;"></div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
@@ -15368,20 +15704,27 @@ function modalOptionStrategy(){
   document.getElementById('mOptStratContracts').addEventListener('input', refreshInfo);
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
-    const co = companyById(document.getElementById('mOptStratCompany').value);
+    const companyId = document.getElementById('mOptStratCompany').value;
     const kind = document.getElementById('mOptStratKind').value;
     const direction = document.getElementById('mOptStratDirection').value;
     const strikeLow = parseFloat(document.getElementById('mOptStratStrikeLow').value)||0;
     const strikeHigh = parseFloat(document.getElementById('mOptStratStrikeHigh').value)||0;
     const expiryRoll = parseInt(document.getElementById('mOptStratExpiry').value)||0;
     const contracts = parseInt(document.getElementById('mOptStratContracts').value)||0;
-    if(!co){ alert('Entreprise introuvable.'); return; }
-    const res = openOptionStrategy(co, me, kind, direction, strikeLow, strikeHigh, expiryRoll, contracts);
-    if(!res.ok){ alert(res.error); return; }
-    const label = OPTION_STRATEGY_LABELS[kind];
-    log(`${me.name} ${direction==='buy'?'achète':'vend'} un ${label} sur ${co.name} (échéance au lancer ${expiryRoll}, ${contracts} contrat(s) — levier 100X, règlement cash uniquement).`, res.entries);
-    await saveGame(); closeModal(); render();
-    showTransactionPopup(`Nouvelle stratégie d'options — ${co.name}`, res.entries);
+    
+    
+    
+    const res = await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      const pl = state.players.find(p=>p.id===myPlayerId);
+      if(!co || !pl) return {ok:false, error:'Entreprise introuvable.'};
+      const r = openOptionStrategy(co, pl, kind, direction, strikeLow, strikeHigh, expiryRoll, contracts);
+      if(!r.ok) return r;
+      const label = OPTION_STRATEGY_LABELS[kind];
+      log(`${pl.name} ${direction==='buy'?'achète':'vend'} un ${label} sur ${co.name} (échéance au lancer ${expiryRoll}, ${contracts} contrat(s) — levier 100X, règlement cash uniquement).`, r.entries);
+      return {...r, coName:co.name};
+    });
+    if(res && res.ok && res.entries) showTransactionPopup(`Nouvelle stratégie d'options — ${res.coName}`, res.entries);
   });
 }
 
@@ -15409,6 +15752,7 @@ function modalSellPreferredShares(companyId, issuanceId){
     <div class="small" style="margin-bottom:8px;">Vous détenez: <b>${fmtShares(holder.qty)}</b> part(s) &nbsp;|&nbsp; Prix courant: <b>${fmtPrice(price)}</b>/part</div>
     <label>Quantité à mettre en vente</label>
     <input type="number" step="1" min="0" max="${holder.qty}" id="mPrefSellQty" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Mettre en vente</button>
@@ -15416,9 +15760,7 @@ function modalSellPreferredShares(companyId, issuanceId){
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const qty = parseFloat(document.getElementById('mPrefSellQty').value)||0;
-    const res = await listPreferredSharesForSale(companyId, issuanceId, me, qty);
-    if(!res.ok){ alert(res.error); return; }
-    closeModal();
+    await runModalActionWithRetry(()=>listPreferredSharesForSale(companyId, issuanceId, me, qty, {silent:true}));
   });
 }
 function modalBuyPreferredListing(listingId){
@@ -15434,6 +15776,7 @@ function modalBuyPreferredListing(listingId){
     <div class="small" style="margin-bottom:8px;">Quantité en vente: <b>${fmtShares(listing.qty)}</b> &nbsp;|&nbsp; Prix courant: <b>${fmtPrice(price)}</b>/part &nbsp;|&nbsp; Votre encaisse: <b>${fmt(me.cash)}</b></div>
     <label>Quantité à acheter</label>
     <input type="number" step="1" min="0" max="${listing.qty}" id="mPrefBuyQty" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Acheter</button>
@@ -15441,10 +15784,8 @@ function modalBuyPreferredListing(listingId){
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const qty = parseFloat(document.getElementById('mPrefBuyQty').value)||0;
-    const res = await buyPreferredSharesFromListing(listingId, me, qty);
-    if(!res.ok){ alert(res.error); return; }
-    closeModal();
-    showTransactionPopup(`Achat de parts privilégiées — ${co.name}`, res.entries);
+    const res = await runModalActionWithRetry(()=>buyPreferredSharesFromListing(listingId, me.id, qty, {silent:true}));
+    if(res && res.ok && res.entries) showTransactionPopup(`Achat de parts privilégiées — ${co.name}`, res.entries);
   });
 }
 async function closeOptionStrategyFromUi(strategyId){
@@ -15529,6 +15870,7 @@ function modalInsureProperty(pid, term){
     <label>Prime négociée (en ${esc(state.unit)})</label>
     <input type="number" step="0.0001" min="0.0001" id="mPremium" value="${q.ceil.toFixed(4)}">
     <div class="small">Franchise appliquée (fixée pour ce tour dans l'onglet Mon Entreprise): <b>${fmt(myCo.currentDeductible||0)}</b></div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
@@ -15559,24 +15901,33 @@ function modalInsureProperty(pid, term){
     }
     if(isSub){
       if(p.subInsurance){ alert(`${p.name} a déjà une assurance sous-standard active.`); return; }
-      closeModal();
-      await buySubInsurance(pid, companyId, insurerId, premium);
+      
+      
+      await runModalActionWithRetry(()=>buySubInsurance(pid, companyId, insurerId, premium, {silent:true}));
       return;
     }
     if(p.insurance){ alert(`${p.name} est déjà assuré.`); closeModal(); return; }
-    const co = companyById(companyId);
-    if(!co){ closeModal(); return; }
-    const deductible = co.currentDeductible||0;
-    co.cash -= premium;
-    logFin(co.id, 'insurance_premium_expense', -premium);
-    const insuredPl = state.players.find(x=>x.id===co.ceoId);
-    if(insuredPl) insuredPl.stats.spentInsurance += premium;
-    state.bank.cash += premium;
     
-    p.insurance = {insuredCompanyId:companyId, premium, insurerId, deductible, signedAtRoll:state.gameClock.rollCount, quotedTerm:term};
-    log(`${co.name} a assuré ${p.name} auprès de ${insurerLabel(insurerId)} pour une prime de ${premium.toFixed(2)} (franchise ${deductible.toFixed(2)})`,
-      [{label:`${co.name} (prime)`, amount:-premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:premium}]);
-    await saveGame(); closeModal(); render();
+    
+    
+    await runModalActionWithRetry(()=>{
+      const pp = state.properties.find(x=>x.id===pid);
+      if(!pp) return {ok:false, error:null};
+      if(pp.insurance) return {ok:false, error:`${pp.name} est déjà assuré.`};
+      const co = companyById(companyId);
+      if(!co) return {ok:false, error:null};
+      const deductible = co.currentDeductible||0;
+      co.cash -= premium;
+      logFin(co.id, 'insurance_premium_expense', -premium);
+      const insuredPl = state.players.find(x=>x.id===co.ceoId);
+      if(insuredPl) insuredPl.stats.spentInsurance += premium;
+      state.bank.cash += premium;
+      
+      pp.insurance = {insuredCompanyId:companyId, premium, insurerId, deductible, signedAtRoll:state.gameClock.rollCount, quotedTerm:term};
+      log(`${co.name} a assuré ${pp.name} auprès de ${insurerLabel(insurerId)} pour une prime de ${premium.toFixed(2)} (franchise ${deductible.toFixed(2)})`,
+        [{label:`${co.name} (prime)`, amount:-premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:premium}]);
+      return {ok:true};
+    });
   });
 }
 async function cancelPropInsurance(pid){
@@ -15657,15 +16008,16 @@ function modalIssueLoan(){
     <div class="small" style="margin-bottom:8px;"><b>${esc(myCo.name)}</b></div>
     <label>Capital demandé (en ${esc(state.unit)}, max ${fmt(capLeft)})</label>
     <input type="number" step="0.01" min="0" max="${capLeft}" id="mLoanPrincipalModal" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Publier la demande</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
-  document.getElementById('mOk').addEventListener('click', ()=>{
+  const companyId = myCo.id;
+  document.getElementById('mOk').addEventListener('click', async ()=>{
     const principal = parseFloat(document.getElementById('mLoanPrincipalModal').value)||0;
-    closeModal();
-    postLoanRequest(myCo.id, principal);
+    await runModalActionWithRetry(()=>postLoanRequest(companyId, principal, {silent:true}));
   });
 }
 
@@ -15710,6 +16062,7 @@ function modalProposeSwap(){
         <input type="number" min="1" step="1" id="mSwapYears" value="1" style="width:90px;">
       </div>
     </div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Proposer le swap</button>
@@ -15719,7 +16072,8 @@ function modalProposeSwap(){
     const companyBId = document.getElementById('mSwapCompanyB').value;
     document.getElementById('mSwapPropB').innerHTML = propBOptionsHtml(companyBId);
   });
-  document.getElementById('mOk').addEventListener('click', ()=>{
+  const companyId = myCo.id;
+  document.getElementById('mOk').addEventListener('click', async ()=>{
     const [typeA, idA] = document.getElementById('mSwapPropA').value.split(':');
     const propA = assetHostProperty({type:typeA, id:idA}).id;
     const capA = parseFloat(document.getElementById('mSwapCapA').value)||0;
@@ -15730,8 +16084,7 @@ function modalProposeSwap(){
     const propB = assetHostProperty({type:typeB, id:idB}).id;
     const capB = parseFloat(document.getElementById('mSwapCapB').value)||0;
     const years = parseInt(document.getElementById('mSwapYears').value)||1;
-    closeModal();
-    proposeRentSwap(propA, myCo.id, propB, companyB, years, capA>0?capA:null, capB>0?capB:null);
+    await runModalActionWithRetry(()=>proposeRentSwap(propA, companyId, propB, companyB, years, capA>0?capA:null, capB>0?capB:null, {silent:true}));
   });
 }
 
@@ -15772,17 +16125,25 @@ function modalProposeCompensation(){
     <select id="mCompPartner">${activeCompanyOptions(null, myCo.id, true)}</select>
     <label>Intérêt au règlement (%)</label>
     <input type="number" step="1" min="0" id="mCompRate" value="10">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Proposer l'accord (${fmt(state.settings.rentCompensationFee)} chacune à l'acceptation)</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  const companyId = myCo.id;
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const partnerId = document.getElementById('mCompPartner').value;
     const rate = parseFloat(document.getElementById('mCompRate').value)||0;
     
-    const ok = await proposeRentCompensation(myCo.id, partnerId, rate);
-    if(ok) closeModal();
+    
+    
+    
+    await runModalActionWithRetry(async ()=>{
+      const compOpts = {silent:true};
+      const ok = await proposeRentCompensation(companyId, partnerId, rate, compOpts);
+      return ok ? {ok:true} : {ok:false, error:compOpts.lastError};
+    });
   });
 }
 
@@ -15815,6 +16176,7 @@ function modalSubInsureProperty(pid){
     <div class="small">Vendeur: <b>Banque</b> (seule option \u00e0 la signature \u2014 une autre entreprise peut reprendre ce contrat par la suite depuis l'onglet Mon Entreprise (section Marché des contrats))</div>
     <label>Prime n\u00e9goci\u00e9e (en ${esc(state.unit)})</label>
     <input type="number" step="0.0001" min="0.0001" id="mPremium" value="${q.ceil.toFixed(4)}">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer</button>
@@ -15826,21 +16188,27 @@ function modalSubInsureProperty(pid){
     const premium = parseFloat(document.getElementById('mPremium').value)||0;
     if(!(premium>0)){ alert('La prime doit être positive.'); return; }
     if(p.subInsurance){ alert(`${p.name} a déjà une assurance sous-standard active.`); closeModal(); return; }
-    await buySubInsurance(pid, companyId, insurerId, premium);
-    closeModal();
+    await runModalActionWithRetry(()=>buySubInsurance(pid, companyId, insurerId, premium, {silent:true}));
   });
 }
 
-async function buySubInsurance(pid, companyId, insurerId, premium){
+async function buySubInsurance(pid, companyId, insurerId, premium, opts){
+  
+  
+  
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const p = state.properties.find(x=>x.id===pid);
   const co = companyById(companyId);
-  if(!p || !co) return;
+  if(!p || !co) return fail(null);
   
   
   
   
   
-  if(!(premium>0) || p.subInsurance) return;
+  if(!(premium>0) || p.subInsurance) return fail(null);
   co.cash -= premium;
   logFin(co.id, 'insurance_premium_expense', -premium);
   const insuredPl = state.players.find(x=>x.id===co.ceoId);
@@ -15852,7 +16220,8 @@ async function buySubInsurance(pid, companyId, insurerId, premium){
   p.subInsurance = {insuredCompanyId:companyId, premium, insurerId, deductible, signedAtRoll:state.gameClock.rollCount};
   log(`${co.name} prend une assurance sous-standard (1 lancé) sur ${p.name} auprès de ${insurerLabel(insurerId)} pour une prime de ${premium.toFixed(2)} (franchise ${deductible.toFixed(2)}).`,
     [{label:`${co.name} (prime sous-standard)`, amount:-premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:premium}]);
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 async function cancelSubInsurance(pid){
   const p = state.properties.find(x=>x.id===pid);

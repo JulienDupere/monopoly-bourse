@@ -223,6 +223,14 @@ input[type=text],input[type=number],select{
    desktop/tablette raisonnables. */
 .topbar>div{white-space:nowrap;}
 .topbar b{color:var(--gold);}
+/* Section 267 (voir RESUME_ET_REGLES.md) — bandeau « dernière action par joueur », rendu par render()
+   juste sous le .topbar principal (classe dédiée plutôt que de réutiliser .topbar: la règle
+   .topbar>div{white-space:nowrap} ci-dessus couperait la liste des autres joueurs plutôt que de la
+   laisser passer à la ligne sur petit écran — indésirable ici, ce bandeau doit pouvoir s'enrouler). */
+.actionstatusbar{display:flex;justify-content:space-between;align-items:flex-start;gap:4px 16px;flex-wrap:wrap;
+  background:var(--paper);border:1px solid var(--line);border-radius:var(--radius-md);
+  padding:5px 14px;margin-bottom:6px;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:11.5px;}
+.actionstatusbar b{color:var(--ink);}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;color:#fff;}
 .money{font-family:'IBM Plex Mono',monospace;font-weight:600;font-variant-numeric:tabular-nums;}
 table{width:100%;border-collapse:collapse;font-size:13px;}
@@ -1183,6 +1191,14 @@ function migrateState(s){
   
   
   
+  
+  
+  
+  (s.loanRequests||[]).forEach(r=>{ if(r.createdAtRoll===undefined) r.createdAtRoll = (s.gameClock && s.gameClock.rollCount) || 0; });
+  
+  
+  
+  
   (s.loans||[]).forEach(l=>{ if(!l.lenderKind) l.lenderKind = (!l.lenderId || l.lenderId==='BANK') ? 'bank' : 'company'; });
   if(!s.taxInsurances) s.taxInsurances = [];
   
@@ -1628,9 +1644,26 @@ function migrateState(s){
   });
 }
 
+
+
+
+
+
+
+
+
+
+
 function log(text, entries){
-  state.log.unshift({ts:nowLabel(), text, entries: entries||null});
+  state.log.unshift({ts:nowLabel(), text, entries: entries||null, actorPlayerId: (typeof myPlayerId!=='undefined'?myPlayerId:null), tsMs: Date.now()});
   if(state.log.length>300) state.log.length=300;
+}
+
+
+
+function lastActionEntryForPlayer(playerId){
+  if(!state || !state.log || !playerId) return null;
+  return state.log.find(e=>e.actorPlayerId===playerId) || null;
 }
 
 function showTransactionPopup(title, entries){
@@ -1914,6 +1947,79 @@ async function saveGame(opts){
   
   
   
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  const fbDb = firebaseDb();
+  if(gameCode && fbDb){
+    if(state.version===undefined) state.version = 0;
+    const nextVersion = state.version + 1;
+    
+    
+    
+    
+    
+    const rawToTry = JSON.stringify(Object.assign({}, state, {version: nextVersion}));
+    const expectedRaw = lastSerialized;
+    let txResult;
+    try{
+      txResult = await fbDb.ref('data/'+firebaseSafeKey('game:'+gameCode)).transaction(currentVal=>{
+        
+        
+        
+        
+        if(expectedRaw===null ? (currentVal!==null && currentVal!==undefined) : (currentVal!==expectedRaw)) return undefined;
+        return rawToTry;
+      });
+    }catch(e){ txResult = null; }
+    toggleSaveFailedWarning(txResult===null);
+    if(txResult===null) return false; 
+    if(txResult.committed){
+      state.version = nextVersion;
+      lastSerialized = rawToTry;
+      return true;
+    }
+    
+    
+    
+    const remoteRaw = txResult.snapshot ? txResult.snapshot.val() : null;
+    if(remoteRaw){
+      state = JSON.parse(remoteRaw);
+      migrateState(state);
+      lastSerialized = remoteRaw;
+    }
+    if(!(opts && opts.silent)){
+      alert('Un autre appareil vient de sauvegarder la partie avant toi — ton action n’a pas été enregistrée pour éviter d’effacer la sienne. La partie a été mise à jour avec les dernières données; tu peux refaire ton action.');
+      render();
+    }
+    return 'conflict';
+  }
+  
+  
+  
   if(gameCode && lastSerialized!==null){
     const remoteRaw = await storageGet('game:'+gameCode, true);
     if(remoteRaw && remoteRaw!==lastSerialized){
@@ -1948,7 +2054,12 @@ function toggleSaveFailedWarning(show){
   if(warn) warn.style.display = show ? 'block' : 'none';
 }
 
-async function attemptActionWithRetry(applyFn, {maxAttempts=5, onRetry}={}){
+
+
+
+
+
+async function attemptActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}={}){
   let res = null;
   let needsReapply = true;
   for(let attempt=1; attempt<=maxAttempts; attempt++){
@@ -1958,8 +2069,9 @@ async function attemptActionWithRetry(applyFn, {maxAttempts=5, onRetry}={}){
       res = await applyFn();
       if(!res || !res.ok) return res; 
     }
+    if(label) setMyActionStatus(label, 'pending');
     const saved = await saveGame({silent:true});
-    if(saved===true) return res; 
+    if(saved===true){ if(label) setMyActionStatus(label, 'confirmed'); return res; } 
     if(onRetry) onRetry(attempt);
     
     
@@ -1967,7 +2079,39 @@ async function attemptActionWithRetry(applyFn, {maxAttempts=5, onRetry}={}){
     
     needsReapply = (saved==='conflict');
   }
+  if(label) setMyActionStatus(label, 'failed');
   return {ok:false, error:`Un autre appareil sauvegarde en continu — nouvel essai automatique fait ${maxAttempts} fois sans succès. Réessaie dans un instant.`};
+}
+
+
+
+
+
+
+
+let myLastActionStatus = null; 
+function setMyActionStatus(label, status){
+  if(!label) return;
+  myLastActionStatus = {label, status, tsMs: Date.now()};
+  updateMyActionStatusBar();
+}
+
+
+
+
+
+
+function myActionStatusHtml(){
+  if(myLastActionStatus && myLastActionStatus.status!=='confirmed'){
+    const icon = myLastActionStatus.status==='pending' ? '⏳' : '❌';
+    return `${icon} ${esc(myLastActionStatus.label)}`;
+  }
+  const last = lastActionEntryForPlayer(myPlayerId);
+  return last ? `✅ ${esc(last.text)}` : '—';
+}
+function updateMyActionStatusBar(){
+  const el = document.getElementById('myActionStatusBar');
+  if(el) el.innerHTML = myActionStatusHtml();
 }
 
 
@@ -2521,7 +2665,11 @@ function renderPortefeuilleTrading(me, company){
     
     
     const ratingHtml = borrowerCo ? ` ${creditRatingBadgeHtml(borrowerCo)}` : '';
-    return `<div style="margin-bottom:4px;">🏦 Demande d'emprunt ${borrowerCo?esc(borrowerCo.name):'—'}${ratingHtml} : ${fmt(r.principal)} (${offersOnThis.length} offre${offersOnThis.length===1?'':'s'} reçue${offersOnThis.length===1?'':'s'}) — ${offerForm}</div>`;
+    
+    
+    
+    const expiryHtml = ` <span class="small" style="color:var(--brick);">⏳ expire au prochain lancer de dés si non acceptée</span>`;
+    return `<div style="margin-bottom:4px;">🏦 Demande d'emprunt ${borrowerCo?esc(borrowerCo.name):'—'}${ratingHtml} : ${fmt(r.principal)} (${offersOnThis.length} offre${offersOnThis.length===1?'':'s'} reçue${offersOnThis.length===1?'':'s'})${expiryHtml} — ${offerForm}</div>`;
   });
   const announcementBannerHtml = (dividendAnnouncementLines.length>0 || ceoAnnouncementLines.length>0 || ceoPublicStatementLines.length>0 || loanRequestLines.length>0)
     ? `<div class="small" id="pfAnnouncementBanner" style="margin:2px 0 14px;">${[...dividendAnnouncementLines, ...ceoAnnouncementLines, ...ceoPublicStatementLines, ...loanRequestLines].join('')}</div>`
@@ -3953,7 +4101,13 @@ function renderEntreprise(){
   
   
   
-  const issueLoanButtonHtml = (f.loan && !(loanCapExhausted && !openLoanRequest))
+  
+  
+  
+  
+  
+  
+  const issueLoanButtonHtml = (f.loan && !((loanCapExhausted || !tradingWindowOpen()) && !openLoanRequest))
     ? `<button class="btn btn-pale-gold btn-sm" id="openIssueLoanBtn" title="${esc(issueLoanTooltip)}">💰 Prêt${openLoanRequest?` (${openRequestOfferCount} offre${openRequestOfferCount===1?'':'s'})`:(activeLoansForCo.length>0?` (${activeLoansForCo.length} actif${activeLoansForCo.length===1?'':'s'})`:'')}</button>`
     : '';
   
@@ -5913,6 +6067,22 @@ function render(){
   const bankGraceHeaderHtml = (graceCompanies.length>0 && !state.gameEndedReason)
     ? `&nbsp;|&nbsp; <b style="color:var(--brick,#C0392B);">⚠️ ${graceCompanies.map(co=>`${esc(co.name)}: ${Math.max(0,co.bankOwnedGraceExpiry-state.gameClock.rollCount)} lancer(s) avant fin de partie sauf reprise`).join(' · ')}</b>`
     : '';
+  
+  
+  
+  
+  
+  
+  
+  
+  const readinessRowHtml = readyRollers.map(c=>{
+    const ceo = state.players.find(p=>p.id===c.ceoId);
+    return `<span>${c.ready?'✓':'✗'} ${esc(ceo?ceo.name:c.name)}</span>`;
+  }).join(' &nbsp;·&nbsp; ');
+  const actionStatusRowHtml = readinessRowHtml ? `
+  <div class="actionstatusbar">
+    <div style="flex:1;min-width:200px;">${readinessRowHtml}</div>
+  </div>` : '';
   let html = `
   <div class="topbar">
     <div>Partie <span class="codebox">${esc(gameCode)}</span> &nbsp; Vous êtes:
@@ -5922,6 +6092,7 @@ function render(){
     </div>
     <div>Banque: <b>${fmt(state.bank.cash)}</b> &nbsp;|&nbsp; Année : <b>${currentGameYear()}</b> (semestre ${currentSemesterInYear()}/2 — ${rollsInCurrentSemester()}/3)${readyHeaderHtml}${gameEndedHeaderHtml}${bankGraceHeaderHtml} &nbsp;|&nbsp; <span style="cursor:pointer;text-decoration:underline;" id="leaveGame">quitter la partie</span></div>
   </div>
+  ${actionStatusRowHtml}
   <div class="tabs">
     ${tabs.map(t=>`<div class="tab ${t===activeTab?'active':''}" data-tab="${t}">${tabLabel(t)}</div>`).join('')}
   </div>
@@ -6450,6 +6621,17 @@ function payableRent(p, companyId, excludeJailed){
   p.owners.forEach(o=>{ if(o.companyId!==companyId && (mortgagedIds.includes(o.companyId) || jailedIds.includes(o.companyId))) payableShare -= o.share/100; });
   const reservedUncollectedPct = reservedPct - reservedCollectedPct;
   if(reservedUncollectedPct>0) payableShare -= reservedUncollectedPct/100; 
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  if(!state.settings.bankCollectsRent) payableShare -= purchasableBankShare(p)/100;
   payableShare = Math.max(0, payableShare);
   return rentTotal * payableShare;
 }
@@ -7695,6 +7877,10 @@ function advanceGameClock(){
   
   
   resolvePendingPreferredIssuances();
+  
+  
+  
+  expirePendingLoanRequests();
   
   
   
@@ -9206,6 +9392,19 @@ function resolvePendingPreferredIssuances(){
   });
 }
 
+function expirePendingLoanRequests(){
+  const expired = state.loanRequests.filter(r=>state.gameClock.rollCount>r.createdAtRoll);
+  if(!expired.length) return;
+  expired.forEach(req=>{
+    const co = companyById(req.borrowerId);
+    const offerCount = state.loanOffers.filter(o=>o.requestId===req.id).length;
+    log(`La demande d'emprunt de ${co?co.name:'?'} (${fmt(req.principal)}) expire sans avoir été acceptée avant le prochain lancer de dés — annulée${offerCount>0?`, ainsi que ${offerCount} offre(s) reçue(s)`:''}. Une nouvelle demande pourra être publiée au prochain semestre.`);
+  });
+  const expiredIds = new Set(expired.map(r=>r.id));
+  state.loanRequests = state.loanRequests.filter(r=>!expiredIds.has(r.id));
+  state.loanOffers = state.loanOffers.filter(o=>!expiredIds.has(o.requestId));
+}
+
 async function callPreferredShares(companyId, issuanceId, qty, opts){
   
   
@@ -10300,7 +10499,8 @@ function optionCoveredShares(player, pos){
     const held = stake ? stake.shares : 0;
     return Math.min(pos.shares, Math.max(0, held/OPTION_CONTRACT_MULTIPLIER));
   } else {
-    const cashCovered = pos.strike>0 ? player.cash/(pos.strike*OPTION_CONTRACT_MULTIPLIER) : 0;
+    const availableCash = player.cash + Math.max(0, player.bondBalance||0);
+    const cashCovered = pos.strike>0 ? availableCash/(pos.strike*OPTION_CONTRACT_MULTIPLIER) : 0;
     return Math.min(pos.shares, Math.max(0, cashCovered));
   }
 }
@@ -10653,36 +10853,6 @@ async function performRollForAllCompanies(){
   
   
   
-  const alreadyJailedBeforeThisTurn = activeCompanies().filter(c=>c.inJail);
-  const rollers = activeCompanies().filter(c=>!c.inJail);
-  
-  
-  
-  
-  
-  
-  
-  const alreadyJailedPawnsBeforeThisTurn = (state.neutralPawns||[]).filter(pw=>pw.inJail);
-  const pawnRollers = (state.neutralPawns||[]).filter(pw=>!pw.inJail);
-  if(rollers.length===0 && alreadyJailedBeforeThisTurn.length===0 && pawnRollers.length===0 && alreadyJailedPawnsBeforeThisTurn.length===0){ alert("Aucune entreprise active pour lancer les dés."); return null; }
-  
-  
-  const portfolioSnap = snapshotPlayerBondsAndLoans();
-  
-  
-  maybeResolveTerrainLotAuction();
-  
-  maybeResolveEtfAuctions();
-  const results = [];
-  for(const co of rollers){
-    const r = await corePerformDiceRoll(co);
-    results.push(Object.assign({companyId: co.id, companyName: co.name}, r));
-  }
-  const neutralPawnResults = [];
-  for(const pw of pawnRollers){
-    const r = await corePerformNeutralPawnRoll(pw);
-    neutralPawnResults.push(Object.assign({neutralPawnId: pw.id, neutralPawnName: pw.name}, r));
-  }
   
   
   
@@ -10693,54 +10863,106 @@ async function performRollForAllCompanies(){
   
   
   
-  alreadyJailedBeforeThisTurn.forEach(co=>{
-    co.jailTurnsLeft = Math.max(0, co.jailTurnsLeft-1);
-    if(co.jailTurnsLeft<=0){
-      co.inJail = false;
-      log(`${co.name} a laissé l'enquête de l'AMF suivre son cours et est déclarée non coupable — l'enquête est close.`);
-    } else {
-      log(`${co.name} : l'enquête de l'AMF se poursuit (${co.jailTurnsLeft} tour(s) restant(s)).`);
+  
+  
+  let results = [], neutralPawnResults = [];
+  const res = await attemptActionWithRetry(async ()=>{
+    
+    
+    
+    
+    const alreadyJailedBeforeThisTurn = activeCompanies().filter(c=>c.inJail);
+    const rollers = activeCompanies().filter(c=>!c.inJail);
+    
+    
+    
+    
+    
+    
+    
+    const alreadyJailedPawnsBeforeThisTurn = (state.neutralPawns||[]).filter(pw=>pw.inJail);
+    const pawnRollers = (state.neutralPawns||[]).filter(pw=>!pw.inJail);
+    if(rollers.length===0 && alreadyJailedBeforeThisTurn.length===0 && pawnRollers.length===0 && alreadyJailedPawnsBeforeThisTurn.length===0){ return {ok:false, error:"Aucune entreprise active pour lancer les dés."}; }
+    
+    
+    const portfolioSnap = snapshotPlayerBondsAndLoans();
+    
+    
+    maybeResolveTerrainLotAuction();
+    
+    maybeResolveEtfAuctions();
+    const localResults = [];
+    for(const co of rollers){
+      const r = await corePerformDiceRoll(co);
+      localResults.push(Object.assign({companyId: co.id, companyName: co.name}, r));
     }
-  });
-  
-  
-  
-  alreadyJailedPawnsBeforeThisTurn.forEach(pw=>{
-    pw.jailTurnsLeft = Math.max(0, pw.jailTurnsLeft-1);
-    if(pw.jailTurnsLeft<=0){
-      pw.inJail = false;
-      log(`${pw.name} a laissé l'enquête de l'AMF suivre son cours — l'enquête est close.`);
-    } else {
-      log(`${pw.name} : l'enquête de l'AMF se poursuit (${pw.jailTurnsLeft} tour(s) restant(s)).`);
+    const localNeutralPawnResults = [];
+    for(const pw of pawnRollers){
+      const r = await corePerformNeutralPawnRoll(pw);
+      localNeutralPawnResults.push(Object.assign({neutralPawnId: pw.id, neutralPawnName: pw.name}, r));
     }
-  });
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  state.lastDiceRollEvent = {roll: state.gameClock.rollCount};
-  const yearJustEnded = advanceGameClock();
-  
-  state.lastDiceRollEvent.portfolioDeltas = computePlayerPortfolioDeltas(portfolioSnap);
-  results.forEach(r=>{ r.yearJustEnded = yearJustEnded; });
-  neutralPawnResults.forEach(r=>{ r.yearJustEnded = yearJustEnded; });
-  lastDiceResults = results; 
-  
-  
-  lastNeutralPawnResults = neutralPawnResults; 
-  
-  
-  state.companies.forEach(c=>{ c.ready = false; });
-  await saveGame(); render();
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    alreadyJailedBeforeThisTurn.forEach(co=>{
+      co.jailTurnsLeft = Math.max(0, co.jailTurnsLeft-1);
+      if(co.jailTurnsLeft<=0){
+        co.inJail = false;
+        log(`${co.name} a laissé l'enquête de l'AMF suivre son cours et est déclarée non coupable — l'enquête est close.`);
+      } else {
+        log(`${co.name} : l'enquête de l'AMF se poursuit (${co.jailTurnsLeft} tour(s) restant(s)).`);
+      }
+    });
+    
+    
+    
+    alreadyJailedPawnsBeforeThisTurn.forEach(pw=>{
+      pw.jailTurnsLeft = Math.max(0, pw.jailTurnsLeft-1);
+      if(pw.jailTurnsLeft<=0){
+        pw.inJail = false;
+        log(`${pw.name} a laissé l'enquête de l'AMF suivre son cours — l'enquête est close.`);
+      } else {
+        log(`${pw.name} : l'enquête de l'AMF se poursuit (${pw.jailTurnsLeft} tour(s) restant(s)).`);
+      }
+    });
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    state.lastDiceRollEvent = {roll: state.gameClock.rollCount};
+    const localYearJustEnded = advanceGameClock();
+    
+    state.lastDiceRollEvent.portfolioDeltas = computePlayerPortfolioDeltas(portfolioSnap);
+    localResults.forEach(r=>{ r.yearJustEnded = localYearJustEnded; });
+    localNeutralPawnResults.forEach(r=>{ r.yearJustEnded = localYearJustEnded; });
+    lastDiceResults = localResults; 
+    
+    
+    lastNeutralPawnResults = localNeutralPawnResults; 
+    
+    
+    state.companies.forEach(c=>{ c.ready = false; });
+    results = localResults; neutralPawnResults = localNeutralPawnResults;
+    return {ok:true};
+  }, {label:'Lancer les dés pour tous'});
+  if(!res.ok){ if(res.error) alert(res.error); return null; }
+  render();
   return results;
 }
 
@@ -11027,34 +11249,64 @@ async function checkAllCompaniesReady(){
   return true;
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 async function markCompanyReady(companyId){
-  const co = companyById(companyId);
-  if(!co){ alert('Entreprise introuvable.'); return; }
-  if(myPlayerId!==co.ceoId){ alert(`Seul le CEO de ${co.name} peut la déclarer prête pour le lancer de dés pour tous.`); return; }
-  if(co.inJail){ alert(`${co.name} est enquêtée par l'AMF — elle ne participe pas au lancer de dés pour tous ce tour-ci.`); return; }
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co) return {ok:false, error:'Entreprise introuvable.'};
+    if(myPlayerId!==co.ceoId) return {ok:false, error:`Seul le CEO de ${co.name} peut la déclarer prête pour le lancer de dés pour tous.`};
+    if(co.inJail) return {ok:false, error:`${co.name} est enquêtée par l'AMF — elle ne participe pas au lancer de dés pour tous ce tour-ci.`};
+    
+    
+    
+    
+    
+    
+    
+    
+    if(co.cash<0 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`};
+    co.ready = true;
+    log(`${co.name} est prête pour le prochain lancer de dés pour tous.`);
+    return {ok:true};
+  }, {label:'Prêt pour le lancer de dés'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
   
   
   
-  
-  
-  
-  
-  
-  if(co.cash<0 && tradingWindowOpen()){ alert(`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`); return; }
-  co.ready = true;
-  log(`${co.name} est prête pour le prochain lancer de dés pour tous.`);
   const triggered = await checkAllCompaniesReady();
-  if(!triggered){ await saveGame(); render(); }
+  if(!triggered) render();
 }
 
 async function cancelCompanyReady(companyId){
-  const co = companyById(companyId);
-  if(!co){ alert('Entreprise introuvable.'); return; }
-  if(myPlayerId!==co.ceoId){ alert(`Seul le CEO de ${co.name} peut annuler son statut « prête ».`); return; }
-  if(!co.ready) return;
-  co.ready = false;
-  log(`${co.name} annule son statut « prête » pour le lancer de dés pour tous.`);
-  await saveGame(); render();
+  const co0 = companyById(companyId);
+  if(!co0){ alert('Entreprise introuvable.'); return; }
+  if(myPlayerId!==co0.ceoId){ alert(`Seul le CEO de ${co0.name} peut annuler son statut « prête ».`); return; }
+  if(!co0.ready) return;
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co) return {ok:false, error:'Entreprise introuvable.'};
+    if(myPlayerId!==co.ceoId) return {ok:false, error:`Seul le CEO de ${co.name} peut annuler son statut « prête ».`};
+    if(!co.ready) return {ok:true}; 
+    co.ready = false;
+    log(`${co.name} annule son statut « prête » pour le lancer de dés pour tous.`);
+    return {ok:true};
+  }, {label:'Annuler prêt'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 
@@ -11360,9 +11612,10 @@ function modalBuyMergedShare(mergeId){
   });
 }
 
-async function runModalActionWithRetry(applyFn, {maxAttempts}={}){
+async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
   const okBtn = document.getElementById('mOk');
   const statusEl = document.getElementById('mRetryStatus');
+  if(!label && okBtn) label = (okBtn.textContent||'').trim() || undefined;
   if(okBtn) okBtn.disabled = true;
   
   
@@ -11379,6 +11632,7 @@ async function runModalActionWithRetry(applyFn, {maxAttempts}={}){
   try{
     res = await attemptActionWithRetry(applyFn, {
       maxAttempts,
+      label,
       onRetry: (attempt)=>{ if(statusEl) statusEl.textContent = `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; },
     });
   } catch(e){
@@ -12145,6 +12399,14 @@ async function postLoanRequest(companyId, principal, opts){
   
   
   
+  
+  
+  
+  
+  if(!tradingWindowOpen()) return fail(`Le marché est fermé — cette action n'est possible qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`);
+  
+  
+  
   if(state.gameEndedReason) return fail('La partie est terminée — plus aucune action de prêt n’est possible.');
   if(!(principal>0)) return fail('Le montant demandé doit être positif.');
   const remainingCap = loanCapRemaining(companyId);
@@ -12152,8 +12414,15 @@ async function postLoanRequest(companyId, principal, opts){
     return fail(`Le montant demandé dépasse la capacité d'emprunt encore disponible pour cette partie — déjà emprunté (actif): ${fmt(activeLoanPrincipalSum(companyId))}/${fmt(state.settings.loanMaxPrincipal)}, il reste ${fmt(remainingCap)} disponible.`);
   }
   if(activeLoanRequestOf(companyId)) return fail('Cette entreprise a déjà une demande d’emprunt ouverte — annulez-la avant d’en poster une nouvelle.');
-  state.loanRequests.push({id:uid(), borrowerId:companyId, principal, createdAt:nowLabel()});
-  log(`${co.name} publie une demande d'emprunt de ${fmt(principal)} — un avis est envoyé à tous les joueurs, qui peuvent proposer leurs conditions (% des loyers retenu, multiple de remboursement).`);
+  
+  
+  
+  
+  
+  
+  
+  state.loanRequests.push({id:uid(), borrowerId:companyId, principal, createdAt:nowLabel(), createdAtRoll: state.gameClock.rollCount});
+  log(`${co.name} publie une demande d'emprunt de ${fmt(principal)} — un avis est envoyé à tous les joueurs, qui peuvent proposer leurs conditions (% des loyers retenu, multiple de remboursement). Elle doit être acceptée (ou annulée) AVANT le prochain lancer de dés, sans quoi elle expire automatiquement d'elle-même, avec toute offre reçue entre-temps.`);
   if(!opts.silent){ await saveGame(); render(); }
   return {ok:true};
 }
@@ -16098,7 +16367,7 @@ function modalAnnounceCeoTrade(){
       state.ceoAnnouncements.push({id: uid(), companyId: co.id, ceoId: co.ceoId, direction, amount, announcedAtRoll, executeAtRoll: announcedAtRoll+6});
       log(`${co.name} : le CEO annonce publiquement une intention ${direction==='buy'?"d'achat":'de vente'} de ${fmt(amount)} de ses propres parts (au prix d'aujourd'hui de ${fmtPrice(co.stockPrice||0)}/part) — exécution automatique dans 1 an, irrévocable.`);
       return {ok:true};
-    }, {onRetry: (attempt)=>{ statusEl.textContent = `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; }});
+    }, {label: (okBtn.textContent||'').trim() || 'Annonce CEO', onRetry: (attempt)=>{ statusEl.textContent = `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; }});
     } catch(e){
       okBtn.disabled = false;
       console.error('modalAnnounceCeoTrade — exception inattendue, jamais silencieuse:', e);
@@ -16715,6 +16984,7 @@ function modalIssueLoan(){
     <div class="small" style="margin-bottom:8px;">${creditRatingBadgeHtml(myCo)}</div>
     ${activeLoansHtml}
     <div class="small" style="margin-bottom:10px;">Demande d'emprunt ouverte: <b>${fmt(request.principal)}</b>. Les offres reçues des joueurs sont listées ci-dessous — acceptez-en une (crée le prêt immédiatement) ou annulez la demande si aucune ne convient. Une offre <b>garantie</b> met en jeu la valeur des parts du CEO en fin de partie si le prêt n'est pas remboursé; une offre <b>non garantie</b> ne représente aucun risque pour le CEO.</div>
+    <div class="small" style="margin-bottom:10px;color:var(--brick);">⏳ Cette demande (et toute offre reçue ci-dessous) expire AUTOMATIQUEMENT, sans acceptation ni cash créé, dès le prochain lancer de dés — acceptez une offre ou annulez explicitement avant que les dés ne soient jetés.</div>
     ${offers.length>0 ? `<table><tr><th>Joueur</th><th>% des loyers retenu</th><th>Multiple</th><th>Type</th><th></th></tr>${offersRows}</table>` : '<div class="empty">Aucune offre reçue pour le moment.</div>'}
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancelRequest">Annuler la demande</button>
@@ -16732,6 +17002,19 @@ function modalIssueLoan(){
     <div class="small" style="margin-bottom:8px;">${creditRatingBadgeHtml(myCo)}</div>
     ${activeLoansHtml}
     <div class="small">Capacité d'emprunt maximale déjà atteinte (${fmt(state.settings.loanMaxPrincipal)} de principal cumulé sur les prêts actifs) — remboursez un prêt existant pour libérer de la capacité avant d'en demander un nouveau.</div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="mCancel">Fermer</button></div>`);
+    document.getElementById('mCancel').addEventListener('click', closeModal);
+    return;
+  }
+  
+  
+  
+  if(!tradingWindowOpen()){
+    openModal(`
+    <h3>Prêt — ${esc(myCo.name)}</h3>
+    <div class="small" style="margin-bottom:8px;">${creditRatingBadgeHtml(myCo)}</div>
+    ${activeLoansHtml}
+    <div class="small">Le marché est fermé — une nouvelle demande d'emprunt n'est possible qu'aux semestres (prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s)).</div>
     <div class="modal-actions"><button class="btn btn-ghost" id="mCancel">Fermer</button></div>`);
     document.getElementById('mCancel').addEventListener('click', closeModal);
     return;

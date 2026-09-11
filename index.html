@@ -720,6 +720,11 @@ let syncRetryTimer = null;
 
 
 
+
+
+
+
+
 let lastDiceResult = null; 
 let lastNeutralPawnResults = []; 
 let lastDiceResults = null; 
@@ -2133,16 +2138,24 @@ function companyOfPlayer(playerId){
   return p && p.companyId ? companyById(p.companyId) : null;
 }
 async function createCompany(playerId, name, description, type, dividendPromisedAnnualPct, croissanceTier){
-  const pl = state.players.find(x=>x.id===playerId);
-  if(!pl){ alert('Joueur introuvable.'); return; }
-  if(pl.companyId){ alert(`${pl.name} a déjà une entreprise.`); return; }
   name = (name||'').trim();
-  if(!name){ alert('Le nom de l’entreprise est requis.'); return; }
   
   
   
-  if(state.companies.some(c=>c.name.trim().toLowerCase()===name.toLowerCase())){ alert(`Une entreprise nommée « ${name} » existe déjà — choisissez un autre nom.`); return; }
-  if(!COMPANY_TYPES.some(t=>t.key===type)){ alert('Type d’entreprise invalide.'); return; }
+  
+  
+  
+  
+  const res = await attemptActionWithRetry(async ()=>{
+  const pl = state.players.find(x=>x.id===playerId);
+  if(!pl) return {ok:false, error:'Joueur introuvable.'};
+  if(pl.companyId) return {ok:false, error:`${pl.name} a déjà une entreprise.`};
+  if(!name) return {ok:false, error:'Le nom de l’entreprise est requis.'};
+  
+  
+  
+  if(state.companies.some(c=>c.name.trim().toLowerCase()===name.toLowerCase())) return {ok:false, error:`Une entreprise nommée « ${name} » existe déjà — choisissez un autre nom.`};
+  if(!COMPANY_TYPES.some(t=>t.key===type)) return {ok:false, error:'Type d’entreprise invalide.'};
   
   
   
@@ -2156,8 +2169,7 @@ async function createCompany(playerId, name, description, type, dividendPromised
       
       dividendPromisedAnnualPct = riskFreeFloorPct;
     } else if(!(dividendPromisedAnnualPct>=riskFreeFloorPct)){
-      alert(`Le rendement de dividende promis doit être d’au moins ${riskFreeFloorPct.toFixed(2)}% par année (taux sans risque actuel).`);
-      return;
+      return {ok:false, error:`Le rendement de dividende promis doit être d’au moins ${riskFreeFloorPct.toFixed(2)}% par année (taux sans risque actuel).`};
     }
   }
   
@@ -2170,8 +2182,7 @@ async function createCompany(playerId, name, description, type, dividendPromised
     if(croissanceTier===undefined || croissanceTier===null){
       croissanceTier = 'eleve';
     } else if(croissanceTier!=='eleve' && croissanceTier!=='tres_eleve'){
-      alert('Profil de croissance invalide.');
-      return;
+      return {ok:false, error:'Profil de croissance invalide.'};
     }
   }
   
@@ -2189,7 +2200,7 @@ async function createCompany(playerId, name, description, type, dividendPromised
   
   
   const amount = state.settings.companyInitialInvestment * state.settings.companyCeoStartPct;
-  if(amount>pl.cash+1e-9){ alert(`Encaisse insuffisante: la fondation d'une entreprise nécessite ${fmt(amount)} (${Math.round(state.settings.companyCeoStartPct*100)}% de la valorisation de fondation de ${fmt(state.settings.companyInitialInvestment)}), réglé pour toute la partie.`); return; }
+  if(amount>pl.cash+1e-9) return {ok:false, error:`Encaisse insuffisante: la fondation d'une entreprise nécessite ${fmt(amount)} (${Math.round(state.settings.companyCeoStartPct*100)}% de la valorisation de fondation de ${fmt(state.settings.companyInitialInvestment)}), réglé pour toute la partie.`};
   const totalShares = state.settings.companyTotalShares;
   
   
@@ -2340,8 +2351,11 @@ async function createCompany(playerId, name, description, type, dividendPromised
   const entries = [{label:`${pl.name} (investissement initial — ${name})`, amount:-amount}, {label:`${name} (trésorerie de départ)`, amount:amount}];
   const ceoStartPctLabel = Math.round(state.settings.companyCeoStartPct*100);
   log(`${pl.name} fonde l'entreprise « ${name} » (type: ${COMPANY_TYPES.find(t=>t.key===type).label}) et en achète ${ceoStartPctLabel}% des parts (${ceoShares}/${totalShares}) avec ${fmt(amount)} de fonds personnels — trésorerie de départ de l'entreprise. Les ${100-ceoStartPctLabel}% restants attendent l'introduction en bourse.`, entries);
-  await saveGame(); render();
-  showTransactionPopup(`Fondation d'entreprise — ${name}`, entries);
+  return {ok:true, entries};
+  }, {label:`Fondation d'entreprise — ${name}`});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
+  showTransactionPopup(`Fondation d'entreprise — ${name}`, res.entries);
 }
 
 
@@ -2371,22 +2385,32 @@ function applyCompanyIpoFunding(company){
   return entries;
 }
 async function fundCompanyIpo(companyId){
-  if(myPlayerId!==state.creatorId){ alert('Seul le créateur de la partie peut financer une introduction en bourse.'); return; }
-  const company = companyById(companyId);
-  if(!company){ alert('Entreprise introuvable.'); return; }
-  const entries = applyCompanyIpoFunding(company);
-  if(!entries){ alert(`${company.name} est déjà entièrement capitalisée.`); return; }
-  await saveGame(); render();
-  showTransactionPopup(`Financement IPO — ${company.name}`, entries);
+  
+  
+  const res = await attemptActionWithRetry(async ()=>{
+    if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut financer une introduction en bourse.'};
+    const company = companyById(companyId);
+    if(!company) return {ok:false, error:'Entreprise introuvable.'};
+    const entries = applyCompanyIpoFunding(company);
+    if(!entries) return {ok:false, error:`${company.name} est déjà entièrement capitalisée.`};
+    return {ok:true, entries, companyName: company.name};
+  }, {label:'Financement IPO'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
+  showTransactionPopup(`Financement IPO — ${res.companyName}`, res.entries);
 }
 async function fundAllCompanyIpos(){
-  if(myPlayerId!==state.creatorId){ alert('Seul le créateur de la partie peut financer les introductions en bourse.'); return; }
-  const pending = state.companies.filter(c=>companyPendingIpoShares(c)>0);
-  if(pending.length===0){ alert('Toutes les entreprises sont déjà entièrement capitalisées.'); return; }
-  let allEntries = [];
-  pending.forEach(c=>{ const e = applyCompanyIpoFunding(c); if(e) allEntries = allEntries.concat(e); });
-  await saveGame(); render();
-  showTransactionPopup('Financement IPO — toutes les entreprises', allEntries);
+  const res = await attemptActionWithRetry(async ()=>{
+    if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut financer les introductions en bourse.'};
+    const pending = state.companies.filter(c=>companyPendingIpoShares(c)>0);
+    if(pending.length===0) return {ok:false, error:'Toutes les entreprises sont déjà entièrement capitalisées.'};
+    let allEntries = [];
+    pending.forEach(c=>{ const e = applyCompanyIpoFunding(c); if(e) allEntries = allEntries.concat(e); });
+    return {ok:true, entries: allEntries};
+  }, {label:'Financement IPO — toutes les entreprises'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
+  showTransactionPopup('Financement IPO — toutes les entreprises', res.entries);
 }
 
 
@@ -5094,9 +5118,24 @@ function renderCompanySetupGate(me){
 
 function isLocalInputActive(){
   const modalHost = document.getElementById('modalHost');
-  if(modalHost && modalHost.innerHTML && modalHost.innerHTML.trim() !== '') return true;
-  const ae = document.activeElement;
   
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  if(modalHost && modalHost.innerHTML && /<(input|textarea|select)[\s>]/i.test(modalHost.innerHTML)) return true;
+  const ae = document.activeElement;
   
   
   
@@ -5616,28 +5655,40 @@ function etfLabel(etfId){
   return def ? def.label : etfId;
 }
 async function openAllEtfs(){
-  if(myPlayerId!==state.creatorId){ alert('Seul le créateur de la partie peut ouvrir les ETF.'); return; }
-  if(state.etfs.every(e=>e.opened)){ alert('Les ETF sont déjà ouverts.'); return; }
-  state.etfs.forEach(e=>{ e.opened = true; });
   
-  
-  
-  log(`Les ETF sont ouverts par l'administrateur — la banque commence à collecter le loyer de sa réserve permanente. Le lot entier de chaque ETF sera mis aux enchères au prochain 1er lancer d'année financière.`);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut ouvrir les ETF.'};
+    if(state.etfs.every(e=>e.opened)) return {ok:false, error:'Les ETF sont déjà ouverts.'};
+    state.etfs.forEach(e=>{ e.opened = true; });
+    
+    
+    
+    log(`Les ETF sont ouverts par l'administrateur — la banque commence à collecter le loyer de sa réserve permanente. Le lot entier de chaque ETF sera mis aux enchères au prochain 1er lancer d'année financière.`);
+    return {ok:true};
+  }, {label:'Ouvrir les ETF'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 async function submitEtfBid(companyId, etfId, price){
-  if(state.gameClock.rollCount % 6 !== 1) return;
-  const etf = state.etfs.find(e=>e.id===etfId);
-  if(!etf || !etf.opened) return;
-  const co = companyById(companyId);
-  if(!co) return;
-  const clampedPrice = Math.max(0, price||0);
-  if(clampedPrice>co.cash+1e-9){ alert(`${co.name} ne peut pas miser plus que son encaisse actuelle (${fmt(co.cash)}).`); return; }
-  etf.bids = (etf.bids||[]).filter(b=>b.companyId!==companyId);
-  if(clampedPrice>=ETF_MIN_BID) etf.bids.push({companyId, price:clampedPrice});
-  log(`${co.name} soumet une mise pour l'${etfLabel(etfId)} de l'année ${currentGameYear()}: ${clampedPrice>=ETF_MIN_BID?fmt(clampedPrice):'aucune mise (pas intéressée)'}.`);
-  await saveGame(); render();
+  
+  
+  
+  const res = await attemptActionWithRetry(async ()=>{
+    if(state.gameClock.rollCount % 6 !== 1) return {ok:false};
+    const etf = state.etfs.find(e=>e.id===etfId);
+    if(!etf || !etf.opened) return {ok:false};
+    const co = companyById(companyId);
+    if(!co) return {ok:false};
+    const clampedPrice = Math.max(0, price||0);
+    if(clampedPrice>co.cash+1e-9) return {ok:false, error:`${co.name} ne peut pas miser plus que son encaisse actuelle (${fmt(co.cash)}).`};
+    etf.bids = (etf.bids||[]).filter(b=>b.companyId!==companyId);
+    if(clampedPrice>=ETF_MIN_BID) etf.bids.push({companyId, price:clampedPrice});
+    log(`${co.name} soumet une mise pour l'${etfLabel(etfId)} de l'année ${currentGameYear()}: ${clampedPrice>=ETF_MIN_BID?fmt(clampedPrice):'aucune mise (pas intéressée)'}.`);
+    return {ok:true};
+  }, {label:'Mise ETF'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 function resolveEtfAuction(etf, year){
@@ -5701,25 +5752,30 @@ async function sellEtfUnits(etfId, sellerId, buyerId, pct, price){
   
   
   
-  const seller = companyById(sellerId);
-  const buyer = companyById(buyerId);
-  if(!seller || !buyer){ alert('Entreprise invalide.'); return; }
-  const held = seller.etfHoldings[etfId]||0;
-  if(!(pct>0) || pct>held){ alert('Pourcentage invalide.'); return; }
-  seller.etfHoldings[etfId] = held-pct;
-  buyer.etfHoldings[etfId] = (buyer.etfHoldings[etfId]||0) + pct;
-  seller.cash += price;
-  buyer.cash -= price;
-  logFin(seller.id, 'etf_sale', price);
-  logFin(buyer.id, 'etf_purchase', -price);
-  if(price>0){ addEtfCapex(etfId, seller.id, -price); addEtfCapex(etfId, buyer.id, price); } 
-  const sellerPl = state.players.find(x=>x.id===seller.ceoId);
-  const buyerPl = state.players.find(x=>x.id===buyer.ceoId);
-  if(sellerPl) sellerPl.stats.salesRevenue += price;
-  if(buyerPl) buyerPl.stats.spentBuying += price;
-  log(`${seller.name} vend ${pct}% de l'${etfLabel(etfId)} à ${buyer.name} pour ${price.toFixed(2)} (les parts d'ETF ne sont jamais revendables à la banque).`,
-    [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:`${seller.name} (vente ${pct}%)`, amount:price}]);
-  await saveGame(); render();
+  
+  const res = await attemptActionWithRetry(async ()=>{
+    const seller = companyById(sellerId);
+    const buyer = companyById(buyerId);
+    if(!seller || !buyer) return {ok:false, error:'Entreprise invalide.'};
+    const held = seller.etfHoldings[etfId]||0;
+    if(!(pct>0) || pct>held) return {ok:false, error:'Pourcentage invalide.'};
+    seller.etfHoldings[etfId] = held-pct;
+    buyer.etfHoldings[etfId] = (buyer.etfHoldings[etfId]||0) + pct;
+    seller.cash += price;
+    buyer.cash -= price;
+    logFin(seller.id, 'etf_sale', price);
+    logFin(buyer.id, 'etf_purchase', -price);
+    if(price>0){ addEtfCapex(etfId, seller.id, -price); addEtfCapex(etfId, buyer.id, price); } 
+    const sellerPl = state.players.find(x=>x.id===seller.ceoId);
+    const buyerPl = state.players.find(x=>x.id===buyer.ceoId);
+    if(sellerPl) sellerPl.stats.salesRevenue += price;
+    if(buyerPl) buyerPl.stats.spentBuying += price;
+    log(`${seller.name} vend ${pct}% de l'${etfLabel(etfId)} à ${buyer.name} pour ${price.toFixed(2)} (les parts d'ETF ne sont jamais revendables à la banque).`,
+      [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:`${seller.name} (vente ${pct}%)`, amount:price}]);
+    return {ok:true};
+  }, {label:'Vente de parts ETF'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 function processEtfLap(){
@@ -6868,28 +6924,34 @@ async function cancelContract(contractId){
   const baseId = sepIdx>=0 ? contractId.slice(0, sepIdx) : contractId;
   const insurerFilter = sepIdx>=0 ? contractId.slice(sepIdx+2) : null;
   const sameGroup = insId => insurerFilter===null || insId===insurerFilter;
-  const propItems = state.properties.filter(p=>p.insurance && (p.insurance.contractId||p.id)===baseId && sameGroup(p.insurance.insurerId));
-  const taxItems = state.taxInsurances.filter(t=>(t.contractId||t.id)===baseId && sameGroup(t.insurerId));
-  if(propItems.length+taxItems.length===0) return;
-  const sample = propItems[0] ? propItems[0].insurance : taxItems[0];
   
   
-  
-  
-  if(state.gameClock.rollCount !== sample.signedAtRoll){ alert('Ce contrat ne peut plus être annulé : au moins un lancer de dé a eu lieu depuis sa signature.'); return; }
-  const insuredId = sample.insuredCompanyId;
-  const insurerId = sample.insurerId;
-  let totalRefund = 0;
-  propItems.forEach(p=>{ totalRefund += p.insurance.premium; p.insurance = null; });
-  taxItems.forEach(t=>{ totalRefund += t.premium; });
-  state.taxInsurances = state.taxInsurances.filter(t=>!((t.contractId||t.id)===baseId && sameGroup(t.insurerId)));
-  const co = companyById(insuredId);
-  if(co){ co.cash += totalRefund; logFin(co.id, 'insurance_refund_revenue', totalRefund); }
-  if(!insurerId || insurerId==='BANK') state.bank.cash -= totalRefund;
-  else { const ins=companyById(insurerId); if(ins){ ins.cash -= totalRefund; logFin(ins.id, 'insurance_refund_expense', -totalRefund); } }
-  log(`Contrat groupé annulé — prime de ${totalRefund.toFixed(2)} remboursée à ${co?co.name:'?'} par ${insurerLabel(insurerId)}.`,
-    [{label:`${co?co.name:'?'} (remboursement)`, amount:totalRefund}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:-totalRefund}]);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const propItems = state.properties.filter(p=>p.insurance && (p.insurance.contractId||p.id)===baseId && sameGroup(p.insurance.insurerId));
+    const taxItems = state.taxInsurances.filter(t=>(t.contractId||t.id)===baseId && sameGroup(t.insurerId));
+    if(propItems.length+taxItems.length===0) return {ok:false};
+    const sample = propItems[0] ? propItems[0].insurance : taxItems[0];
+    
+    
+    
+    
+    if(state.gameClock.rollCount !== sample.signedAtRoll){ return {ok:false, error:'Ce contrat ne peut plus être annulé : au moins un lancer de dé a eu lieu depuis sa signature.'}; }
+    const insuredId = sample.insuredCompanyId;
+    const insurerId = sample.insurerId;
+    let totalRefund = 0;
+    propItems.forEach(p=>{ totalRefund += p.insurance.premium; p.insurance = null; });
+    taxItems.forEach(t=>{ totalRefund += t.premium; });
+    state.taxInsurances = state.taxInsurances.filter(t=>!((t.contractId||t.id)===baseId && sameGroup(t.insurerId)));
+    const co = companyById(insuredId);
+    if(co){ co.cash += totalRefund; logFin(co.id, 'insurance_refund_revenue', totalRefund); }
+    if(!insurerId || insurerId==='BANK') state.bank.cash -= totalRefund;
+    else { const ins=companyById(insurerId); if(ins){ ins.cash -= totalRefund; logFin(ins.id, 'insurance_refund_expense', -totalRefund); } }
+    log(`Contrat groupé annulé — prime de ${totalRefund.toFixed(2)} remboursée à ${co?co.name:'?'} par ${insurerLabel(insurerId)}.`,
+      [{label:`${co?co.name:'?'} (remboursement)`, amount:totalRefund}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:-totalRefund}]);
+    return {ok:true};
+  }, {label:'Annulation de contrat groupé'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 async function expireContract(contractId){
   
@@ -6912,24 +6974,28 @@ async function expireContract(contractId){
 
 
 async function takeOverSubInsurance(pid){
-  const p = state.properties.find(x=>x.id===pid);
-  if(!p || !p.subInsurance) return;
-  const insuredId = p.subInsurance.insuredCompanyId;
-  const oldInsurerId = p.subInsurance.insurerId;
-  const myCo = myCompany();
-  if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
-  if(myCo.id===insuredId){ alert('Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'); return; }
-  if(myCo.id===oldInsurerId){ alert('Votre entreprise est déjà l’assureur de ce contrat.'); return; }
-  const premium = p.subInsurance.premium;
-  if(!oldInsurerId || oldInsurerId==='BANK') state.bank.cash -= premium;
-  else { const oldIns = companyById(oldInsurerId); if(oldIns){ oldIns.cash -= premium; logFin(oldIns.id, 'insurance_refund_expense', -premium); } }
-  myCo.cash += premium;
-  logFin(myCo.id, 'insurance_premium_revenue', premium);
-  p.subInsurance.insurerId = myCo.id;
-  const insuredCo = companyById(insuredId);
-  log(`${myCo.name} reprend le contrat d'assurance sous-standard de ${insuredCo?insuredCo.name:'?'} sur ${p.name} auprès de ${insurerLabel(oldInsurerId)} — perçoit la prime de ${fmt(premium)}.`,
-    [{label:`${myCo.name} (reprise de contrat)`, amount:premium}, {label:`${insurerLabel(oldInsurerId)} (ancien assureur)`, amount:-premium}]);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const p = state.properties.find(x=>x.id===pid);
+    if(!p || !p.subInsurance) return {ok:false};
+    const insuredId = p.subInsurance.insuredCompanyId;
+    const oldInsurerId = p.subInsurance.insurerId;
+    const myCo = myCompany();
+    if(!myCo) return {ok:false, error:'Vous devez d’abord fonder une entreprise.'};
+    if(myCo.id===insuredId) return {ok:false, error:'Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'};
+    if(myCo.id===oldInsurerId) return {ok:false, error:'Votre entreprise est déjà l’assureur de ce contrat.'};
+    const premium = p.subInsurance.premium;
+    if(!oldInsurerId || oldInsurerId==='BANK') state.bank.cash -= premium;
+    else { const oldIns = companyById(oldInsurerId); if(oldIns){ oldIns.cash -= premium; logFin(oldIns.id, 'insurance_refund_expense', -premium); } }
+    myCo.cash += premium;
+    logFin(myCo.id, 'insurance_premium_revenue', premium);
+    p.subInsurance.insurerId = myCo.id;
+    const insuredCo = companyById(insuredId);
+    log(`${myCo.name} reprend le contrat d'assurance sous-standard de ${insuredCo?insuredCo.name:'?'} sur ${p.name} auprès de ${insurerLabel(oldInsurerId)} — perçoit la prime de ${fmt(premium)}.`,
+      [{label:`${myCo.name} (reprise de contrat)`, amount:premium}, {label:`${insurerLabel(oldInsurerId)} (ancien assureur)`, amount:-premium}]);
+    return {ok:true};
+  }, {label:'Reprise de contrat sous-standard'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 
@@ -6964,43 +7030,51 @@ function liveTakeoverTaxQuote(taxPos, insuredCompanyId, claimMode, originalDeduc
 }
 
 async function takeOverInsuranceItemLive(propertyId){
-  const p = state.properties.find(x=>x.id===propertyId);
-  if(!p || !p.insurance || p.insurance.insurerId!=='BANK') return;
-  const insuredId = p.insurance.insuredCompanyId;
-  const myCo = myCompany();
-  if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
-  if(myCo.id===insuredId){ alert('Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'); return; }
-  const live = liveTakeoverPropQuote(p, insuredId, p.insurance.claimMode, p.insurance.deductible, p.insurance.quotedTerm);
-  const price = live.ceil;
-  const originalPremium = p.insurance.premium;
-  state.bank.cash -= price;
-  myCo.cash += price;
-  logFin(myCo.id, 'insurance_premium_revenue', price);
-  p.insurance.insurerId = myCo.id;
-  const insuredCo = companyById(insuredId);
-  log(`${myCo.name} devient l'assureur de ${p.name} (assurée: ${insuredCo?insuredCo.name:'?'}) auprès de la banque — prime d'origine ${fmt(originalPremium)}, prix de reprise recalculé ${fmt(price)}.`,
-    [{label:`${myCo.name} (reprise live)`, amount:price}, {label:'Banque (ancien assureur)', amount:-price}]);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const p = state.properties.find(x=>x.id===propertyId);
+    if(!p || !p.insurance || p.insurance.insurerId!=='BANK') return {ok:false};
+    const insuredId = p.insurance.insuredCompanyId;
+    const myCo = myCompany();
+    if(!myCo) return {ok:false, error:'Vous devez d’abord fonder une entreprise.'};
+    if(myCo.id===insuredId) return {ok:false, error:'Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'};
+    const live = liveTakeoverPropQuote(p, insuredId, p.insurance.claimMode, p.insurance.deductible, p.insurance.quotedTerm);
+    const price = live.ceil;
+    const originalPremium = p.insurance.premium;
+    state.bank.cash -= price;
+    myCo.cash += price;
+    logFin(myCo.id, 'insurance_premium_revenue', price);
+    p.insurance.insurerId = myCo.id;
+    const insuredCo = companyById(insuredId);
+    log(`${myCo.name} devient l'assureur de ${p.name} (assurée: ${insuredCo?insuredCo.name:'?'}) auprès de la banque — prime d'origine ${fmt(originalPremium)}, prix de reprise recalculé ${fmt(price)}.`,
+      [{label:`${myCo.name} (reprise live)`, amount:price}, {label:'Banque (ancien assureur)', amount:-price}]);
+    return {ok:true};
+  }, {label:'Reprise live (terrain, assureur banque)'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 async function takeOverTaxInsuranceLive(taxPos, insuredCompanyId){
-  const ins = state.taxInsurances.find(t=>t.taxPos===taxPos && t.insuredCompanyId===insuredCompanyId && t.insurerId==='BANK');
-  if(!ins) return;
-  const myCo = myCompany();
-  if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
-  if(myCo.id===insuredCompanyId){ alert('Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'); return; }
-  const live = liveTakeoverTaxQuote(taxPos, insuredCompanyId, ins.claimMode, ins.deductible, ins.quotedTerm);
-  const price = live.ceil;
-  const originalPremium = ins.premium;
-  state.bank.cash -= price;
-  myCo.cash += price;
-  logFin(myCo.id, 'insurance_premium_revenue', price);
-  ins.insurerId = myCo.id;
-  const insuredCo = companyById(insuredCompanyId);
-  const label = (TAX_SQUARES.find(x=>x.pos===taxPos)||{}).label || 'Taxe';
-  log(`${myCo.name} devient l'assureur de la case « ${label} » (assurée: ${insuredCo?insuredCo.name:'?'}) auprès de la banque — prime d'origine ${fmt(originalPremium)}, prix de reprise recalculé ${fmt(price)}.`,
-    [{label:`${myCo.name} (reprise live)`, amount:price}, {label:'Banque (ancien assureur)', amount:-price}]);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const ins = state.taxInsurances.find(t=>t.taxPos===taxPos && t.insuredCompanyId===insuredCompanyId && t.insurerId==='BANK');
+    if(!ins) return {ok:false};
+    const myCo = myCompany();
+    if(!myCo) return {ok:false, error:'Vous devez d’abord fonder une entreprise.'};
+    if(myCo.id===insuredCompanyId) return {ok:false, error:'Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'};
+    const live = liveTakeoverTaxQuote(taxPos, insuredCompanyId, ins.claimMode, ins.deductible, ins.quotedTerm);
+    const price = live.ceil;
+    const originalPremium = ins.premium;
+    state.bank.cash -= price;
+    myCo.cash += price;
+    logFin(myCo.id, 'insurance_premium_revenue', price);
+    ins.insurerId = myCo.id;
+    const insuredCo = companyById(insuredCompanyId);
+    const label = (TAX_SQUARES.find(x=>x.pos===taxPos)||{}).label || 'Taxe';
+    log(`${myCo.name} devient l'assureur de la case « ${label} » (assurée: ${insuredCo?insuredCo.name:'?'}) auprès de la banque — prime d'origine ${fmt(originalPremium)}, prix de reprise recalculé ${fmt(price)}.`,
+      [{label:`${myCo.name} (reprise live)`, amount:price}, {label:'Banque (ancien assureur)', amount:-price}]);
+    return {ok:true};
+  }, {label:'Reprise live (taxe, assureur banque)'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 function liveTakeoverSubQuote(p, insuredCompanyId, originalDeductible){
@@ -7014,23 +7088,27 @@ function liveTakeoverSubQuote(p, insuredCompanyId, originalDeductible){
   return {dist, prob, exposure, ceil: Math.max(0, expectedLoss*(1+markup))};
 }
 async function takeOverSubInsuranceLive(pid){
-  const p = state.properties.find(x=>x.id===pid);
-  if(!p || !p.subInsurance || p.subInsurance.insurerId!=='BANK') return;
-  const insuredId = p.subInsurance.insuredCompanyId;
-  const myCo = myCompany();
-  if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
-  if(myCo.id===insuredId){ alert('Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'); return; }
-  const live = liveTakeoverSubQuote(p, insuredId, p.subInsurance.deductible);
-  const price = live.ceil;
-  const originalPremium = p.subInsurance.premium;
-  state.bank.cash -= price;
-  myCo.cash += price;
-  logFin(myCo.id, 'insurance_premium_revenue', price);
-  p.subInsurance.insurerId = myCo.id;
-  const insuredCo = companyById(insuredId);
-  log(`${myCo.name} devient l'assureur sous-standard de ${p.name} (assurée: ${insuredCo?insuredCo.name:'?'}) auprès de la banque — prime d'origine ${fmt(originalPremium)}, prix de reprise recalculé ${fmt(price)}.`,
-    [{label:`${myCo.name} (reprise live)`, amount:price}, {label:'Banque (ancien assureur)', amount:-price}]);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const p = state.properties.find(x=>x.id===pid);
+    if(!p || !p.subInsurance || p.subInsurance.insurerId!=='BANK') return {ok:false};
+    const insuredId = p.subInsurance.insuredCompanyId;
+    const myCo = myCompany();
+    if(!myCo) return {ok:false, error:'Vous devez d’abord fonder une entreprise.'};
+    if(myCo.id===insuredId) return {ok:false, error:'Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'};
+    const live = liveTakeoverSubQuote(p, insuredId, p.subInsurance.deductible);
+    const price = live.ceil;
+    const originalPremium = p.subInsurance.premium;
+    state.bank.cash -= price;
+    myCo.cash += price;
+    logFin(myCo.id, 'insurance_premium_revenue', price);
+    p.subInsurance.insurerId = myCo.id;
+    const insuredCo = companyById(insuredId);
+    log(`${myCo.name} devient l'assureur sous-standard de ${p.name} (assurée: ${insuredCo?insuredCo.name:'?'}) auprès de la banque — prime d'origine ${fmt(originalPremium)}, prix de reprise recalculé ${fmt(price)}.`,
+      [{label:`${myCo.name} (reprise live)`, amount:price}, {label:'Banque (ancien assureur)', amount:-price}]);
+    return {ok:true};
+  }, {label:'Reprise live (sous-standard, assureur banque)'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 function insuranceQuote(p, companyId, claimMode, termRolls){
@@ -7121,26 +7199,30 @@ function insuranceTermAvailable(term){
 
 function terrainLotBidScore(b){ return b.price / (b.loyer * b.numSquares); }
 async function submitTerrainLotBid(companyId, price, loyer, numSquares){
-  const co = companyById(companyId);
-  if(!co) return;
-  
-  
-  
-  
-  
-  
-  
-  
-  if(state.gameClock.rollCount % 6 !== 1) return;
-  const minL = state.settings.terrainLotLoyerMin!==undefined ? state.settings.terrainLotLoyerMin : DEFAULT_SETTINGS.terrainLotLoyerMin;
-  const maxL = state.settings.terrainLotLoyerMax!==undefined ? state.settings.terrainLotLoyerMax : DEFAULT_SETTINGS.terrainLotLoyerMax;
-  const clampedLoyer = Math.min(maxL, Math.max(minL, loyer||minL));
-  const clampedSquares = Math.min(TERRAIN_LOT_CANDIDATE_POSITIONS.length, Math.max(1, Math.round(numSquares)||1));
-  const clampedPrice = Math.max(0, price||0);
-  state.terrainLot.bids = state.terrainLot.bids.filter(b=>b.companyId!==companyId);
-  state.terrainLot.bids.push({companyId, price: clampedPrice, loyer: clampedLoyer, numSquares: clampedSquares});
-  log(`${co.name} soumet une mise pour le lot commercial de l'année ${currentGameYear()}: prix ${fmt(clampedPrice)}, loyer ${fmt(clampedLoyer)}/case, ${clampedSquares} case(s).`);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co) return {ok:false};
+    
+    
+    
+    
+    
+    
+    
+    
+    if(state.gameClock.rollCount % 6 !== 1) return {ok:false};
+    const minL = state.settings.terrainLotLoyerMin!==undefined ? state.settings.terrainLotLoyerMin : DEFAULT_SETTINGS.terrainLotLoyerMin;
+    const maxL = state.settings.terrainLotLoyerMax!==undefined ? state.settings.terrainLotLoyerMax : DEFAULT_SETTINGS.terrainLotLoyerMax;
+    const clampedLoyer = Math.min(maxL, Math.max(minL, loyer||minL));
+    const clampedSquares = Math.min(TERRAIN_LOT_CANDIDATE_POSITIONS.length, Math.max(1, Math.round(numSquares)||1));
+    const clampedPrice = Math.max(0, price||0);
+    state.terrainLot.bids = state.terrainLot.bids.filter(b=>b.companyId!==companyId);
+    state.terrainLot.bids.push({companyId, price: clampedPrice, loyer: clampedLoyer, numSquares: clampedSquares});
+    log(`${co.name} soumet une mise pour le lot commercial de l'année ${currentGameYear()}: prix ${fmt(clampedPrice)}, loyer ${fmt(clampedLoyer)}/case, ${clampedSquares} case(s).`);
+    return {ok:true};
+  }, {label:'Mise — lot commercial'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 function resolveTerrainLotAuction(year){
@@ -9345,15 +9427,18 @@ async function issuePreferredShares(companyId, qty, dividendRate, callPrice, opt
 }
 
 async function respondToPreferredIssuance(issuanceId, player, accept){
-  let issuance = null, co = null;
-  state.companies.forEach(c=>{ const f=(c.preferredIssuances||[]).find(i=>i.id===issuanceId); if(f){ issuance=f; co=c; } });
-  if(!issuance) return {ok:false, error:'Cette offre n’est plus disponible.'};
-  if(issuance.status!=='pending') return {ok:false, error:'Cette offre n’est plus ouverte aux réponses.'};
-  if(co.ceoId===player.id) return {ok:false, error:'Le CEO d’une entreprise ne peut pas souscrire aux parts privilégiées de sa propre entreprise — délit d’initié intégré au jeu.'};
-  issuance.responses[player.id] = !!accept;
-  log(`${player.name} ${accept?'accepte':'refuse'} l'offre de parts privilégiées de ${co.name} (${fmtShares(issuance.qty)} part(s) à ${fmtPrice(issuance.issuePrice)}).`);
-  await saveGame(); render();
-  return {ok:true};
+  const res = await attemptActionWithRetry(async ()=>{
+    let issuance = null, co = null;
+    state.companies.forEach(c=>{ const f=(c.preferredIssuances||[]).find(i=>i.id===issuanceId); if(f){ issuance=f; co=c; } });
+    if(!issuance) return {ok:false, error:'Cette offre n’est plus disponible.'};
+    if(issuance.status!=='pending') return {ok:false, error:'Cette offre n’est plus ouverte aux réponses.'};
+    if(co.ceoId===player.id) return {ok:false, error:'Le CEO d’une entreprise ne peut pas souscrire aux parts privilégiées de sa propre entreprise — délit d’initié intégré au jeu.'};
+    issuance.responses[player.id] = !!accept;
+    log(`${player.name} ${accept?'accepte':'refuse'} l'offre de parts privilégiées de ${co.name} (${fmtShares(issuance.qty)} part(s) à ${fmtPrice(issuance.issuePrice)}).`);
+    return {ok:true};
+  }, {label:'Réponse à une émission de parts privilégiées'});
+  if(res.ok) render();
+  return res;
 }
 
 function resolvePendingPreferredIssuances(){
@@ -9463,46 +9548,52 @@ function distributePreferredAmountToHolders(co, items, entries, verbeLabel){
 }
 
 async function payPreferredDividendDue(companyId){
-  const co = companyById(companyId);
-  if(!co || !co.preferredDividendDueThisYear) return {ok:false, error:'Aucun dividende préférentiel dû actuellement.'};
-  const due = co.preferredDividendDueThisYear;
-  const amount = due.amount;
-  co.cash -= amount;
-  logFin(co.id, 'preferred_dividend_payout', -amount);
-  const entries = [{label:`${co.name} (dividende préférentiel versé)`, amount:-amount}];
-  const distributed = distributePreferredAmountToHolders(co, due.items, entries, 'dividende préférentiel reçu');
-  const unclaimed = amount-distributed;
-  if(unclaimed>1e-9){
-    co.cash += unclaimed;
-    logFin(co.id, 'preferred_dividend_unclaimed_return', unclaimed);
-    entries.push({label:`${co.name} (portion de dividende préférentiel non distribuée — retour trésorerie)`, amount:unclaimed});
-  }
-  co.preferredDividendDueThisYear = null;
-  log(`${co.name} verse son dividende préférentiel de ${fmt(amount)}${unclaimed>1e-9?` (${fmt(unclaimed)} non distribué, faute de détenteur actuel sur la/les tranche(s) concernée(s) — retour trésorerie)`:''}.`, entries);
-  await saveGame(); render();
-  return {ok:true, entries};
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co || !co.preferredDividendDueThisYear) return {ok:false, error:'Aucun dividende préférentiel dû actuellement.'};
+    const due = co.preferredDividendDueThisYear;
+    const amount = due.amount;
+    co.cash -= amount;
+    logFin(co.id, 'preferred_dividend_payout', -amount);
+    const entries = [{label:`${co.name} (dividende préférentiel versé)`, amount:-amount}];
+    const distributed = distributePreferredAmountToHolders(co, due.items, entries, 'dividende préférentiel reçu');
+    const unclaimed = amount-distributed;
+    if(unclaimed>1e-9){
+      co.cash += unclaimed;
+      logFin(co.id, 'preferred_dividend_unclaimed_return', unclaimed);
+      entries.push({label:`${co.name} (portion de dividende préférentiel non distribuée — retour trésorerie)`, amount:unclaimed});
+    }
+    co.preferredDividendDueThisYear = null;
+    log(`${co.name} verse son dividende préférentiel de ${fmt(amount)}${unclaimed>1e-9?` (${fmt(unclaimed)} non distribué, faute de détenteur actuel sur la/les tranche(s) concernée(s) — retour trésorerie)`:''}.`, entries);
+    return {ok:true, entries};
+  }, {label:'Versement du dividende préférentiel'});
+  if(res.ok) render();
+  return res;
 }
 
 async function payPreferredDividendArrears(companyId){
-  const co = companyById(companyId);
-  if(!co || !(co.preferredDividendArrears>0)) return {ok:false, error:'Aucun arriérage de dividende préférentiel à payer.'};
-  const amount = co.preferredDividendArrears;
-  const items = co.preferredDividendArrearsItems||[];
-  co.cash -= amount;
-  logFin(co.id, 'preferred_dividend_arrears_paid', -amount);
-  const entries = [{label:`${co.name} (arriérage de dividende préférentiel payé)`, amount:-amount}];
-  const distributed = distributePreferredAmountToHolders(co, items, entries, 'arriérage de dividende préférentiel reçu');
-  const unclaimed = amount-distributed;
-  if(unclaimed>1e-9){
-    co.cash += unclaimed;
-    logFin(co.id, 'preferred_dividend_unclaimed_return', unclaimed);
-    entries.push({label:`${co.name} (portion d'arriérage non distribuée — retour trésorerie)`, amount:unclaimed});
-  }
-  co.preferredDividendArrears = 0;
-  co.preferredDividendArrearsItems = [];
-  log(`${co.name} règle son arriérage de dividende préférentiel de ${fmt(amount)} — le dividende ordinaire redevient possible.${unclaimed>1e-9?` (${fmt(unclaimed)} non distribué, faute de détenteur actuel — retour trésorerie)`:''}`, entries);
-  await saveGame(); render();
-  return {ok:true, entries};
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co || !(co.preferredDividendArrears>0)) return {ok:false, error:'Aucun arriérage de dividende préférentiel à payer.'};
+    const amount = co.preferredDividendArrears;
+    const items = co.preferredDividendArrearsItems||[];
+    co.cash -= amount;
+    logFin(co.id, 'preferred_dividend_arrears_paid', -amount);
+    const entries = [{label:`${co.name} (arriérage de dividende préférentiel payé)`, amount:-amount}];
+    const distributed = distributePreferredAmountToHolders(co, items, entries, 'arriérage de dividende préférentiel reçu');
+    const unclaimed = amount-distributed;
+    if(unclaimed>1e-9){
+      co.cash += unclaimed;
+      logFin(co.id, 'preferred_dividend_unclaimed_return', unclaimed);
+      entries.push({label:`${co.name} (portion d'arriérage non distribuée — retour trésorerie)`, amount:unclaimed});
+    }
+    co.preferredDividendArrears = 0;
+    co.preferredDividendArrearsItems = [];
+    log(`${co.name} règle son arriérage de dividende préférentiel de ${fmt(amount)} — le dividende ordinaire redevient possible.${unclaimed>1e-9?` (${fmt(unclaimed)} non distribué, faute de détenteur actuel — retour trésorerie)`:''}`, entries);
+    return {ok:true, entries};
+  }, {label:'Règlement de l\'arriérage de dividende préférentiel'});
+  if(res.ok) render();
+  return res;
 }
 
 function resolvePreferredDividendsYearEnd(year){
@@ -9550,12 +9641,15 @@ async function listPreferredSharesForSale(companyId, issuanceId, seller, qty, op
   return {ok:true};
 }
 async function cancelPreferredListing(listingId, playerId){
-  const listing = state.preferredMarketListings.find(l=>l.id===listingId);
-  if(!listing) return {ok:false, error:'Annonce introuvable.'};
-  if(listing.sellerId!==playerId) return {ok:false, error:'Seul le vendeur peut retirer cette annonce.'};
-  state.preferredMarketListings = state.preferredMarketListings.filter(l=>l.id!==listingId);
-  await saveGame(); render();
-  return {ok:true};
+  const res = await attemptActionWithRetry(async ()=>{
+    const listing = state.preferredMarketListings.find(l=>l.id===listingId);
+    if(!listing) return {ok:false, error:'Annonce introuvable.'};
+    if(listing.sellerId!==playerId) return {ok:false, error:'Seul le vendeur peut retirer cette annonce.'};
+    state.preferredMarketListings = state.preferredMarketListings.filter(l=>l.id!==listingId);
+    return {ok:true};
+  }, {label:'Retrait d\'une annonce de parts privilégiées'});
+  if(res.ok) render();
+  return res;
 }
 async function buyPreferredSharesFromListing(listingId, buyerId, qty, opts){
   
@@ -10525,25 +10619,28 @@ function goAdvanceAmount(rank, company){
   return 2 * Math.pow(1+r, -rank);
 }
 async function takeGoAdvance(companyId){
-  const co = companyById(companyId);
-  if(!co) return;
-  if(state.settings.goAdvanceMax>0 && co.goAdvancesOwed>=state.settings.goAdvanceMax){
-    alert(`${co.name} a déjà atteint le nombre maximal de subventions d'avance simultanées autorisé pour cette partie (${state.settings.goAdvanceMax}) — au moins un passage sur GO doit d'abord rembourser une subvention existante.`);
-    return;
-  }
-  const rank = co.goAdvancesOwed + 1;
-  
-  
-  const amount = goAdvanceAmount(rank, co);
-  co.cash += amount; state.bank.cash -= amount;
-  logFin(co.id, 'go_advance_proceeds', amount);
-  co.goAdvancesOwed += 1;
-  
-  
-  injectStockCube(co, 'red', STOCK_TRIGGER_GO_ADVANCE_RED_MIN, STOCK_TRIGGER_GO_ADVANCE_RED_MAX);
-  log(`${co.name} vend sa ${rank}${rank===1?'re':'e'} subvention d'avance (sur son ${rank}${rank===1?'er':'e'} passage GO futur) pour ${amount.toFixed(2)} (taux ${(riskAdjustedRate(state.settings.goAdvanceRate,co)*100).toFixed(1)}%).`,
-    [{label:`${co.name} (subvention d'avance)`, amount:amount}, {label:'Banque', amount:-amount}]);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co) return {ok:false};
+    if(state.settings.goAdvanceMax>0 && co.goAdvancesOwed>=state.settings.goAdvanceMax){
+      return {ok:false, error:`${co.name} a déjà atteint le nombre maximal de subventions d'avance simultanées autorisé pour cette partie (${state.settings.goAdvanceMax}) — au moins un passage sur GO doit d'abord rembourser une subvention existante.`};
+    }
+    const rank = co.goAdvancesOwed + 1;
+    
+    
+    const amount = goAdvanceAmount(rank, co);
+    co.cash += amount; state.bank.cash -= amount;
+    logFin(co.id, 'go_advance_proceeds', amount);
+    co.goAdvancesOwed += 1;
+    
+    
+    injectStockCube(co, 'red', STOCK_TRIGGER_GO_ADVANCE_RED_MIN, STOCK_TRIGGER_GO_ADVANCE_RED_MAX);
+    log(`${co.name} vend sa ${rank}${rank===1?'re':'e'} subvention d'avance (sur son ${rank}${rank===1?'er':'e'} passage GO futur) pour ${amount.toFixed(2)} (taux ${(riskAdjustedRate(state.settings.goAdvanceRate,co)*100).toFixed(1)}%).`,
+      [{label:`${co.name} (subvention d'avance)`, amount:amount}, {label:'Banque', amount:-amount}]);
+    return {ok:true};
+  }, {label:'Subvention d\'avance GO'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 function jailedCompanyIds(){
@@ -10569,29 +10666,43 @@ function applySendToJailEffect(co){
   log(`${co.name} fait l'objet d'une enquête de l'AMF (${state.settings.jailTurns} tour(s) à laisser suivre son cours pour un non-lieu, ou ${fmt(state.settings.jailBailCost)} pour conclure un règlement immédiat). Aucun loyer ne lui sera versé tant que l'enquête est en cours.`);
 }
 async function sendToJail(companyId){
-  const co = companyById(companyId);
-  if(!co) return;
-  applySendToJailEffect(co);
+  
+  
+  
+  
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co) return {ok:false};
+    applySendToJailEffect(co);
+    return {ok:true};
+  }, {label:'Envoi en prison (AMF)'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
   
   
   
   const triggered = await checkAllCompaniesReady();
-  if(!triggered){ await saveGame(); render(); }
+  if(!triggered) render();
 }
 
 async function payBail(companyId){
-  const co = companyById(companyId);
-  if(!co || !co.inJail) return;
-  const cost = state.settings.jailBailCost;
-  if(co.cash<cost){ alert('Encaisse insuffisante pour conclure le règlement.'); return; }
-  co.cash -= cost; state.bank.cash += cost;
-  logFin(co.id, 'jail_bail_expense', -cost);
-  co.inJail = false; co.jailTurnsLeft = 0;
-  const entries = [{label:`${co.name} (règlement AMF)`, amount:-cost}, {label:'Banque', amount:cost}];
-  log(`${co.name} conclut un règlement de ${fmt(cost)} avec l'AMF et n'est plus enquêtée.`, entries);
+  let entries = null, coName = null;
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co || !co.inJail) return {ok:false};
+    const cost = state.settings.jailBailCost;
+    if(co.cash<cost) return {ok:false, error:'Encaisse insuffisante pour conclure le règlement.'};
+    co.cash -= cost; state.bank.cash += cost;
+    logFin(co.id, 'jail_bail_expense', -cost);
+    co.inJail = false; co.jailTurnsLeft = 0;
+    entries = [{label:`${co.name} (règlement AMF)`, amount:-cost}, {label:'Banque', amount:cost}];
+    coName = co.name;
+    log(`${co.name} conclut un règlement de ${fmt(cost)} avec l'AMF et n'est plus enquêtée.`, entries);
+    return {ok:true};
+  }, {label:'Règlement AMF (caution)'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
   const triggered = await checkAllCompaniesReady();
-  if(!triggered){ await saveGame(); render(); }
-  showTransactionPopup(`Règlement AMF — ${co.name}`, entries);
+  if(!triggered) render();
+  if(entries) showTransactionPopup(`Règlement AMF — ${coName}`, entries);
 }
 
 
@@ -10617,10 +10728,15 @@ function applyPassGoEffect(co){
   return entries;
 }
 async function passGo(companyId){
-  const co = companyById(companyId);
-  if(!co) return null;
-  const entries = applyPassGoEffect(co);
-  await saveGame(); render();
+  let entries = null;
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co) return {ok:false};
+    entries = applyPassGoEffect(co);
+    return {ok:true};
+  }, {label:'Passage GO'});
+  if(!res.ok){ if(res.error) alert(res.error); return null; }
+  render();
   return entries;
 }
 
@@ -10798,22 +10914,6 @@ async function rollDiceAndMove(companyId){
     alert(alertMsg);
     return null;
   }
-  const co = companyById(companyId);
-  if(!co) return null;
-  
-  
-  if(co.inJail){ alert(`${co.name} est enquêtée par l'AMF — laissez l'enquête se poursuivre ou concluez un règlement avant de relancer les dés.`); return null; }
-  
-  
-  const portfolioSnap = snapshotPlayerBondsAndLoans();
-  
-  
-  
-  maybeResolveTerrainLotAuction();
-  
-  
-  maybeResolveEtfAuctions();
-  const result = await corePerformDiceRoll(co);
   
   
   
@@ -10821,18 +10921,48 @@ async function rollDiceAndMove(companyId){
   
   
   
+  let result = null;
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co) return {ok:false};
+    
+    
+    if(co.inJail) return {ok:false, error:`${co.name} est enquêtée par l'AMF — laissez l'enquête se poursuivre ou concluez un règlement avant de relancer les dés.`};
+    
+    
+    const portfolioSnap = snapshotPlayerBondsAndLoans();
+    
+    
+    
+    maybeResolveTerrainLotAuction();
+    
+    
+    maybeResolveEtfAuctions();
+    const localResult = await corePerformDiceRoll(co);
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    state.lastDiceRollEvent = {roll: state.gameClock.rollCount};
+    localResult.yearJustEnded = advanceGameClock();
+    
+    
+    state.lastDiceRollEvent.portfolioDeltas = computePlayerPortfolioDeltas(portfolioSnap);
+    result = localResult;
+    return {ok:true};
+  }, {label:'Lancer de dés (solo)'});
+  if(!res.ok){ if(res.error) alert(res.error); return null; }
   
-  
-  state.lastDiceRollEvent = {roll: state.gameClock.rollCount};
-  result.yearJustEnded = advanceGameClock();
-  
-  
-  state.lastDiceRollEvent.portfolioDeltas = computePlayerPortfolioDeltas(portfolioSnap);
   
   
   
   const triggered = result.jailed ? await checkAllCompaniesReady() : false;
-  if(!triggered){ await saveGame(); render(); }
+  if(!triggered) render();
   return result;
 }
 
@@ -11395,9 +11525,10 @@ function groupMergeEligible(group){
   return props.every(p=> !p.groupMergeId && (!p.mortgages||p.mortgages.length===0) && purchasableBankShare(p)===0);
 }
 async function mergeGroup(group){
-  if(myPlayerId!==state.creatorId){ alert('Seul le créateur de la partie peut regrouper un lot.'); return; }
+  const res = await attemptActionWithRetry(async ()=>{
+  if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut regrouper un lot.'};
   const props = state.properties.filter(p=>p.group===group);
-  if(!groupMergeEligible(group)){ alert('Ce lot n\u2019est pas éligible (doit être 100% de la portion achetable possédée par des joueurs, sans hypothèque).'); return; }
+  if(!groupMergeEligible(group)) return {ok:false, error:'Ce lot n\u2019est pas éligible (doit être 100% de la portion achetable possédée par des joueurs, sans hypothèque).'};
   
   
   
@@ -11410,7 +11541,7 @@ async function mergeGroup(group){
   const contributions = {};
   props.forEach((p,i)=>{ p.owners.forEach(o=>{ contributions[o.companyId] = (contributions[o.companyId]||0) + values[i]*(o.share/100); }); });
   const entries = Object.entries(contributions);
-  if(entries.length===0){ alert('Aucun propriétaire trouvé.'); return; }
+  if(entries.length===0) return {ok:false, error:'Aucun propriétaire trouvé.'};
   const mergeId = uid();
   
   
@@ -11459,7 +11590,10 @@ async function mergeGroup(group){
   });
   props.forEach(p=>{ p.groupMergeId = mergeId; p.owners = newOwners.map(o=>({...o})); p.insurance = null; p.subInsurance = null; });
   log(`Le lot ${GROUPS[group].label} est regroupé (${newOwners.map(o=>`${companyById(o.companyId)?.name||'?'} ${o.share}%`).join(', ')}).`);
-  await saveGame(); render();
+  return {ok:true};
+  }, {label:'Regroupement de lot'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 async function sellMergedShare(mergeId, sellerId, buyerId, pct, price, opts){
   
@@ -11651,9 +11785,13 @@ async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
 
 
 async function setHousesAvailable(n){
-  state.houseAuction.availableHouses = Math.max(0, n);
-  log(`Nombre de maisons disponibles fixé à ${state.houseAuction.availableHouses}.`);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    state.houseAuction.availableHouses = Math.max(0, n);
+    log(`Nombre de maisons disponibles fixé à ${state.houseAuction.availableHouses}.`);
+    return {ok:true};
+  }, {label:'Fixer le nombre de maisons disponibles'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 async function submitHouseBid(companyId, qty, price, opts){
@@ -11671,8 +11809,12 @@ async function submitHouseBid(companyId, qty, price, opts){
   return {ok:true};
 }
 async function removeHouseBid(companyId){
-  state.houseAuction.bids = state.houseAuction.bids.filter(b=>b.companyId!==companyId);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    state.houseAuction.bids = state.houseAuction.bids.filter(b=>b.companyId!==companyId);
+    return {ok:true};
+  }, {label:'Retrait d\'une offre — enchère de maisons'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 function houseAuctionPreview(){
   const sorted = [...state.houseAuction.bids].sort((a,b)=>b.price-a.price);
@@ -11691,8 +11833,9 @@ function houseAuctionPreview(){
   return {allocations, clearingPrice, remaining, sorted};
 }
 async function resolveHouseAuction(){
+  const res = await attemptActionWithRetry(async ()=>{
   const {allocations, clearingPrice} = houseAuctionPreview();
-  if(allocations.length===0){ alert('Aucune offre à traiter (ou aucune maison disponible).'); return; }
+  if(allocations.length===0) return {ok:false, error:'Aucune offre à traiter (ou aucune maison disponible).'};
   
   
   
@@ -11717,13 +11860,20 @@ async function resolveHouseAuction(){
   state.houseAuction.lastResult = {allocations: allocationsWithPaidPrice, clearingPrice, payAsBid, availableHouses: state.houseAuction.availableHouses, closedAt: nowLabel()};
   state.houseAuction.bids = [];
   state.houseAuction.availableHouses = 0;
-  await saveGame(); render();
+  return {ok:true};
+  }, {label:'Résolution de l\'enchère de maisons'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 async function adjustHouseReserve(companyId, delta){
-  const co = companyById(companyId);
-  if(!co) return;
-  co.houseReserve = Math.max(0, co.houseReserve+delta);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const co = companyById(companyId);
+    if(!co) return {ok:false};
+    co.houseReserve = Math.max(0, co.houseReserve+delta);
+    return {ok:true};
+  }, {label:'Ajustement de la réserve de maisons'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 async function sellHousesToCompany(sellerId, buyerId, qty, pricePerHouse, opts){
@@ -11906,21 +12056,25 @@ async function issueMortgage(propId, borrowerId, lenderId, opts){
   return {ok:true};
 }
 async function repayMortgage(propId, borrowerId){
-  if(!state.stockMarket.tradingOpen){ alert('Le remboursement d\u2019hypothèque n\u2019est possible que lorsque la fenêtre de transactions annuelle est ouverte.'); return; }
-  const p = state.properties.find(x=>x.id===propId);
-  if(!p) return;
-  const m = (p.mortgages||[]).find(x=>x.companyId===borrowerId);
-  if(!m) return;
-  const borrower = companyById(borrowerId);
-  if(!borrower || borrower.cash<m.principal){ alert('Encaisse insuffisante pour rembourser.'); return; }
-  borrower.cash -= m.principal;
-  logFin(borrower.id, 'mortgage_repayment', -m.principal);
-  if(!m.lenderId || m.lenderId==='BANK') state.bank.cash += m.principal;
-  else { const lender = companyById(m.lenderId); if(lender){ lender.cash += m.principal; logFin(lender.id, 'mortgage_investment_recovery', m.principal); } }
-  log(`${borrower.name} rembourse l'hypothèque de sa part de ${p.name} (${m.principal.toFixed(2)}) — cette part redevient productive.`,
-    [{label:`${borrower.name} (remboursement)`, amount:-m.principal}, {label:`${insurerLabel(m.lenderId)} (prêteur)`, amount:m.principal}]);
-  p.mortgages = p.mortgages.filter(x=>x!==m);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    if(!state.stockMarket.tradingOpen) return {ok:false, error:'Le remboursement d\u2019hypothèque n\u2019est possible que lorsque la fenêtre de transactions annuelle est ouverte.'};
+    const p = state.properties.find(x=>x.id===propId);
+    if(!p) return {ok:false};
+    const m = (p.mortgages||[]).find(x=>x.companyId===borrowerId);
+    if(!m) return {ok:false};
+    const borrower = companyById(borrowerId);
+    if(!borrower || borrower.cash<m.principal) return {ok:false, error:'Encaisse insuffisante pour rembourser.'};
+    borrower.cash -= m.principal;
+    logFin(borrower.id, 'mortgage_repayment', -m.principal);
+    if(!m.lenderId || m.lenderId==='BANK') state.bank.cash += m.principal;
+    else { const lender = companyById(m.lenderId); if(lender){ lender.cash += m.principal; logFin(lender.id, 'mortgage_investment_recovery', m.principal); } }
+    log(`${borrower.name} rembourse l'hypothèque de sa part de ${p.name} (${m.principal.toFixed(2)}) — cette part redevient productive.`,
+      [{label:`${borrower.name} (remboursement)`, amount:-m.principal}, {label:`${insurerLabel(m.lenderId)} (prêteur)`, amount:m.principal}]);
+    p.mortgages = p.mortgages.filter(x=>x!==m);
+    return {ok:true};
+  }, {label:'Remboursement d\'hypothèque'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 async function issueMortgageLot(mergeId, borrowerId, lenderId, opts){
   
@@ -11950,21 +12104,25 @@ async function issueMortgageLot(mergeId, borrowerId, lenderId, opts){
   return {ok:true};
 }
 async function repayMortgageLot(mergeId, borrowerId){
-  if(!state.stockMarket.tradingOpen){ alert('Le remboursement d\u2019hypothèque n\u2019est possible que lorsque la fenêtre de transactions annuelle est ouverte.'); return; }
-  const host = lotMortgageHost(mergeId);
-  if(!host) return;
-  const m = (host.mortgages||[]).find(x=>x.companyId===borrowerId);
-  if(!m) return;
-  const borrower = companyById(borrowerId);
-  if(!borrower || borrower.cash<m.principal){ alert('Encaisse insuffisante pour rembourser.'); return; }
-  borrower.cash -= m.principal;
-  logFin(borrower.id, 'mortgage_repayment', -m.principal);
-  if(!m.lenderId || m.lenderId==='BANK') state.bank.cash += m.principal;
-  else { const lender = companyById(m.lenderId); if(lender){ lender.cash += m.principal; logFin(lender.id, 'mortgage_investment_recovery', m.principal); } }
-  log(`${borrower.name} rembourse l'hypothèque de sa part du lot ${GROUPS[host.group].label} (${m.principal.toFixed(2)}) — cette part redevient productive.`,
-    [{label:`${borrower.name} (remboursement)`, amount:-m.principal}, {label:`${insurerLabel(m.lenderId)} (prêteur)`, amount:m.principal}]);
-  host.mortgages = host.mortgages.filter(x=>x!==m);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    if(!state.stockMarket.tradingOpen) return {ok:false, error:'Le remboursement d\u2019hypothèque n\u2019est possible que lorsque la fenêtre de transactions annuelle est ouverte.'};
+    const host = lotMortgageHost(mergeId);
+    if(!host) return {ok:false};
+    const m = (host.mortgages||[]).find(x=>x.companyId===borrowerId);
+    if(!m) return {ok:false};
+    const borrower = companyById(borrowerId);
+    if(!borrower || borrower.cash<m.principal) return {ok:false, error:'Encaisse insuffisante pour rembourser.'};
+    borrower.cash -= m.principal;
+    logFin(borrower.id, 'mortgage_repayment', -m.principal);
+    if(!m.lenderId || m.lenderId==='BANK') state.bank.cash += m.principal;
+    else { const lender = companyById(m.lenderId); if(lender){ lender.cash += m.principal; logFin(lender.id, 'mortgage_investment_recovery', m.principal); } }
+    log(`${borrower.name} rembourse l'hypothèque de sa part du lot ${GROUPS[host.group].label} (${m.principal.toFixed(2)}) — cette part redevient productive.`,
+      [{label:`${borrower.name} (remboursement)`, amount:-m.principal}, {label:`${insurerLabel(m.lenderId)} (prêteur)`, amount:m.principal}]);
+    host.mortgages = host.mortgages.filter(x=>x!==m);
+    return {ok:true};
+  }, {label:'Remboursement d\'hypothèque (lot)'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 function processMortgageInterest(){
   state.properties.forEach(p=>{
@@ -12119,7 +12277,11 @@ function swapSplit(propId, ownerId, visitorId, cutAmount){
 
 
 
-async function createRentSwap(propA, companyA, propB, companyB, years, capA, capB, generalA, generalB, budgetCapA, budgetCapB){
+async function createRentSwap(propA, companyA, propB, companyB, years, capA, capB, generalA, generalB, budgetCapA, budgetCapB, opts){
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const budgetMode = !!(budgetCapA>0 && budgetCapB>0);
   generalA = budgetMode ? true : !!generalA; generalB = budgetMode ? true : !!generalB;
   
@@ -12127,7 +12289,7 @@ async function createRentSwap(propA, companyA, propB, companyB, years, capA, cap
   
   
   if(budgetMode){ propA = null; propB = null; }
-  if(!generalA && !generalB && samePropertyOrLot(propA,propB)){ alert('Choisissez deux terrains différents (deux terrains du même lot regroupé comptent comme un seul actif).'); return; }
+  if(!generalA && !generalB && samePropertyOrLot(propA,propB)) return fail('Choisissez deux terrains différents (deux terrains du même lot regroupé comptent comme un seul actif).');
   
   
   
@@ -12136,15 +12298,15 @@ async function createRentSwap(propA, companyA, propB, companyB, years, capA, cap
   
   
   const coAForCheck = companyById(companyA), coBForCheck = companyById(companyB);
-  if(!coAForCheck){ alert('Entreprise introuvable — swap annulé.'); return; }
-  if(!coBForCheck){ alert('Entreprise introuvable — swap annulé.'); return; }
+  if(!coAForCheck) return fail('Entreprise introuvable — swap annulé.');
+  if(!coBForCheck) return fail('Entreprise introuvable — swap annulé.');
   if(!generalA){
     const propAObjForCheck = state.properties.find(x=>x.id===propA);
-    if(!propAObjForCheck || propertyOwnedShare(propAObjForCheck, companyA)<=0){ alert(`${coAForCheck.name} ne possède plus ce terrain — swap annulé.`); return; }
+    if(!propAObjForCheck || propertyOwnedShare(propAObjForCheck, companyA)<=0) return fail(`${coAForCheck.name} ne possède plus ce terrain — swap annulé.`);
   }
   if(!generalB){
     const propBObjForCheck = state.properties.find(x=>x.id===propB);
-    if(!propBObjForCheck || propertyOwnedShare(propBObjForCheck, companyB)<=0){ alert(`${coBForCheck.name} ne possède plus ce terrain — swap annulé.`); return; }
+    if(!propBObjForCheck || propertyOwnedShare(propBObjForCheck, companyB)<=0) return fail(`${coBForCheck.name} ne possède plus ce terrain — swap annulé.`);
   }
   state.rentSwaps.push({id:uid(), propA: generalA?null:propA, companyA, generalA, capA: capA||null,
     propB: generalB?null:propB, companyB, generalB, capB: capB||null,
@@ -12161,7 +12323,8 @@ async function createRentSwap(propA, companyA, propB, companyB, years, capA, cap
     const capText = (capA||capB) ? ` (plafond: ${capA?fmt(capA):'illimité'} / ${capB?fmt(capB):'illimité'})` : '';
     log(`Swap de loyers conclu: ${coA.name} (${propAName}) ⇄ ${coB.name} (${propBName}) pour ${years} an(s)${capText}.`);
   }
-  await saveGame(); render();
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
 }
 
 
@@ -12226,29 +12389,44 @@ async function proposeRentSwap(propA, companyA, propB, companyB, years, capA, ca
 }
 
 async function acceptRentSwapOffer(id){
-  const offer = state.rentSwapOffers.find(o=>o.id===id);
-  if(!offer) return;
-  state.rentSwapOffers = state.rentSwapOffers.filter(o=>o.id!==id);
-  await createRentSwap(offer.propA, offer.fromCompanyId, offer.propB, offer.toCompanyId, offer.years, offer.capA, offer.capB, offer.generalA, offer.generalB, offer.budgetCapA, offer.budgetCapB);
+  
+  
+  
+  const res = await attemptActionWithRetry(async ()=>{
+    const offer = state.rentSwapOffers.find(o=>o.id===id);
+    if(!offer) return {ok:false};
+    state.rentSwapOffers = state.rentSwapOffers.filter(o=>o.id!==id);
+    return createRentSwap(offer.propA, offer.fromCompanyId, offer.propB, offer.toCompanyId, offer.years, offer.capA, offer.capB, offer.generalA, offer.generalB, offer.budgetCapA, offer.budgetCapB, {silent:true});
+  }, {label:'Acceptation d\'un swap de loyers'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 async function refuseRentSwapOffer(id){
-  const offer = state.rentSwapOffers.find(o=>o.id===id);
-  if(!offer) return;
-  const coA = companyById(offer.fromCompanyId), coB = companyById(offer.toCompanyId);
-  state.rentSwapOffers = state.rentSwapOffers.filter(o=>o.id!==id);
-  log(`${coB?coB.name:'?'} refuse la proposition de swap de loyers de ${coA?coA.name:'?'}.`);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const offer = state.rentSwapOffers.find(o=>o.id===id);
+    if(!offer) return {ok:false};
+    const coA = companyById(offer.fromCompanyId), coB = companyById(offer.toCompanyId);
+    state.rentSwapOffers = state.rentSwapOffers.filter(o=>o.id!==id);
+    log(`${coB?coB.name:'?'} refuse la proposition de swap de loyers de ${coA?coA.name:'?'}.`);
+    return {ok:true};
+  }, {label:'Refus d\'un swap de loyers'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 async function cancelRentSwapOffer(id){
-  const offer = state.rentSwapOffers.find(o=>o.id===id);
-  if(!offer) return;
-  const myCo = myCompany();
-  if(!myCo || myCo.id!==offer.fromCompanyId){ alert('Seule l’entreprise auteure de la proposition peut la retirer.'); return; }
-  state.rentSwapOffers = state.rentSwapOffers.filter(o=>o.id!==id);
-  log('Proposition de swap de loyers retirée par son auteur, avant réponse.');
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const offer = state.rentSwapOffers.find(o=>o.id===id);
+    if(!offer) return {ok:false};
+    const myCo = myCompany();
+    if(!myCo || myCo.id!==offer.fromCompanyId) return {ok:false, error:'Seule l’entreprise auteure de la proposition peut la retirer.'};
+    state.rentSwapOffers = state.rentSwapOffers.filter(o=>o.id!==id);
+    log('Proposition de swap de loyers retirée par son auteur, avant réponse.');
+    return {ok:true};
+  }, {label:'Retrait d\'une proposition de swap de loyers'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 
@@ -12257,13 +12435,19 @@ function findRentCompensation(companyXId, companyYId){
   return state.rentCompensations.find(c=>
     (c.companyA===companyXId && c.companyB===companyYId) || (c.companyA===companyYId && c.companyB===companyXId));
 }
-async function createRentCompensation(companyAId, companyBId, interestRatePct){
-  if(!companyAId || !companyBId || companyAId===companyBId){ alert('Choisissez deux entreprises différentes.'); return; }
-  if(findRentCompensation(companyAId, companyBId)){ alert('Un accord de compensation existe déjà entre ces deux entreprises.'); return; }
+async function createRentCompensation(companyAId, companyBId, interestRatePct, opts){
+  
+  
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  if(!companyAId || !companyBId || companyAId===companyBId) return fail('Choisissez deux entreprises différentes.');
+  if(findRentCompensation(companyAId, companyBId)) return fail('Un accord de compensation existe déjà entre ces deux entreprises.');
   const coA = companyById(companyAId), coB = companyById(companyBId);
-  if(!coA || !coB) return;
+  if(!coA || !coB) return fail(null);
   const fee = state.settings.rentCompensationFee;
-  if(coA.cash<fee || coB.cash<fee){ alert(`Chaque entreprise doit pouvoir payer les frais de signature (${fmt(fee)}).`); return; }
+  if(coA.cash<fee || coB.cash<fee) return fail(`Chaque entreprise doit pouvoir payer les frais de signature (${fmt(fee)}).`);
   coA.cash -= fee; coB.cash -= fee; state.bank.cash += fee*2;
   logFin(coA.id, 'rent_compensation_fee_expense', -fee);
   logFin(coB.id, 'rent_compensation_fee_expense', -fee);
@@ -12272,14 +12456,17 @@ async function createRentCompensation(companyAId, companyBId, interestRatePct){
   const compensationFeeEntries = [{label:`${coA.name} (frais de signature)`, amount:-fee}, {label:`${coB.name} (frais de signature)`, amount:-fee}, {label:'Banque (frais)', amount:fee*2}];
   log(`Accord de compensation de loyer signé entre ${coA.name} et ${coB.name} (intérêt de règlement: ${(interestRate*100).toFixed(1)}%). Frais de signature de ${fmt(fee)} chacun versés à la banque.`,
     compensationFeeEntries);
-  await saveGame(); render();
-  
-  
-  
-  
-  
-  
-  showTransactionPopup(`Compensation de loyer signée — ${coA.name} ⇄ ${coB.name}`, compensationFeeEntries);
+  if(!opts.silent){
+    await saveGame(); render();
+    
+    
+    
+    
+    
+    
+    showTransactionPopup(`Compensation de loyer signée — ${coA.name} ⇄ ${coB.name}`, compensationFeeEntries);
+  }
+  return {ok:true, entries: compensationFeeEntries, coAName: coA.name, coBName: coB.name};
 }
 
 function settleRentCompensation(c){
@@ -12335,29 +12522,44 @@ async function proposeRentCompensation(fromCompanyId, toCompanyId, interestRateP
 }
 
 async function acceptRentCompensationOffer(id){
-  const offer = state.rentCompensationOffers.find(o=>o.id===id);
-  if(!offer) return;
-  state.rentCompensationOffers = state.rentCompensationOffers.filter(o=>o.id!==id);
-  await createRentCompensation(offer.fromCompanyId, offer.toCompanyId, offer.interestRate*100);
+  
+  
+  const res = await attemptActionWithRetry(async ()=>{
+    const offer = state.rentCompensationOffers.find(o=>o.id===id);
+    if(!offer) return {ok:false};
+    state.rentCompensationOffers = state.rentCompensationOffers.filter(o=>o.id!==id);
+    return createRentCompensation(offer.fromCompanyId, offer.toCompanyId, offer.interestRate*100, {silent:true});
+  }, {label:'Acceptation d\'un accord de compensation de loyer'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
+  if(res.entries) showTransactionPopup(`Compensation de loyer signée — ${res.coAName} ⇄ ${res.coBName}`, res.entries);
 }
 
 async function refuseRentCompensationOffer(id){
-  const offer = state.rentCompensationOffers.find(o=>o.id===id);
-  if(!offer) return;
-  const coA = companyById(offer.fromCompanyId), coB = companyById(offer.toCompanyId);
-  state.rentCompensationOffers = state.rentCompensationOffers.filter(o=>o.id!==id);
-  log(`${coB?coB.name:'?'} refuse la proposition d'accord de compensation de loyer de ${coA?coA.name:'?'}.`);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const offer = state.rentCompensationOffers.find(o=>o.id===id);
+    if(!offer) return {ok:false};
+    const coA = companyById(offer.fromCompanyId), coB = companyById(offer.toCompanyId);
+    state.rentCompensationOffers = state.rentCompensationOffers.filter(o=>o.id!==id);
+    log(`${coB?coB.name:'?'} refuse la proposition d'accord de compensation de loyer de ${coA?coA.name:'?'}.`);
+    return {ok:true};
+  }, {label:'Refus d\'un accord de compensation de loyer'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 async function cancelRentCompensationOffer(id){
-  const offer = state.rentCompensationOffers.find(o=>o.id===id);
-  if(!offer) return;
-  const myCo = myCompany();
-  if(!myCo || myCo.id!==offer.fromCompanyId){ alert('Seule l’entreprise auteure de la proposition peut la retirer.'); return; }
-  state.rentCompensationOffers = state.rentCompensationOffers.filter(o=>o.id!==id);
-  log('Proposition d\'accord de compensation de loyer retirée par son auteur, avant réponse.');
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const offer = state.rentCompensationOffers.find(o=>o.id===id);
+    if(!offer) return {ok:false};
+    const myCo = myCompany();
+    if(!myCo || myCo.id!==offer.fromCompanyId) return {ok:false, error:'Seule l’entreprise auteure de la proposition peut la retirer.'};
+    state.rentCompensationOffers = state.rentCompensationOffers.filter(o=>o.id!==id);
+    log('Proposition d\'accord de compensation de loyer retirée par son auteur, avant réponse.');
+    return {ok:true};
+  }, {label:'Retrait d\'une proposition de compensation de loyer'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 
@@ -12428,68 +12630,89 @@ async function postLoanRequest(companyId, principal, opts){
 }
 
 async function cancelLoanRequest(requestId){
-  const req = state.loanRequests.find(r=>r.id===requestId);
-  if(!req) return;
-  const myCo = myCompany();
-  if(!myCo || myCo.id!==req.borrowerId){ alert('Seule l’entreprise auteure de la demande peut la retirer.'); return; }
-  state.loanRequests = state.loanRequests.filter(r=>r.id!==requestId);
-  state.loanOffers = state.loanOffers.filter(o=>o.requestId!==requestId);
-  log(`${myCo.name} retire sa demande d'emprunt, avant acceptation.`);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const req = state.loanRequests.find(r=>r.id===requestId);
+    if(!req) return {ok:false};
+    const myCo = myCompany();
+    if(!myCo || myCo.id!==req.borrowerId) return {ok:false, error:'Seule l’entreprise auteure de la demande peut la retirer.'};
+    state.loanRequests = state.loanRequests.filter(r=>r.id!==requestId);
+    state.loanOffers = state.loanOffers.filter(o=>o.requestId!==requestId);
+    log(`${myCo.name} retire sa demande d'emprunt, avant acceptation.`);
+    return {ok:true};
+  }, {label:'Retrait d\'une demande d\'emprunt'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 async function submitLoanOffer(requestId, player, withholdingPct, multiple, secured){
-  const req = state.loanRequests.find(r=>r.id===requestId);
-  if(!req) return {ok:false, error:'Cette demande d’emprunt n’est plus disponible.'};
-  const co = companyById(req.borrowerId);
-  if(co && co.ceoId===player.id) return {ok:false, error:'Le CEO d’une entreprise ne peut pas prêter à sa propre compagnie — délit d’initié intégré au jeu.'};
-  const pctMin = state.settings.loanOfferWithholdingPctMin||0, pctMax = state.settings.loanOfferWithholdingPctMax||1;
-  if(!(withholdingPct>=pctMin-1e-9 && withholdingPct<=pctMax+1e-9)) return {ok:false, error:`Le % des loyers retenu doit être entre ${Math.round(pctMin*100)}% et ${Math.round(pctMax*100)}%.`};
-  const multMin = state.settings.loanOfferMultipleMin||1, multMax = state.settings.loanOfferMultipleMax||1;
-  if(!(multiple>=multMin-1e-9 && multiple<=multMax+1e-9)) return {ok:false, error:`Le multiple de remboursement doit être entre ${multMin}× et ${multMax}×.`};
   
   
   
-  
-  secured = !!secured;
-  const existing = state.loanOffers.find(o=>o.requestId===requestId && o.playerId===player.id);
-  if(existing){ existing.withholdingPct = withholdingPct; existing.multiple = multiple; existing.secured = secured; }
-  else { state.loanOffers.push({id:uid(), requestId, playerId:player.id, withholdingPct, multiple, secured, createdAt:nowLabel()}); }
-  log(`${player.name} propose un prêt ${secured?'GARANTI':'non garanti'} à ${co?co.name:'?'}: ${Math.round(withholdingPct*100)}% des loyers retenu, remboursement à ${multiple}× le capital.`);
-  await saveGame(); render();
-  return {ok:true};
+  const res = await attemptActionWithRetry(async ()=>{
+    const req = state.loanRequests.find(r=>r.id===requestId);
+    if(!req) return {ok:false, error:'Cette demande d’emprunt n’est plus disponible.'};
+    const co = companyById(req.borrowerId);
+    if(co && co.ceoId===player.id) return {ok:false, error:'Le CEO d’une entreprise ne peut pas prêter à sa propre compagnie — délit d’initié intégré au jeu.'};
+    const pctMin = state.settings.loanOfferWithholdingPctMin||0, pctMax = state.settings.loanOfferWithholdingPctMax||1;
+    if(!(withholdingPct>=pctMin-1e-9 && withholdingPct<=pctMax+1e-9)) return {ok:false, error:`Le % des loyers retenu doit être entre ${Math.round(pctMin*100)}% et ${Math.round(pctMax*100)}%.`};
+    const multMin = state.settings.loanOfferMultipleMin||1, multMax = state.settings.loanOfferMultipleMax||1;
+    if(!(multiple>=multMin-1e-9 && multiple<=multMax+1e-9)) return {ok:false, error:`Le multiple de remboursement doit être entre ${multMin}× et ${multMax}×.`};
+    
+    
+    
+    
+    secured = !!secured;
+    const existing = state.loanOffers.find(o=>o.requestId===requestId && o.playerId===player.id);
+    if(existing){ existing.withholdingPct = withholdingPct; existing.multiple = multiple; existing.secured = secured; }
+    else { state.loanOffers.push({id:uid(), requestId, playerId:player.id, withholdingPct, multiple, secured, createdAt:nowLabel()}); }
+    log(`${player.name} propose un prêt ${secured?'GARANTI':'non garanti'} à ${co?co.name:'?'}: ${Math.round(withholdingPct*100)}% des loyers retenu, remboursement à ${multiple}× le capital.`);
+    return {ok:true};
+  }, {label:'Soumission d\'une offre de prêt'});
+  if(res.ok) render();
+  return res;
 }
 
 async function cancelLoanOffer(offerId){
-  const offer = state.loanOffers.find(o=>o.id===offerId);
-  if(!offer) return;
-  if(offer.playerId!==myPlayerId){ alert('Seul l’auteur de l’offre peut la retirer.'); return; }
-  state.loanOffers = state.loanOffers.filter(o=>o.id!==offerId);
-  log(`${state.players.find(p=>p.id===offer.playerId)?.name||'?'} retire son offre de prêt, avant acceptation.`);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const offer = state.loanOffers.find(o=>o.id===offerId);
+    if(!offer) return {ok:false};
+    if(offer.playerId!==myPlayerId) return {ok:false, error:'Seul l’auteur de l’offre peut la retirer.'};
+    state.loanOffers = state.loanOffers.filter(o=>o.id!==offerId);
+    log(`${state.players.find(p=>p.id===offer.playerId)?.name||'?'} retire son offre de prêt, avant acceptation.`);
+    return {ok:true};
+  }, {label:'Retrait d\'une offre de prêt'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 async function acceptLoanOffer(offerId){
-  const offer = state.loanOffers.find(o=>o.id===offerId);
-  if(!offer){ alert('Cette offre n’est plus disponible.'); return; }
-  const req = state.loanRequests.find(r=>r.id===offer.requestId);
-  if(!req){ alert('Cette demande d’emprunt n’est plus disponible.'); return; }
-  const myCo = myCompany();
-  if(!myCo || myCo.id!==req.borrowerId){ alert('Seule l’entreprise auteure de la demande peut accepter une offre.'); return; }
   
-  if(state.gameEndedReason){ alert('La partie est terminée — plus aucune action de prêt n’est possible.'); return; }
-  const remainingCap = loanCapRemaining(req.borrowerId);
-  if(state.settings.loanMaxPrincipal>0 && req.principal>remainingCap+1e-9){
-    alert(`Cette entreprise a emprunté ailleurs entre-temps — la capacité restante (${fmt(remainingCap)}) ne suffit plus pour ce montant (${fmt(req.principal)}). Annulez la demande et republiez-en une plus petite si besoin.`);
-    return;
-  }
-  const lenderPlayer = state.players.find(p=>p.id===offer.playerId);
-  if(!lenderPlayer || (lenderPlayer.cash||0) < req.principal - 1e-9){ alert('Ce joueur n’a plus assez d’encaisse pour honorer cette offre — choisissez-en une autre ou attendez.'); return; }
-  const ok = await issueLoan(offer.playerId, req.borrowerId, req.principal, offer.withholdingPct, offer.multiple, offer.secured);
-  if(!ok) return;
-  state.loanRequests = state.loanRequests.filter(r=>r.id!==req.id);
-  state.loanOffers = state.loanOffers.filter(o=>o.requestId!==req.id);
-  await saveGame(); render();
+  
+  
+  const res = await attemptActionWithRetry(async ()=>{
+    const offer = state.loanOffers.find(o=>o.id===offerId);
+    if(!offer) return {ok:false, error:'Cette offre n’est plus disponible.'};
+    const req = state.loanRequests.find(r=>r.id===offer.requestId);
+    if(!req) return {ok:false, error:'Cette demande d’emprunt n’est plus disponible.'};
+    const myCo = myCompany();
+    if(!myCo || myCo.id!==req.borrowerId) return {ok:false, error:'Seule l’entreprise auteure de la demande peut accepter une offre.'};
+    
+    if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucune action de prêt n’est possible.'};
+    const remainingCap = loanCapRemaining(req.borrowerId);
+    if(state.settings.loanMaxPrincipal>0 && req.principal>remainingCap+1e-9){
+      return {ok:false, error:`Cette entreprise a emprunté ailleurs entre-temps — la capacité restante (${fmt(remainingCap)}) ne suffit plus pour ce montant (${fmt(req.principal)}). Annulez la demande et republiez-en une plus petite si besoin.`};
+    }
+    const lenderPlayer = state.players.find(p=>p.id===offer.playerId);
+    if(!lenderPlayer || (lenderPlayer.cash||0) < req.principal - 1e-9) return {ok:false, error:'Ce joueur n’a plus assez d’encaisse pour honorer cette offre — choisissez-en une autre ou attendez.'};
+    const loanOpts = {silent:true};
+    const ok = await issueLoan(offer.playerId, req.borrowerId, req.principal, offer.withholdingPct, offer.multiple, offer.secured, loanOpts);
+    if(!ok) return {ok:false, error: loanOpts.lastError || 'Le prêt n’a pas pu être émis.'};
+    state.loanRequests = state.loanRequests.filter(r=>r.id!==req.id);
+    state.loanOffers = state.loanOffers.filter(o=>o.requestId!==req.id);
+    return {ok:true};
+  }, {label:'Acceptation d\'une offre de prêt'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multiple, secured, opts){
@@ -13581,9 +13804,15 @@ function bindTabEvents(t){
     
     const stockBtn = document.getElementById('toggleStock');
     if(stockBtn) stockBtn.addEventListener('click', async ()=>{
-      state.stockMarket.tradingOpen = !state.stockMarket.tradingOpen;
-      log(`Fenêtre de transactions annuelle ${state.stockMarket.tradingOpen?'ouverte':'fermée'} par le créateur de la partie.`);
-      await saveGame(); render();
+      
+      
+      const res = await attemptActionWithRetry(async ()=>{
+        state.stockMarket.tradingOpen = !state.stockMarket.tradingOpen;
+        log(`Fenêtre de transactions annuelle ${state.stockMarket.tradingOpen?'ouverte':'fermée'} par le créateur de la partie.`);
+        return {ok:true};
+      }, {label:'Bascule de la fenêtre de transactions'});
+      if(!res.ok){ if(res.error) alert(res.error); return; }
+      render();
     });
     
     
@@ -13626,15 +13855,21 @@ function bindTabEvents(t){
     
     document.querySelectorAll('[data-admin-set-position]').forEach(b=>b.addEventListener('click', async ()=>{
       const companyId = b.dataset.adminSetPosition;
-      const co = companyById(companyId);
-      if(!co) return;
       const input = document.getElementById('adminPos_'+companyId);
       let pos = parseInt(input.value);
       if(isNaN(pos)){ alert('Case invalide.'); return; }
       pos = Math.max(0, Math.min(39, pos));
-      co.position = pos;
-      log(`${co.name}: position ajustée manuellement à la case ${pos} par le créateur de la partie.`);
-      await saveGame(); render();
+      
+      
+      const res = await attemptActionWithRetry(async ()=>{
+        const co = companyById(companyId);
+        if(!co) return {ok:false};
+        co.position = pos;
+        log(`${co.name}: position ajustée manuellement à la case ${pos} par le créateur de la partie.`);
+        return {ok:true};
+      }, {label:'Ajustement manuel de position'});
+      if(!res.ok){ if(res.error) alert(res.error); return; }
+      render();
     }));
     
     
@@ -13654,13 +13889,17 @@ function bindTabEvents(t){
     
     const mDiscount = document.getElementById('mDiscount');
     if(mDiscount) mDiscount.addEventListener('change', async ()=>{
-      state.settings.discountRate = (parseFloat(mDiscount.value)||0)/100;
-      await saveGame(); render();
+      const v = (parseFloat(mDiscount.value)||0)/100;
+      const res = await attemptActionWithRetry(async ()=>{ state.settings.discountRate = v; return {ok:true}; }, {label:'Réglage du taux d\'actualisation'});
+      if(!res.ok){ if(res.error) alert(res.error); return; }
+      render();
     });
     const mGrowth = document.getElementById('mGrowth');
     if(mGrowth) mGrowth.addEventListener('change', async ()=>{
-      state.settings.growthRate = (parseFloat(mGrowth.value)||0)/100;
-      await saveGame(); render();
+      const v = (parseFloat(mGrowth.value)||0)/100;
+      const res = await attemptActionWithRetry(async ()=>{ state.settings.growthRate = v; return {ok:true}; }, {label:'Réglage du taux de croissance'});
+      if(!res.ok){ if(res.error) alert(res.error); return; }
+      render();
     });
     
     
@@ -13673,10 +13912,14 @@ function bindTabEvents(t){
     const tvDisplaySelect = document.getElementById('adminTvDisplay');
     if(tvDisplaySelect) tvDisplaySelect.addEventListener('change', async ()=>{
       const v = tvDisplaySelect.value;
-      if(v.startsWith('company:')) state.tvDisplay = {mode:'company', companyId:v.slice('company:'.length)};
-      else if(v.startsWith('etf:')) state.tvDisplay = {mode:'etf', etfId:v.slice('etf:'.length)};
-      else state.tvDisplay = {mode:'jeu'};
-      await saveGame(); render();
+      const res = await attemptActionWithRetry(async ()=>{
+        if(v.startsWith('company:')) state.tvDisplay = {mode:'company', companyId:v.slice('company:'.length)};
+        else if(v.startsWith('etf:')) state.tvDisplay = {mode:'etf', etfId:v.slice('etf:'.length)};
+        else state.tvDisplay = {mode:'jeu'};
+        return {ok:true};
+      }, {label:'Réglage de l\'affichage TV'});
+      if(!res.ok){ if(res.error) alert(res.error); return; }
+      render();
     });
   }
   
@@ -14762,12 +15005,26 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
 
 
 
+
+
+
+
+
+
+
+
+
+
 async function buildHouse(pid, sourceCompanyId, compensationTotal, opts){
-  
-  
-  
-  
-  
+  opts = opts || {};
+  if(opts.silent) return buildHouseCore(pid, sourceCompanyId, compensationTotal, opts);
+  const res = await attemptActionWithRetry(()=>buildHouseCore(pid, sourceCompanyId, compensationTotal, {silent:true}), {label:'Construction de maison'});
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
+  render();
+  if(res.entries && res.entries.length) showTransactionPopup(res.label, res.entries);
+  return res;
+}
+function buildHouseCore(pid, sourceCompanyId, compensationTotal, opts){
   opts = opts || {};
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   if(!yearEndWindowOpen()) return fail(`La construction de maisons n'est possible qu'à la fin d'une année financière (dans ${rollsUntilYearEnd()} lancer(s)).`);
@@ -14843,10 +15100,10 @@ async function buildHouse(pid, sourceCompanyId, compensationTotal, opts){
   }
 
   const label = `Construction${sourceCompanyId?' & compensation':''} — ${p.name}`;
-  if(!opts.silent){
-    await saveGame(); render();
-    if(entries.length) showTransactionPopup(label, entries);
-  }
+  
+  
+  
+  
   return {ok:true, entries, label};
 }
 
@@ -14920,11 +15177,16 @@ function modalHouseCompensation(pid, sourceId){
   });
 }
 async function removeHouse(pid){
-  if(myPlayerId!==state.creatorId){ alert('Seul le créateur de la partie peut réduire des maisons.'); return; }
-  const p = state.properties.find(x=>x.id===pid);
-  p.houses = Math.max(0, p.houses-1);
-  log(`${p.name}: ${houseLabel(p.houses)} (retrait, sans remboursement)`);
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut réduire des maisons.'};
+    const p = state.properties.find(x=>x.id===pid);
+    if(!p) return {ok:false};
+    p.houses = Math.max(0, p.houses-1);
+    log(`${p.name}: ${houseLabel(p.houses)} (retrait, sans remboursement)`);
+    return {ok:true};
+  }, {label:'Retrait manuel d\'une maison'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 
 function modalShareSwap(){
@@ -15554,9 +15816,18 @@ function modalInsureBundle(claimMode, term, isRegenerate){
   document.getElementById('mTerm').addEventListener('change', (e)=>{ modalInsureBundle(claimMode, e.target.value, true); });
   const mDedGlobalEl = document.getElementById('mDeductibleGlobal');
   if(mDedGlobalEl) mDedGlobalEl.addEventListener('change', async ()=>{
-    myCo.currentDeductible = parseFloat(mDedGlobalEl.value)||0;
-    log(`Franchise de ${myCo.name} pour ce tour fixée à ${myCo.currentDeductible.toFixed(2)}.`);
-    await saveGame();
+    
+    
+    
+    const newDeductible = parseFloat(mDedGlobalEl.value)||0;
+    const res = await attemptActionWithRetry(async ()=>{
+      const co = myCompany();
+      if(!co) return {ok:false};
+      co.currentDeductible = newDeductible;
+      log(`Franchise de ${co.name} pour ce tour fixée à ${co.currentDeductible.toFixed(2)}.`);
+      return {ok:true};
+    }, {label:'Ajustement de la franchise du tour'});
+    if(!res.ok){ if(res.error) alert(res.error); return; }
     modalInsureBundle(claimMode, term, true); 
   });
   document.getElementById('mOk').addEventListener('click', async ()=>{
@@ -16605,16 +16876,22 @@ function modalOptionTrade(){
 }
 
 async function closeOptionPositionFromUi(positionId){
-  const me = state.players.find(p=>p.id===myPlayerId);
-  if(!me) return;
-  const pos = (me.optionPositions||[]).find(p=>p.id===positionId);
-  const co = pos ? companyById(pos.companyId) : null;
-  const res = closeOptionPosition(me, positionId, Number.MAX_SAFE_INTEGER);
-  if(!res.ok){ alert(res.error); return; }
-  const label = co ? co.name : '?';
-  log(`${me.name} clôture sa position d'option sur ${label} (${res.qty.toFixed(4)} contrat(s), au prix courant).`, res.entries);
-  await saveGame(); render();
-  showTransactionPopup(`Clôture d'option — ${label}`, res.entries);
+  let popupLabel = '?', popupEntries = null;
+  const res = await attemptActionWithRetry(async ()=>{
+    const me = state.players.find(p=>p.id===myPlayerId);
+    if(!me) return {ok:false};
+    const pos = (me.optionPositions||[]).find(p=>p.id===positionId);
+    const co = pos ? companyById(pos.companyId) : null;
+    const r = closeOptionPosition(me, positionId, Number.MAX_SAFE_INTEGER);
+    if(!r.ok) return {ok:false, error:r.error};
+    popupLabel = co ? co.name : '?';
+    log(`${me.name} clôture sa position d'option sur ${popupLabel} (${r.qty.toFixed(4)} contrat(s), au prix courant).`, r.entries);
+    popupEntries = r.entries;
+    return {ok:true};
+  }, {label:'Clôture d\'option'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
+  if(popupEntries) showTransactionPopup(`Clôture d'option — ${popupLabel}`, popupEntries);
 }
 
 function modalOptionStrategy(){
@@ -16795,17 +17072,23 @@ function modalBuyPreferredListing(listingId){
   });
 }
 async function closeOptionStrategyFromUi(strategyId){
-  const me = state.players.find(p=>p.id===myPlayerId);
-  if(!me) return;
-  const leg = (me.optionPositions||[]).find(p=>p.strategyId===strategyId);
-  const co = leg ? companyById(leg.companyId) : null;
-  const kindLabel = leg ? (OPTION_STRATEGY_LABELS[leg.strategyKind]||leg.strategyKind) : 'stratégie';
-  const res = closeOptionStrategy(me, strategyId);
-  if(!res.ok){ alert(res.error); return; }
-  const label = co ? co.name : '?';
-  log(`${me.name} clôture sa stratégie (${kindLabel}) sur ${label} (${res.qty.toFixed(4)} contrat(s) au total sur les 2 jambes, au prix courant).`, res.entries);
-  await saveGame(); render();
-  showTransactionPopup(`Clôture de stratégie — ${label}`, res.entries);
+  let popupLabel = '?', popupEntries = null;
+  const res = await attemptActionWithRetry(async ()=>{
+    const me = state.players.find(p=>p.id===myPlayerId);
+    if(!me) return {ok:false};
+    const leg = (me.optionPositions||[]).find(p=>p.strategyId===strategyId);
+    const co = leg ? companyById(leg.companyId) : null;
+    const kindLabel = leg ? (OPTION_STRATEGY_LABELS[leg.strategyKind]||leg.strategyKind) : 'stratégie';
+    const r = closeOptionStrategy(me, strategyId);
+    if(!r.ok) return {ok:false, error:r.error};
+    popupLabel = co ? co.name : '?';
+    log(`${me.name} clôture sa stratégie (${kindLabel}) sur ${popupLabel} (${r.qty.toFixed(4)} contrat(s) au total sur les 2 jambes, au prix courant).`, r.entries);
+    popupEntries = r.entries;
+    return {ok:true};
+  }, {label:'Clôture de stratégie d\'options'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
+  if(popupEntries) showTransactionPopup(`Clôture de stratégie — ${popupLabel}`, popupEntries);
 }
 
 function modalInsureProperty(pid, term){
@@ -17327,22 +17610,26 @@ async function buySubInsurance(pid, companyId, insurerId, premium, opts){
   return {ok:true};
 }
 async function cancelSubInsurance(pid){
-  const p = state.properties.find(x=>x.id===pid);
-  if(!p.subInsurance) return;
-  
-  
-  
-  if(state.gameClock.rollCount !== p.subInsurance.signedAtRoll){ alert('Cette assurance sous-standard ne peut plus être annulée : au moins un lancer de dé a eu lieu depuis sa signature.'); return; }
-  const co = companyById(p.subInsurance.insuredCompanyId);
-  const premium = p.subInsurance.premium;
-  const insurerId = p.subInsurance.insurerId;
-  if(co){ co.cash += premium; logFin(co.id, 'insurance_refund_revenue', premium); }
-  if(!insurerId || insurerId==='BANK') state.bank.cash -= premium;
-  else { const ins = companyById(insurerId); if(ins){ ins.cash -= premium; logFin(ins.id, 'insurance_refund_expense', -premium); } }
-  log(`Assurance sous-standard annulée sur ${p.name} — prime de ${premium.toFixed(2)} remboursée à ${co?co.name:'?'} par ${insurerLabel(insurerId)}.`,
-    [{label:`${co?co.name:'?'} (remboursement)`, amount:premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:-premium}]);
-  p.subInsurance = null;
-  await saveGame(); render();
+  const res = await attemptActionWithRetry(async ()=>{
+    const p = state.properties.find(x=>x.id===pid);
+    if(!p || !p.subInsurance) return {ok:false};
+    
+    
+    
+    if(state.gameClock.rollCount !== p.subInsurance.signedAtRoll) return {ok:false, error:'Cette assurance sous-standard ne peut plus être annulée : au moins un lancer de dé a eu lieu depuis sa signature.'};
+    const co = companyById(p.subInsurance.insuredCompanyId);
+    const premium = p.subInsurance.premium;
+    const insurerId = p.subInsurance.insurerId;
+    if(co){ co.cash += premium; logFin(co.id, 'insurance_refund_revenue', premium); }
+    if(!insurerId || insurerId==='BANK') state.bank.cash -= premium;
+    else { const ins = companyById(insurerId); if(ins){ ins.cash -= premium; logFin(ins.id, 'insurance_refund_expense', -premium); } }
+    log(`Assurance sous-standard annulée sur ${p.name} — prime de ${premium.toFixed(2)} remboursée à ${co?co.name:'?'} par ${insurerLabel(insurerId)}.`,
+      [{label:`${co?co.name:'?'} (remboursement)`, amount:premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:-premium}]);
+    p.subInsurance = null;
+    return {ok:true};
+  }, {label:'Annulation d\'une assurance sous-standard'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
 }
 async function expireSubInsurance(pid){
   const p = state.properties.find(x=>x.id===pid);

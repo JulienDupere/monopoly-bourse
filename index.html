@@ -448,10 +448,10 @@ const GROUPS = {
 
 
 const ETF_DEFS = [
-  {key:'rue1', label:'ETF (Première rue)', groups:['BRUN','BLEU_PALE']},
-  {key:'rue2', label:'ETF (Deuxième rue)', groups:['ROSE','ORANGE']},
-  {key:'rue3', label:'ETF (Troisième rue)', groups:['ROUGE','JAUNE']},
-  {key:'rue4', label:'ETF (Quatrième rue)', groups:['VERT','BLEU_FONCE']},
+  {key:'rue1', label:'REIT (Première rue)', groups:['BRUN','BLEU_PALE']},
+  {key:'rue2', label:'REIT (Deuxième rue)', groups:['ROSE','ORANGE']},
+  {key:'rue3', label:'REIT (Troisième rue)', groups:['ROUGE','JAUNE']},
+  {key:'rue4', label:'REIT (Quatrième rue)', groups:['VERT','BLEU_FONCE']},
 ];
 
 
@@ -532,9 +532,17 @@ const FEATURE_LIST = [
   {key:'goAdvance', label:'Marché des subventions d\'avance (salaire, case GO)'},
   {key:'mortgage', label:'Hypothèques formelles'},
   {key:'rentSwap', label:'Swaps de loyers'},
+  
+  
+  
+  
+  
+  
+  
+  {key:'revenueSwap', label:'Émission ABS (titrisation du revenu futur d’un panier de terrains, en tranches senior/junior — voir RESUME_ET_REGLES.md section 275)'},
   {key:'rentCompensation', label:'Accords de compensation de loyer (netting bilatéral)'},
   {key:'loan', label:'Prêts (retenue automatique sur les loyers reçus)'},
-  {key:'etf', label:'ETF de terrains (réserve permanente de la banque, émise progressivement aux joueurs)'},
+  {key:'etf', label:'REIT de terrains (réserve permanente de la banque, émise progressivement aux joueurs)'},
   {key:'subInsurance', label:'Assurance sous-standard (1 seul lancé de dé, prime fortement majorée, terrains seulement, achetable en tout temps)'},
   {key:'houseSource', label:'Provenance des maisons (chaque construction retire une maison de la réserve d’un joueur, avec compensation possible entre copropriétaires)'},
   
@@ -1123,6 +1131,11 @@ function migrateState(s){
   if(!s.mortgages) s.mortgages = {}; 
   if(!s.rentSwaps) s.rentSwaps = [];
   if(!s.rentCompensations) s.rentCompensations = [];
+  
+  
+  if(s.settings.features.revenueSwap===undefined) s.settings.features.revenueSwap = true;
+  if(!s.revenueSwapListings) s.revenueSwapListings = [];
+  if(!s.revenueSwaps) s.revenueSwaps = [];
   
   
   
@@ -1715,7 +1728,7 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
   
   
   
-  const mergedSettings = Object.assign({}, DEFAULT_SETTINGS, {features:{insurance:true,houseAuction:true,goAdvance:true,mortgage:true,rentSwap:true,rentCompensation:true,loan:true,etf:false,subInsurance:true,houseSource:false,terrainLot:true}}, settings||{});
+  const mergedSettings = Object.assign({}, DEFAULT_SETTINGS, {features:{insurance:true,houseAuction:true,goAdvance:true,mortgage:true,rentSwap:true,revenueSwap:true,rentCompensation:true,loan:true,etf:false,subInsurance:true,houseSource:false,terrainLot:true}}, settings||{});
   
   
   
@@ -1805,6 +1818,9 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
     
     terrainLot: {bids:[], active:null, lastResult:null},
     rentSwaps: [], rentCompensations: [], rentSwapOffers: [], rentCompensationOffers: [], loans: [], loanRequests: [], loanOffers: [], taxInsurances: [],
+    
+    
+    revenueSwapListings: [], revenueSwaps: [],
     
     
     
@@ -2675,7 +2691,13 @@ function renderPortefeuilleTrading(me, company){
     const borrowerCo = companyById(r.borrowerId);
     const offersOnThis = state.loanOffers.filter(o=>o.requestId===r.id);
     const myOffer = state.loanOffers.find(o=>o.requestId===r.id && o.playerId===me.id);
-    const pctMin = Math.round((state.settings.loanOfferWithholdingPctMin||0)*100), pctMax = Math.round((state.settings.loanOfferWithholdingPctMax||1)*100);
+    
+    
+    const pctMin = Math.round((state.settings.loanOfferWithholdingPctMin||0)*100);
+    const pctHeadroom = loanWithholdingHeadroom(r.borrowerId);
+    const pctMax = Math.round(Math.min(state.settings.loanOfferWithholdingPctMax||1, pctHeadroom)*100);
+    const headroomHtml = pctHeadroom < (state.settings.loanOfferWithholdingPctMax||1) - 1e-9
+      ? ` <span class="small" style="color:var(--brick);">(retenue max. disponible: ${pctMax}% — déjà réduite par ses prêts actifs)</span>` : '';
     const multMin = state.settings.loanOfferMultipleMin||1, multMax = state.settings.loanOfferMultipleMax||1;
     
     
@@ -2693,11 +2715,48 @@ function renderPortefeuilleTrading(me, company){
     
     
     const expiryHtml = ` <span class="small" style="color:var(--brick);">⏳ expire au prochain lancer de dés si non acceptée</span>`;
-    return `<div style="margin-bottom:4px;">🏦 Demande d'emprunt ${borrowerCo?esc(borrowerCo.name):'—'}${ratingHtml} : ${fmt(r.principal)} (${offersOnThis.length} offre${offersOnThis.length===1?'':'s'} reçue${offersOnThis.length===1?'':'s'})${expiryHtml} — ${offerForm}</div>`;
+    return `<div style="margin-bottom:4px;">🏦 Demande d'emprunt ${borrowerCo?esc(borrowerCo.name):'—'}${ratingHtml} : ${fmt(r.principal)} (${offersOnThis.length} offre${offersOnThis.length===1?'':'s'} reçue${offersOnThis.length===1?'':'s'})${expiryHtml}${headroomHtml} — ${offerForm}</div>`;
   });
   const announcementBannerHtml = (dividendAnnouncementLines.length>0 || ceoAnnouncementLines.length>0 || ceoPublicStatementLines.length>0 || loanRequestLines.length>0)
     ? `<div class="small" id="pfAnnouncementBanner" style="margin:2px 0 14px;">${[...dividendAnnouncementLines, ...ceoAnnouncementLines, ...ceoPublicStatementLines, ...loanRequestLines].join('')}</div>`
     : '';
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  const absPortefeuilleListings = !state.settings.features.revenueSwap ? [] : (state.revenueSwapListings||[]).filter(l=>{
+    const sellerCo = companyById(l.sellerId);
+    return !(sellerCo && sellerCo.ceoId===me.id);
+  });
+  const absPortefeuilleMarketHtml = absPortefeuilleListings.length===0 ? '' : `
+  <div class="small" style="font-weight:600;margin-top:2px;margin-bottom:6px;">Marché des émissions ABS</div>
+  <table style="margin-bottom:14px;">
+    <tr><th>Émettrice</th><th>Terrain(s)</th><th>% cédé</th><th>Durée</th><th>Senior (recherché / prime)</th><th>Junior (recherché)</th><th>Souscriptions</th><th></th></tr>
+    ${absPortefeuilleListings.map(l=>{
+      const seller = companyById(l.sellerId);
+      const labels = l.propertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p?(p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name):'?'; }).join(', ');
+      const seniorSubTotal = l.seniorSubs.reduce((s,x)=>s+x.maxAmount,0), juniorSubTotal = l.juniorSubs.reduce((s,x)=>s+x.maxAmount,0);
+      const subsText = `Senior: ${l.seniorSubs.length} souscripteur(s), ${fmt(seniorSubTotal)} max cumulé<br>Junior: ${l.juniorSubs.length} souscripteur(s), ${fmt(juniorSubTotal)} max cumulé`;
+      const actionHtml = `<button class="btn btn-gold btn-sm" data-subscribe-revenue-listing-player="${l.id}" data-tranche="senior">Souscrire (senior)</button> <button class="btn btn-gold btn-sm" data-subscribe-revenue-listing-player="${l.id}" data-tranche="junior">Souscrire (junior)</button>`;
+      return `<tr>
+        <td>${esc(seller?seller.name:'?')}</td>
+        <td>${esc(labels)}</td>
+        <td>${Math.round(l.cededPctOfShare*100)}%</td>
+        <td>${l.years} an(s)</td>
+        <td class="money">${fmt(l.tranches.seniorAmount)} (prime ${Math.round(l.tranches.seniorPremiumPct*100)}%)</td>
+        <td class="money">${fmt(l.tranches.juniorAmount)}</td>
+        <td class="small">${subsText}</td>
+        <td>${actionHtml}</td>
+      </tr>`;
+    }).join('')}
+  </table>`;
   
   
   
@@ -3027,6 +3086,7 @@ function renderPortefeuilleTrading(me, company){
   })();
   return `
   ${announcementBannerHtml}
+  ${absPortefeuilleMarketHtml}
   ${(() => {
     
     
@@ -3324,7 +3384,7 @@ function renderPortefeuilleFinancials(){
     <tr style="font-weight:700;"><td>Total des actifs</td>${statements.map(s=>`<td>${bsCell(s,'totalAssets')}</td>`).join('')}</tr>
     <tr style="font-weight:600;"><td>Actifs court terme</td>${statements.map(s=>`<td>${bsCell(s,'assetsShortTerm')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Encaisse</td>${statements.map(s=>`<td>${bsCell(s,'cash')}</td>`).join('')}</tr>
-    <tr><td class="small">↳ Parts ETF</td>${statements.map(s=>`<td>${bsCell(s,'etf')}</td>`).join('')}</tr>
+    <tr><td class="small">↳ Parts REIT</td>${statements.map(s=>`<td>${bsCell(s,'etf')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Prêts à recevoir</td>${statements.map(s=>`<td>${bsCell(s,'loanReceivable')}</td>`).join('')}</tr>
     <tr style="font-weight:600;"><td>Actifs long terme</td>${statements.map(s=>`<td>${bsCell(s,'assetsLongTerm')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Terrains (valeur comptable)</td>${statements.map(s=>`<td>${bsCell(s,'realEstate')}</td>`).join('')}</tr>
@@ -3555,7 +3615,7 @@ function renderEntrepriseFinancials(company){
     <tr style="font-weight:700;"><td>Total des actifs</td>${statements.map(s=>`<td>${bsCell(s,'totalAssets')}</td>`).join('')}</tr>
     <tr style="font-weight:600;"><td>Actifs court terme</td>${statements.map(s=>`<td>${bsCell(s,'assetsShortTerm')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Encaisse</td>${statements.map(s=>`<td>${bsCell(s,'cash')}</td>`).join('')}</tr>
-    <tr><td class="small">↳ Parts ETF</td>${statements.map(s=>`<td>${bsCell(s,'etf')}</td>`).join('')}</tr>
+    <tr><td class="small">↳ Parts REIT</td>${statements.map(s=>`<td>${bsCell(s,'etf')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Prêts à recevoir</td>${statements.map(s=>`<td>${bsCell(s,'loanReceivable')}</td>`).join('')}</tr>
     <tr style="font-weight:600;"><td>Actifs long terme</td>${statements.map(s=>`<td>${bsCell(s,'assetsLongTerm')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Terrains (valeur comptable)</td>${statements.map(s=>`<td>${bsCell(s,'realEstate')}</td>`).join('')}</tr>
@@ -3907,7 +3967,7 @@ function renderEntreprise(){
     const etfProfitColor = etfProfit<0 ? 'var(--brick)' : '#047857';
     
     
-    return `<tr><td>${etfBadge}</td><td>${held.toFixed(2)} pt(s)</td><td class="money">${fmt(etfValue)}</td><td class="small">—</td><td class="small">—</td><td class="money">${fmt(etfRevenue)}</td><td class="money">${fmt(etfCapex)}</td><td class="money" style="color:${etfProfitColor};">${fmt(etfProfit)}</td><td class="small">—</td><td class="small">Achat/vente depuis l'onglet ETF</td></tr>`;
+    return `<tr><td>${etfBadge}</td><td>${held.toFixed(2)} pt(s)</td><td class="money">${fmt(etfValue)}</td><td class="small">—</td><td class="small">—</td><td class="money">${fmt(etfRevenue)}</td><td class="money">${fmt(etfCapex)}</td><td class="money" style="color:${etfProfitColor};">${fmt(etfProfit)}</td><td class="small">—</td><td class="small">Achat/vente depuis l'onglet REIT</td></tr>`;
   }).join('') : '';
 
   
@@ -4157,6 +4217,14 @@ function renderEntreprise(){
   
   const proposeCompButtonHtml = (f.rentCompensation && otherActiveCompaniesExist)
     ? `<button class="btn btn-ghost btn-sm" id="openProposeCompBtn">🤝 Accords de compensation</button>`
+    : '';
+  
+  
+  
+  
+  
+  const proposeRevenueSwapButtonHtml = (f.revenueSwap && otherActiveCompaniesExist && revenueSwapSellableItems(company.id).length>0)
+    ? `<button class="btn btn-ghost btn-sm" id="openProposeRevenueSwapBtn">💱 Vente de revenu (ABS)</button>`
     : '';
 
   
@@ -4484,6 +4552,11 @@ function renderEntreprise(){
     && contracts.length===0 && allSubInsuredProps.length===0
     && (!f.rentSwap || state.rentSwaps.length===0)
     && (!f.rentCompensation || state.rentCompensations.length===0)
+    
+    
+    
+    
+    && (!f.revenueSwap || (state.revenueSwapListings.length===0 && state.revenueSwaps.length===0))
     && loansAsBorrower.length===0 && loansAsLender.length===0;
   
   
@@ -4668,6 +4741,62 @@ function renderEntreprise(){
       </tr>`;
     }).join('')}
   </table>`;
+  
+  
+  
+  
+  
+  
+  const revenueSwapListingsMarketHtml = (!f.revenueSwap || state.revenueSwapListings.length===0) ? '' : `
+  <div class="small" style="font-weight:600;margin-top:14px;">Marché des émissions ABS</div>
+  <table style="margin-top:6px;">
+    <tr><th>Émettrice</th><th>Terrain(s)</th><th>% cédé</th><th>Durée</th><th>Senior (recherché / prime)</th><th>Junior (recherché)</th><th>Souscriptions</th><th></th></tr>
+    ${state.revenueSwapListings.map(l=>{
+      const seller = companyById(l.sellerId);
+      const labels = l.propertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p?(p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name):'?'; }).join(', ');
+      const mine = l.sellerId===myCoId;
+      const seniorSubTotal = l.seniorSubs.reduce((s,x)=>s+x.maxAmount,0), juniorSubTotal = l.juniorSubs.reduce((s,x)=>s+x.maxAmount,0);
+      const subsText = `Senior: ${l.seniorSubs.length} souscripteur(s), ${fmt(seniorSubTotal)} max cumulé<br>Junior: ${l.juniorSubs.length} souscripteur(s), ${fmt(juniorSubTotal)} max cumulé`;
+      const actionHtml = mine
+        ? `<button class="btn btn-ghost btn-sm" data-cancel-revenue-listing="${l.id}">Retirer</button>`
+        : `<button class="btn btn-gold btn-sm" data-subscribe-revenue-listing="${l.id}" data-tranche="senior">Souscrire (senior)</button> <button class="btn btn-gold btn-sm" data-subscribe-revenue-listing="${l.id}" data-tranche="junior">Souscrire (junior)</button>`;
+      return `<tr>
+        <td>${esc(seller?seller.name:'?')}</td>
+        <td>${esc(labels)}</td>
+        <td>${Math.round(l.cededPctOfShare*100)}%</td>
+        <td>${l.years} an(s)</td>
+        <td class="money">${fmt(l.tranches.seniorAmount)} (prime ${Math.round(l.tranches.seniorPremiumPct*100)}%)</td>
+        <td class="money">${fmt(l.tranches.juniorAmount)}</td>
+        <td class="small">${subsText}</td>
+        <td>${actionHtml}</td>
+      </tr>`;
+    }).join('')}
+  </table>`;
+  
+  
+  
+  
+  const revenueSwapsActiveHtml = (!f.revenueSwap || state.revenueSwaps.length===0) ? '' : `
+  <div class="small" style="font-weight:600;margin-top:14px;">Émissions ABS actives</div>
+  <table style="margin-top:6px;">
+    <tr><th>Émettrice</th><th>Terrain(s)</th><th>% cédé</th><th>Années restantes</th><th>Senior (servie / plafond)</th><th>Porteurs senior</th><th>Porteurs junior</th></tr>
+    ${state.revenueSwaps.map(s=>{
+      const seller = companyById(s.sellerId);
+      const labels = s.propertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p?(p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name):'?'; }).join(', ');
+      const holderName = h=>h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(x=>x.id===h.holderId)||{}).name;
+      const seniorNames = s.seniorHolders.map(h=>`${esc(holderName(h)||'?')} (${fmt(h.amount)})`).join(', ');
+      const juniorNames = s.juniorHolders.map(h=>`${esc(holderName(h)||'?')}${h.holderId===s.sellerId?' — rétention':''} (${fmt(h.amount)})`).join(', ');
+      return `<tr>
+        <td>${esc(seller?seller.name:'?')}</td>
+        <td>${esc(labels)}</td>
+        <td>${Math.round(s.cededPctOfShare*100)}%</td>
+        <td>${s.yearsRemaining}/${s.years}</td>
+        <td class="money">${fmt(s.seniorPaidSoFar)} / ${fmt(s.seniorCapTotal)}</td>
+        <td class="small">${seniorNames}</td>
+        <td class="small">${juniorNames}</td>
+      </tr>`;
+    }).join('')}
+  </table>`;
 
   
   
@@ -4751,7 +4880,7 @@ function renderEntreprise(){
   const entActionsMenuHtml = `${entActionsMenuStyle}
   <div class="ent-actions-menu" id="entActionsMenu">
     <button type="button" class="btn btn-gold btn-sm ent-actions-toggle" id="entActionsMenuBtn" aria-haspopup="true" aria-expanded="false" title="Actions de l'entreprise">☰ Actions</button>
-    <div class="ent-actions-panel" id="entActionsPanel">${actionsMenuGroupTitle('Plateau', true)}${readyActionHtml}${goAdvanceButtonHtml}${actionsMenuGroupTitle('Immobilier')}${sellShareButtonHtml}${mortgageButtonHtml}${buildHouseButtonHtml}${houseBidButtonHtml}${sellHousesButtonHtml}${actionsMenuGroupTitle('Finance')}${issueLoanButtonHtml}${payDividendButtonHtml}${dividendAutoPayToggleHtml}${issueSharesButtonHtml}${buybackSharesButtonHtml}${issuePreferredButtonHtml}${ceoStatementButtonHtml}${lastResortLoanButtonHtml}${actionsMenuGroupTitle('Assurance & Swaps')}${insuranceBundleButtonHtml}${proposeSwapButtonHtml}${proposeBudgetSwapButtonHtml}${proposeCompButtonHtml}</div>
+    <div class="ent-actions-panel" id="entActionsPanel">${actionsMenuGroupTitle('Plateau', true)}${readyActionHtml}${goAdvanceButtonHtml}${actionsMenuGroupTitle('Immobilier')}${sellShareButtonHtml}${mortgageButtonHtml}${buildHouseButtonHtml}${houseBidButtonHtml}${sellHousesButtonHtml}${actionsMenuGroupTitle('Finance')}${issueLoanButtonHtml}${payDividendButtonHtml}${dividendAutoPayToggleHtml}${issueSharesButtonHtml}${buybackSharesButtonHtml}${issuePreferredButtonHtml}${ceoStatementButtonHtml}${lastResortLoanButtonHtml}${actionsMenuGroupTitle('Assurance & Swaps')}${insuranceBundleButtonHtml}${proposeSwapButtonHtml}${proposeBudgetSwapButtonHtml}${proposeCompButtonHtml}${proposeRevenueSwapButtonHtml}</div>
   </div>`;
 
   
@@ -4865,6 +4994,8 @@ function renderEntreprise(){
 
   ${swapsActiveHtml}
   ${compensationActiveHtml}
+  ${revenueSwapListingsMarketHtml}
+  ${revenueSwapsActiveHtml}
 
   ${(f.loan && loansAsBorrower.length>0)?`
   <div class="small" style="font-weight:600;margin-top:14px;">Prêts — emprunté (à rembourser)</div>
@@ -4944,7 +5075,7 @@ function renderLexique(){
   <div class="section-title">Lexique</div>
 
   ${theme('Valeur d’une entreprise')}
-  ${term('Valeur comptable', `Estimation comptable de ce que possède l'entreprise: <b>trésorerie + valeur intrinsèque de son immobilier + valeur de ses parts d'ETF</b>. Ce n'est PAS un « prix de l'action » — c'est une simple addition de ce qui est déjà au bilan, jamais influencée par l'offre et la demande.`)}
+  ${term('Valeur comptable', `Estimation comptable de ce que possède l'entreprise: <b>trésorerie + valeur intrinsèque de son immobilier + valeur de ses parts de REIT</b>. Ce n'est PAS un « prix de l'action » — c'est une simple addition de ce qui est déjà au bilan, jamais influencée par l'offre et la demande.`)}
   ${term('Valeur comptable par part', `Valeur comptable divisée par le nombre total de parts de l'entreprise (émises ou non). Sert de référence de prix pour un rachat/une vente de parts, mais n'est pas garantie comme prix d'exécution réel.`)}
   ${term(`Prix de l'action`, `Le prix réel de marché d'une entreprise — visible dans le classement des entreprises (onglet Résumé), à côté de sa valeur comptable (équité) pour comparaison ; les deux peuvent diverger, exactement comme dans un vrai marché boursier. Il évolue selon des facteurs réels: le type de compagnie choisi à la fondation (voir « Types d'entreprise » plus bas), la régularité des dividendes versés, et la santé financière réelle de l'entreprise (endettement, spirale de détresse). Comme pour le reste du marché boursier, aucun chiffre exact ni mécanisme précis n'est communiqué — seul le résultat (le prix affiché) se voit.`)}
   ${term('Parts émises / IPO', `Chaque entreprise a un nombre total de parts fixé à sa fondation. Le CEO fondateur en achète un pourcentage fixé pour la partie (par défaut 30%), pour un montant proportionnel à la valorisation totale de fondation; la banque finance automatiquement le reste (introduction en bourse / IPO, onglet Administration) au même prix par part, pour que toutes les entreprises démarrent avec la même valorisation totale.`)}
@@ -4961,7 +5092,7 @@ function renderLexique(){
   ${theme('Horloge de partie')}
   ${term('Lancer / évènement', `Un « lancer » compte pour 1, que ce soit le lancer solo d'une seule entreprise ou un lancer « pour toutes » déclenché par le mécanisme Prêt (toutes les entreprises non emprisonnées lancent en même temps) — le nombre d'entreprises qui roulent en même temps ne change rien au compte.`)}
   ${term('Semestre / année financière', `3 lancers = 1 semestre, 2 semestres (donc 6 lancers) = 1 année financière. L'année et le semestre en cours sont affichés en haut de l'application, à côté du code de partie.`)}
-  ${term('Effets de fin d’année financière', `À chaque fois qu'une année financière se complète: les intérêts d'hypothèque sont prélevés, une nouvelle tranche d'ETF s'ouvre (avec dividende versé aux détenteurs de parts), tous les accords de compensation de loyer en cours se règlent en cash puis se clôturent automatiquement, et tous les contrats d'assurance normale en vigueur expirent.`)}
+  ${term('Effets de fin d’année financière', `À chaque fois qu'une année financière se complète: les intérêts d'hypothèque sont prélevés, une nouvelle tranche de REIT s'ouvre (avec dividende versé aux détenteurs de parts), tous les accords de compensation de loyer en cours se règlent en cash puis se clôturent automatiquement, et tous les contrats d'assurance normale en vigueur expirent.`)}
 
   ${theme('Enquête de l\'AMF')}
   ${term('Enquêtée par l\'AMF', `Une entreprise qui atterrit sur la case « → Prison » (case 30) fait l'objet d'une enquête de l'Autorité des marchés financiers (AMF) et ne perçoit ni ne verse aucun loyer sur ses terrains pendant que l'enquête est en cours. Elle peut soit laisser l'enquête suivre son cours pendant un nombre de tours fixé (elle est ensuite déclarée non coupable, sans frais), soit conclure immédiatement un règlement à l'amiable (un montant fixe versé à la banque) pour clore l'enquête sur-le-champ.`)}
@@ -4981,7 +5112,7 @@ function renderLexique(){
   ${term('Assurance simple (terrain)', `Une entreprise s'assure contre le loyer qu'elle devrait payer si elle atterrissait sur un terrain donné. La prime est calculée sur le nombre EXACT de lancers de dés restants jusqu'à la fin du terme choisi (semestre ou année financière), à partir de l'horloge de partie au moment de l'achat — plus ce nombre de lancers restants est grand, plus le risque (et donc la prime) est élevé. Formule exacte de la prime: <b>(nombre moyen de fois que l'entreprise devrait tomber sur cette case en ce nombre exact de lancers restants — calcul exact par processus de renouvellement qui tient compte des passages multiples, pas seulement du premier) × (montant réellement exposé − franchise)</b>, puis majorée du profit de la banque. Le terme choisi détermine aussi la durée RÉELLE de couverture: un contrat tarifé « Semestre » expire à la fin du semestre en cours (3 lancers), un contrat tarifé « Année financière » reste couvert jusqu'à la fin de l'année (6 lancers) — payer moins cher au terme « Semestre » signifie donc bien une couverture plus courte, pas un rabais gratuit. Augmenter la franchise diminue donc le risque assuré et la prime. Si l'entreprise assurée est déjà copropriétaire du terrain, seule la part détenue par LES AUTRES copropriétaires est à risque (donc assurable) — un terrain encore détenu à 100% par la banque ne représente aucun risque assurable.`)}
   ${term('Franchise', `Montant du risque qui reste à la charge de l'entreprise assurée, non couvert par la prime — plus la franchise est élevée, plus la prime est basse. S'ajuste pour tous les contrats signés au cours du même tour, directement dans le modal « Contrat d'assurance » (bouton du menu ☰ Actions, Mon Entreprise). S'applique de façon identique aux trois termes du modal, y compris « Assurance sous-standard (1 tour) ».`)}
   ${term('Contrat groupé', `Achat en un seul geste de plusieurs couvertures à la fois (plusieurs terrains et/ou cases taxe), avec un choix de terme (semestre ou année financière, ou « Assurance sous-standard (1 tour) » — voir plus bas) pour le calcul des primes — voir « Assurance simple (terrain) » — plutôt que de signer chaque contrat séparément. Accessible via le bouton « Contrat d'assurance » du menu ☰ Actions (Mon Entreprise), qui ouvre un modal unique affichant un sous-total dynamique des cases cochées.`)}
-  ${term('Assurance de taxe', `Couverture contre le montant d'une case taxe (impôt sur le revenu ou TPS/TVQ) si l'entreprise y atterrit — s'achète via le contrat groupé, au même principe qu'un terrain. Montant exact de la taxe couverte: <b>impôt sur le revenu</b> = le moindre entre 10% de la valeur de l'entreprise (trésorerie + immobilier + parts d'ETF) et 2 M$; <b>TPS/TVQ</b> = montant fixe de 1 M$.`)}
+  ${term('Assurance de taxe', `Couverture contre le montant d'une case taxe (impôt sur le revenu ou TPS/TVQ) si l'entreprise y atterrit — s'achète via le contrat groupé, au même principe qu'un terrain. Montant exact de la taxe couverte: <b>impôt sur le revenu</b> = le moindre entre 10% de la valeur de l'entreprise (trésorerie + immobilier + parts de REIT) et 2 M$; <b>TPS/TVQ</b> = montant fixe de 1 M$.`)}
   ${term('Assurance sous-standard', `Couverture d'urgence, achetable à tout moment, mais qui ne protège que le TOUT PROCHAIN lancer de dé de l'entreprise assurée, sur un terrain seulement (jamais une taxe). Majoration nettement plus élevée que l'assurance normale (réglée séparément au début de la partie). La franchise du tour s'applique à ce produit exactement comme à l'assurance normale (déduite de l'exposition avant le calcul de la prime, et à la charge du visiteur lors d'un sinistre) — seul le mode de sinistre (récurrent/unique) ne s'applique jamais à ce produit (un seul lancé couvert, rien à récurrer). Sélectionnable comme un TERME parmi d'autres (« Assurance sous-standard (1 tour) ») dans le même modal « Contrat d'assurance » que l'assurance normale — sélectionner ce terme masque le mode de sinistre et ne propose que des terrains (jamais de case taxe).`)}
   ${term('Marché des contrats (résiliation)', `Une entreprise assurée peut résilier son propre contrat (groupé ou sous-standard) — remboursement de la prime — mais SEULEMENT tant qu'aucun lancer de dé n'a eu lieu depuis sa signature (dès qu'un lancer de dé a eu lieu, la police n'est plus annulable). Il n'est plus possible de reprendre un contrat groupé ENTIER — seule la reprise INDIVIDUELLE, terrain par terrain ou case taxe par case taxe, reste possible: via « Devenir l'assureur » (ci-dessous, pour les éléments encore assurés par la banque) ou, pour le produit sous-standard, par le même mécanisme de reprise individuelle qu'avant.`)}
   ${term(`Devenir l'assureur (marché de réassurance de la banque)`, `Section distincte du Marché des contrats — liste <b>chaque terrain, case taxe et assurance sous-standard encore assuré par la BANQUE, séparément</b> (un contrat groupé y apparaît éclaté en autant de lignes qu'il couvre d'éléments — une entreprise peut reprendre UN SEUL élément sans reprendre les autres), <b>sans aucune restriction d'ancienneté</b> (n'importe quel contrat bancaire encore actif est éligible, peu importe depuis combien de lancers il a été signé). Le prix affiché n'est PAS la prime d'origine: il est recalculé EN TEMPS RÉEL à chaque affichage, à partir (a) du nombre de lancers RÉELLEMENT restants jusqu'à la fin de l'année financière en cours (moins il en reste, plus le prix de reprise est bas) et (b) de la position ACTUELLE de l'entreprise assurée (donc de sa distance présente jusqu'à la case couverte) — avec le même type de couverture (sinistre unique ou récurrent) et la même franchise que le contrat original. La prime ORIGINALE affichée à côté reste, elle, inchangée pour toujours — seul le prix de reprise varie.`)}
@@ -4989,15 +5120,16 @@ function renderLexique(){
   ${theme('Swaps et compensations de loyer')}
   ${term('Swap de loyers', `Deux entreprises échangent, pour une durée déterminée, les revenus de deux terrains (ou lots): quand un TIERS visite le terrain de l'une, le loyer normalement dû est redirigé vers l'autre — jusqu'à un plafond par évènement (ou sans plafond). N'a aucun effet si le visiteur est le propriétaire ou son partenaire de swap.`)}
   ${term('Compensation de loyer', `Accord bilatéral entre deux entreprises: tant qu'il est actif, le loyer qu'elles se doivent mutuellement ne change jamais de main en cash — il s'inscrit comme dette au registre du contrat, et se compense automatiquement (netting) si l'autre retombe ensuite sur un de vos terrains. La balance se règle en cash (avec intérêt) à chaque fin d'année financière, puis le contrat se clôture automatiquement — il faut le signer à nouveau pour continuer d'en bénéficier.`)}
+  ${term('Vente de revenu (ABS — titre adossé à des actifs)', `Une entreprise émettrice met en vente, sur un marché OUVERT à toutes les autres entreprises et à tous les joueurs (sauf elle-même et son propre CEO — exclusion « délit d'initié »), le droit à une PART de son loyer futur sur un panier de terrains qu'elle choisit (liste figée à la publication). Elle fixe : les terrains, la durée (années), le % de sa part cédé (plafonné automatiquement à 1 − le plafond de retenue de prêt, pour ne jamais chevaucher la capacité d'emprunt) et le montant total recherché — le reste (répartition senior/junior et prime de la tranche senior) est calculé AUTOMATIQUEMENT par l'application à partir du risque du panier, jamais choisi par un CEO. Deux tranches, chacune souscrite séparément par plusieurs porteurs à la fois (partage égal plafonné au prorata des montants maximaux déclarés) : la SENIOR est servie en premier à chaque loyer encaissé jusqu'à récupérer son capital plus une prime fixe (rendement plafonné) ; la JUNIOR ne reçoit rien tant que la senior n'est pas servie en entier, mais empoche tout le surplus sans plafond — l'émetteur conserve automatiquement toute part junior non souscrite (rétention du risque). L'annonce se publie et se résout dans le MÊME semestre, automatiquement, juste avant le lancer de dés suivant — sans souscripteur senior, l'opération entière est annulée (aucun argent ne bouge). Non-recours : à l'expiration, chaque porteur garde ce qu'il a reçu, aucune obligation de l'émetteur. Tant que l'accord est actif, l'émettrice ne peut plus vendre, hypothéquer ni signer de nouveau swap de loyers sur ces terrains précis — construire des maisons et fusionner un lot restent permis. Priorité de paiement inchangée face à un swap de loyers ordinaire (l'ABS l'emporte toujours sur un terrain donné).`)}
 
   ${theme('Subventions d\'avance et prêts')}
   ${term('Subvention d\'avance', `Une entreprise vend d'avance à la banque son prochain passage sur la case Départ, contre de l'argent immédiat — en échange, elle ne touchera pas le salaire GO correspondant le moment venu (le passage est déjà « consommé » par la vente).`)}
-  ${term('Prêt', `Un prêteur (un autre JOUEUR, depuis son encaisse personnelle — ou la banque, pour un prêt de dernier recours automatique) avance un capital à une entreprise emprunteuse. En retour, un pourcentage fixe de TOUS les loyers reçus par l'emprunteuse est automatiquement retenu et versé au prêteur, jusqu'à ce que le total retenu atteigne un multiple convenu du capital emprunté. Une entreprise peut avoir plusieurs prêts actifs simultanément (avec des prêteurs différents).`)}
+  ${term('Prêt', `Un prêteur (un autre JOUEUR, depuis son encaisse personnelle — ou la banque, pour un prêt de dernier recours automatique) avance un capital à une entreprise emprunteuse. En retour, un pourcentage fixe de TOUS les loyers reçus par l'emprunteuse est automatiquement retenu et versé au prêteur, jusqu'à ce que le total retenu atteigne un multiple convenu du capital emprunté. Une entreprise peut avoir plusieurs prêts actifs simultanément (avec des prêteurs différents), mais la somme des pourcentages de retenue de TOUS ses prêts actifs ne peut jamais dépasser le plafond de retenue du réglage (40% par défaut) — un plafond CUMULATIF, pas par prêt: le formulaire d'offre affiche et borne le pourcentage encore disponible compte tenu des prêts déjà actifs.`)}
 
-  ${theme('ETF de terrains')}
-  ${term('Réserve permanente de la banque', `Dès que le module ETF est activé, la banque garde en permanence un pourcentage fixe de chaque terrain DE COULEUR — cette part ne peut jamais être achetée par une entreprise directement, seulement via des parts d'ETF. Les 4 ETF sont fixes, chacun regroupant 2 groupes de couleur: <b>Première rue</b> (Brun &amp; Bleu pâle), <b>Deuxième rue</b> (Rose &amp; Orange), <b>Troisième rue</b> (Rouge &amp; Jaune), <b>Quatrième rue</b> (Vert &amp; Bleu foncé). Les aéroports et les services n'ont aucun fonds ETF et restent toujours achetables à 100% par les entreprises. La réserve de chaque terrain est fixée une fois pour toutes à sa création et ne bouge plus jamais ensuite: une vente à la banque ne fait jamais grossir la réserve d'un ETF — la part libérée redevient une simple part de banque ORDINAIRE, rachetable normalement par n'importe quelle entreprise, bien distincte de la réserve ETF.`)}
-  ${term('Fonds ETF et dividende', `Chaque ETF (un par regroupement de 2 groupes de couleur — voir « Réserve permanente de la banque » ci-dessus, jamais les aéroports/services) collecte dans son fonds le loyer généré par sa réserve — mais seulement une fois ouvert par l'administrateur (action manuelle et irréversible): tant qu'un ETF n'est pas ouvert, ce loyer n'est collecté par personne (perdu, comme d'habitude pour une part de banque non collectée). Une fois ouvert, seule la portion de la réserve RÉELLEMENT DÉTENUE par une entreprise (0% avant toute enchère remportée, 100% dès qu'une l'a été — voir « Enchère annuelle » ci-dessous) est effectivement facturée au visiteur et collectée par le fonds — la portion jamais remportée reste non facturée, exactement comme avant l'ouverture. À chaque fin d'année financière, le fonds est distribué en dividende (encaisse normale, jamais boursière) aux entreprises qui détiennent des parts de cet ETF, au prorata des parts détenues.`)}
-  ${term('Enchère annuelle', `Une fois un ETF ouvert, son lot ENTIER (100% de sa réserve) est mis aux enchères chaque année: au 1er lancer de dés de l'année, chaque entreprise soumet une mise scellée pour le lot complet depuis le pop-up de fin de tour (une mise de 0, ou trop faible, vaut « pas intéressée » — ne peut jamais gagner ; une mise ne peut jamais dépasser l'encaisse actuelle de l'entreprise). Au 2e lancer, le plus offrant remporte les 100% du lot, en rachetant automatiquement TOUS les détenteurs actuels au prorata de ce qu'ils détenaient (un détenteur qui regagne SA PROPRE portion ne se rachète jamais lui-même — seule la portion rachetée à d'autres entreprises change réellement de main). Aucune mise valide cette année-là: rien ne change, les détenteurs actuels gardent leurs parts. Le gagnant peut ensuite, s'il le souhaite, revendre volontairement des fractions à d'autres entreprises (voir ci-dessous) — c'est ce canal, pas l'enchère elle-même, qui permet la co-propriété. La valeur affichée au bilan d'une entreprise pour ses parts d'ETF est basée sur le DERNIER PRIX RÉELLEMENT PAYÉ lors de la plus récente enchère, jamais une estimation.`)}`;
+  ${theme('REIT de terrains')}
+  ${term('Réserve permanente de la banque', `Dès que le module REIT est activé, la banque garde en permanence un pourcentage fixe de chaque terrain DE COULEUR — cette part ne peut jamais être achetée par une entreprise directement, seulement via des parts de REIT. Les 4 REIT sont fixes, chacun regroupant 2 groupes de couleur: <b>Première rue</b> (Brun &amp; Bleu pâle), <b>Deuxième rue</b> (Rose &amp; Orange), <b>Troisième rue</b> (Rouge &amp; Jaune), <b>Quatrième rue</b> (Vert &amp; Bleu foncé). Les aéroports et les services n'ont aucun fonds REIT et restent toujours achetables à 100% par les entreprises. La réserve de chaque terrain est fixée une fois pour toutes à sa création et ne bouge plus jamais ensuite: une vente à la banque ne fait jamais grossir la réserve d'un REIT — la part libérée redevient une simple part de banque ORDINAIRE, rachetable normalement par n'importe quelle entreprise, bien distincte de la réserve REIT.`)}
+  ${term('Fonds ETF et dividende', `Chaque REIT (un par regroupement de 2 groupes de couleur — voir « Réserve permanente de la banque » ci-dessus, jamais les aéroports/services) collecte dans son fonds le loyer généré par sa réserve — mais seulement une fois ouvert par l'administrateur (action manuelle et irréversible): tant qu'un REIT n'est pas ouvert, ce loyer n'est collecté par personne (perdu, comme d'habitude pour une part de banque non collectée). Une fois ouvert, seule la portion de la réserve RÉELLEMENT DÉTENUE par une entreprise (0% avant toute enchère remportée, 100% dès qu'une l'a été — voir « Enchère annuelle » ci-dessous) est effectivement facturée au visiteur et collectée par le fonds — la portion jamais remportée reste non facturée, exactement comme avant l'ouverture. À chaque fin d'année financière, le fonds est distribué en dividende (encaisse normale, jamais boursière) aux entreprises qui détiennent des parts de ce REIT, au prorata des parts détenues.`)}
+  ${term('Enchère annuelle', `Une fois un REIT ouvert, son lot ENTIER (100% de sa réserve) est mis aux enchères chaque année: au 1er lancer de dés de l'année, chaque entreprise soumet une mise scellée pour le lot complet depuis le pop-up de fin de tour (une mise de 0, ou trop faible, vaut « pas intéressée » — ne peut jamais gagner ; une mise ne peut jamais dépasser l'encaisse actuelle de l'entreprise). Au 2e lancer, le plus offrant remporte les 100% du lot, en rachetant automatiquement TOUS les détenteurs actuels au prorata de ce qu'ils détenaient (un détenteur qui regagne SA PROPRE portion ne se rachète jamais lui-même — seule la portion rachetée à d'autres entreprises change réellement de main). Aucune mise valide cette année-là: rien ne change, les détenteurs actuels gardent leurs parts. Le gagnant peut ensuite, s'il le souhaite, revendre volontairement des fractions à d'autres entreprises (voir ci-dessous) — c'est ce canal, pas l'enchère elle-même, qui permet la co-propriété. La valeur affichée au bilan d'une entreprise pour ses parts de REIT est basée sur le DERNIER PRIX RÉELLEMENT PAYÉ lors de la plus récente enchère, jamais une estimation.`)}`;
 }
 
 
@@ -5657,15 +5789,15 @@ function etfLabel(etfId){
 async function openAllEtfs(){
   
   const res = await attemptActionWithRetry(async ()=>{
-    if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut ouvrir les ETF.'};
-    if(state.etfs.every(e=>e.opened)) return {ok:false, error:'Les ETF sont déjà ouverts.'};
+    if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut ouvrir les REIT.'};
+    if(state.etfs.every(e=>e.opened)) return {ok:false, error:'Les REIT sont déjà ouverts.'};
     state.etfs.forEach(e=>{ e.opened = true; });
     
     
     
-    log(`Les ETF sont ouverts par l'administrateur — la banque commence à collecter le loyer de sa réserve permanente. Le lot entier de chaque ETF sera mis aux enchères au prochain 1er lancer d'année financière.`);
+    log(`Les REIT sont ouverts par l'administrateur — la banque commence à collecter le loyer de sa réserve permanente. Le lot entier de chaque REIT sera mis aux enchères au prochain 1er lancer d'année financière.`);
     return {ok:true};
-  }, {label:'Ouvrir les ETF'});
+  }, {label:'Ouvrir les REIT'});
   if(!res.ok){ if(res.error) alert(res.error); return; }
   render();
 }
@@ -5684,9 +5816,9 @@ async function submitEtfBid(companyId, etfId, price){
     if(clampedPrice>co.cash+1e-9) return {ok:false, error:`${co.name} ne peut pas miser plus que son encaisse actuelle (${fmt(co.cash)}).`};
     etf.bids = (etf.bids||[]).filter(b=>b.companyId!==companyId);
     if(clampedPrice>=ETF_MIN_BID) etf.bids.push({companyId, price:clampedPrice});
-    log(`${co.name} soumet une mise pour l'${etfLabel(etfId)} de l'année ${currentGameYear()}: ${clampedPrice>=ETF_MIN_BID?fmt(clampedPrice):'aucune mise (pas intéressée)'}.`);
+    log(`${co.name} soumet une mise pour le ${etfLabel(etfId)} de l'année ${currentGameYear()}: ${clampedPrice>=ETF_MIN_BID?fmt(clampedPrice):'aucune mise (pas intéressée)'}.`);
     return {ok:true};
-  }, {label:'Mise ETF'});
+  }, {label:'Mise REIT'});
   if(!res.ok){ if(res.error) alert(res.error); return; }
   render();
 }
@@ -5739,7 +5871,7 @@ function resolveEtfAuction(etf, year){
   if(!etf.priceHistory) etf.priceHistory = [];
   etf.priceHistory.push({roll: state.gameClock.rollCount, year, price: winner.price});
   if(etf.priceHistory.length>500) etf.priceHistory.shift();
-  log(`${winnerCo.name} remporte l'enchère de l'${etfLabel(etf.id)} de l'année ${year} à ${fmt(winner.price)} pour l'ensemble du lot.`, entries);
+  log(`${winnerCo.name} remporte l'enchère du ${etfLabel(etf.id)} de l'année ${year} à ${fmt(winner.price)} pour l'ensemble du lot.`, entries);
 }
 
 function maybeResolveEtfAuctions(){
@@ -5770,10 +5902,10 @@ async function sellEtfUnits(etfId, sellerId, buyerId, pct, price){
     const buyerPl = state.players.find(x=>x.id===buyer.ceoId);
     if(sellerPl) sellerPl.stats.salesRevenue += price;
     if(buyerPl) buyerPl.stats.spentBuying += price;
-    log(`${seller.name} vend ${pct}% de l'${etfLabel(etfId)} à ${buyer.name} pour ${price.toFixed(2)} (les parts d'ETF ne sont jamais revendables à la banque).`,
+    log(`${seller.name} vend ${pct}% du ${etfLabel(etfId)} à ${buyer.name} pour ${price.toFixed(2)} (les parts de REIT ne sont jamais revendables à la banque).`,
       [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:`${seller.name} (vente ${pct}%)`, amount:price}]);
     return {ok:true};
-  }, {label:'Vente de parts ETF'});
+  }, {label:'Vente de parts REIT'});
   if(!res.ok){ if(res.error) alert(res.error); return; }
   render();
 }
@@ -6131,9 +6263,16 @@ function render(){
   
   
   
+  
+  
+  
+  
   const readinessRowHtml = readyRollers.map(c=>{
     const ceo = state.players.find(p=>p.id===c.ceoId);
-    return `<span>${c.ready?'✓':'✗'} ${esc(ceo?ceo.name:c.name)}</span>`;
+    const badge = c.ready
+      ? `<span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#047857;color:#fff;border-radius:3px;font-size:11px;font-weight:800;line-height:1;">✓</span>`
+      : `<span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:var(--brick,#C0392B);color:#fff;border-radius:3px;font-size:11px;font-weight:800;line-height:1;">✗</span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:4px;">${badge} ${esc(ceo?ceo.name:c.name)}</span>`;
   }).join(' &nbsp;·&nbsp; ');
   const actionStatusRowHtml = readinessRowHtml ? `
   <div class="actionstatusbar">
@@ -6169,7 +6308,7 @@ function render(){
 function tabLabel(t){
   
   
-  return {portefeuille:'Portefeuille', entreprise:'Mon Entreprise', admin:'Administration', etf:'ETF', lexique:'Lexique'}[t];
+  return {portefeuille:'Portefeuille', entreprise:'Mon Entreprise', admin:'Administration', etf:'REIT', lexique:'Lexique'}[t];
 }
 
 function renderTab(t){
@@ -7288,6 +7427,22 @@ function processYearEnd(year){
   
   
   
+  
+  
+  
+  
+  
+  state.revenueSwaps.forEach(s=>{ s.yearsRemaining -= 1; });
+  const expiredRevenueSwaps = state.revenueSwaps.filter(s=>s.yearsRemaining<=0);
+  expiredRevenueSwaps.forEach(s=>{
+    const seller = companyById(s.sellerId);
+    const seniorPct = s.seniorCapTotal>1e-9 ? Math.round(Math.min(1, s.seniorPaidSoFar/s.seniorCapTotal)*100) : 100;
+    log(`L'émission ABS de ${seller?seller.name:'?'} arrive à échéance après ${s.years} an(s) — ${seller?seller.name:'?'} récupère le contrôle plein de ses terrains. Non-recours: la tranche senior a été servie à ${seniorPct}% de son plafond, chaque porteur garde ce qu'il a reçu, aucune obligation résiduelle de ${seller?seller.name:'?'}.`);
+  });
+  state.revenueSwaps = state.revenueSwaps.filter(s=>s.yearsRemaining>0);
+  
+  
+  
   state.rentCompensations.forEach(c=>settleRentCompensation(c));
   state.rentCompensations = [];
   
@@ -7315,7 +7470,7 @@ function processYearEnd(year){
   
   
   resolvePreferredDividendsYearEnd(year);
-  log(`L'année financière ${year} commence (2 semestres de 3 lancers de dés complétés) — intérêts hypothécaires, dividendes ETF, accords de compensation de loyer (réglés puis clôturés) et contrats d'assurance normale (expirés) traités.`);
+  log(`L'année financière ${year} commence (2 semestres de 3 lancers de dés complétés) — intérêts hypothécaires, dividendes REIT, accords de compensation de loyer (réglés puis clôturés) et contrats d'assurance normale (expirés) traités.`);
 }
 
 function forfeitPendingDividendAnnouncementsAtGameEnd(){
@@ -8078,7 +8233,7 @@ const FIN_CATEGORIES = {
   mortgage_interest_revenue: {bucket:'revenue', cf:'operating', label:'Intérêts hypothécaires reçus'},
   rent_compensation_revenue: {bucket:'revenue', cf:'operating', label:'Compensations de loyer reçues'},
   house_compensation_revenue:{bucket:'revenue', cf:'operating', label:'Compensations de construction reçues'},
-  etf_dividend_revenue:      {bucket:'revenue', cf:'operating', label:'Revenus ETF'},
+  etf_dividend_revenue:      {bucket:'revenue', cf:'operating', label:'Revenus REIT'},
   
   
   
@@ -8110,8 +8265,23 @@ const FIN_CATEGORIES = {
   house_sale:                  {bucket:null, cf:'investing', label:'Vente de maisons'},
   house_construction:          {bucket:null, cf:'investing', label:'Construction de maisons'},
   house_compensation_paid:     {bucket:null, cf:'investing', label:'Compensations de construction payées'},
-  etf_purchase:                {bucket:null, cf:'investing', label:'Achat de parts ETF'},
-  etf_sale:                    {bucket:null, cf:'investing', label:'Vente de parts ETF'},
+  etf_purchase:                {bucket:null, cf:'investing', label:'Achat de parts REIT'},
+  etf_sale:                    {bucket:null, cf:'investing', label:'Vente de parts REIT'},
+  
+  
+  
+  
+  revenue_swap_purchase:       {bucket:null, cf:'investing', label:'Achat de revenu (swap fixe/variable)'}, 
+  revenue_swap_sale:           {bucket:null, cf:'investing', label:'Vente de revenu (swap fixe/variable)'}, 
+  
+  
+  
+  
+  
+  
+  abs_proceeds:                {bucket:null, cf:'investing', label:'Émission ABS — capital levé'},
+  abs_subscription_outflow:    {bucket:null, cf:'investing', label:'Souscription ABS — capital investi'},
+  abs_income:                  {bucket:'revenue', cf:'operating', label:'Revenu ABS reçu'},
   loan_investment_outflow:     {bucket:null, cf:'investing', label:'Capital prêté à une autre compagnie'},
   loan_investment_recovery:    {bucket:null, cf:'investing', label:'Capital de prêt recouvré'},
   mortgage_investment_outflow: {bucket:null, cf:'investing', label:'Capital hypothécaire avancé à une autre compagnie'},
@@ -8828,6 +8998,16 @@ const LAST_RESORT_LOAN_WITHHOLDING_PCT = 0.50;
 const LAST_RESORT_LOAN_MULTIPLE = 2; 
 const LAST_RESORT_PRICE_DROP_PCT = 0.20; 
 const LAST_RESORT_INJECT_MIN = 6, LAST_RESORT_INJECT_MAX = 10; 
+
+
+
+
+
+
+
+
+const ABS_SENIOR_CONFIDENCE_Z = 1.0; 
+const ABS_SENIOR_BASE_PREMIUM_PCT = 0.10; 
 
 
 
@@ -10938,6 +11118,10 @@ async function rollDiceAndMove(companyId){
     
     
     maybeResolveEtfAuctions();
+    
+    
+    
+    maybeResolveRevenueSwapListings();
     const localResult = await corePerformDiceRoll(co);
     
     
@@ -11021,6 +11205,8 @@ async function performRollForAllCompanies(){
     maybeResolveTerrainLotAuction();
     
     maybeResolveEtfAuctions();
+    
+    maybeResolveRevenueSwapListings();
     const localResults = [];
     for(const co of rollers){
       const r = await corePerformDiceRoll(co);
@@ -11233,16 +11419,16 @@ function showDiceRollTurnPopup(co, roll){
   const openedEtfs = state.etfs.filter(e=>e.opened);
   if(state.settings.features.etf && openedEtfs.length>0 && terrainPosInYear===0){
     etfSectionHtml = `
-    <div class="section-title" style="margin-top:16px;">📈 ETF — mises pour l'année ${currentGameYear()}</div>
-    <div class="small" style="margin-bottom:6px;">Le plus offrant remporte 100% du lot de chaque ETF au prochain lancer, en rachetant les détenteurs actuels au prorata. Laissez à 0 (ou sous ${fmt(ETF_MIN_BID)}) si ${esc(co.name)} n'est pas intéressée cette année. Une mise ne peut jamais dépasser l'encaisse actuelle (${fmt(co.cash)}).</div>
+    <div class="section-title" style="margin-top:16px;">📈 REIT — mises pour l'année ${currentGameYear()}</div>
+    <div class="small" style="margin-bottom:6px;">Le plus offrant remporte 100% du lot de chaque REIT au prochain lancer, en rachetant les détenteurs actuels au prorata. Laissez à 0 (ou sous ${fmt(ETF_MIN_BID)}) si ${esc(co.name)} n'est pas intéressée cette année. Une mise ne peut jamais dépasser l'encaisse actuelle (${fmt(co.cash)}).</div>
     ${openedEtfs.map(e=>{
       const myBid = (e.bids||[]).find(b=>b.companyId===co.id);
       return `<label>${esc(etfLabel(e.id))}</label><input type="number" min="0" step="0.01" id="mEtfBid_${e.id}" value="${myBid?myBid.price:0}">`;
     }).join('')}
-    <div class="modal-actions"><button class="btn btn-gold btn-sm" id="mEtfBidSubmit">Soumettre mes mises ETF</button></div>`;
+    <div class="modal-actions"><button class="btn btn-gold btn-sm" id="mEtfBidSubmit">Soumettre mes mises REIT</button></div>`;
   } else if(state.settings.features.etf && openedEtfs.length>0 && terrainPosInYear===1){
     etfSectionHtml = `
-    <div class="section-title" style="margin-top:16px;">📈 ETF</div>
+    <div class="section-title" style="margin-top:16px;">📈 REIT</div>
     <div class="small">${openedEtfs.map(e=>{
       return e.lastAuctionYear===currentGameYear()
         ? `${esc(etfLabel(e.id))}: remporté par <b>${esc((()=>{ const holder=state.companies.find(c=>(c.etfHoldings&&c.etfHoldings[e.id])>=99.9); return holder?holder.name:'?'; })())}</b> à ${fmt(e.lastAuctionPrice)}.`
@@ -11620,6 +11806,11 @@ async function sellMergedShare(mergeId, sellerId, buyerId, pct, price, opts){
   if(mortgageHost && (mortgageHost.mortgages||[]).some(m=>m.companyId===sellerId)){
     const sellerCoName = companyById(sellerId)?.name || 'Cette entreprise';
     return fail(`${sellerCoName} a hypothéqué sa part de ce lot — remboursez l'hypothèque (repayMortgageLot) avant de pouvoir la vendre.`);
+  }
+  
+  if(isPropertyLockedByRevenueSwap(props[0].id, sellerId)){
+    const sellerCoName = companyById(sellerId)?.name || 'Cette entreprise';
+    return fail(`${sellerCoName} a vendu le revenu de ce lot (swap de revenu fixe/variable) — impossible de le vendre tant que l'accord est actif.`);
   }
   if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
     
@@ -12037,6 +12228,10 @@ async function issueMortgage(propId, borrowerId, lenderId, opts){
   if(!p) return fail(null);
   const share = propertyOwnedShare(p, borrowerId);
   if(share<=0) return fail('Vous ne possédez pas de part de ce terrain.');
+  
+  
+  
+  if(isPropertyLockedByRevenueSwap(propId, borrowerId)) return fail(`Le revenu de ${p.name} a été vendu (swap de revenu fixe/variable) — impossible de l'hypothéquer tant que l'accord est actif.`);
   if(!p.mortgages) p.mortgages = [];
   if(p.mortgages.some(m=>m.companyId===borrowerId)) return fail('Vous avez déjà hypothéqué votre part de ce terrain.');
   const borrower = companyById(borrowerId);
@@ -12085,6 +12280,9 @@ async function issueMortgageLot(mergeId, borrowerId, lenderId, opts){
   if(!host) return fail(null);
   const share = propertyOwnedShare(host, borrowerId);
   if(share<=0) return fail('Vous ne possédez pas de part de ce lot.');
+  
+  
+  if(isPropertyLockedByRevenueSwap(host.id, borrowerId)) return fail(`Le revenu de ce lot a été vendu (swap de revenu fixe/variable) — impossible de l'hypothéquer tant que l'accord est actif.`);
   if(!host.mortgages) host.mortgages = [];
   if(host.mortgages.some(m=>m.companyId===borrowerId)) return fail('Vous avez déjà hypothéqué votre part de ce lot.');
   const borrower = companyById(borrowerId);
@@ -12303,10 +12501,17 @@ async function createRentSwap(propA, companyA, propB, companyB, years, capA, cap
   if(!generalA){
     const propAObjForCheck = state.properties.find(x=>x.id===propA);
     if(!propAObjForCheck || propertyOwnedShare(propAObjForCheck, companyA)<=0) return fail(`${coAForCheck.name} ne possède plus ce terrain — swap annulé.`);
+    
+    
+    
+    
+    
+    if(isPropertyLockedByRevenueSwap(propA, companyA)) return fail(`${coAForCheck.name} a vendu le revenu de ce terrain (swap de revenu fixe/variable) — impossible d'y signer un nouveau swap de loyers tant que l'accord est actif.`);
   }
   if(!generalB){
     const propBObjForCheck = state.properties.find(x=>x.id===propB);
     if(!propBObjForCheck || propertyOwnedShare(propBObjForCheck, companyB)<=0) return fail(`${coBForCheck.name} ne possède plus ce terrain — swap annulé.`);
+    if(isPropertyLockedByRevenueSwap(propB, companyB)) return fail(`${coBForCheck.name} a vendu le revenu de ce terrain (swap de revenu fixe/variable) — impossible d'y signer un nouveau swap de loyers tant que l'accord est actif.`);
   }
   state.rentSwaps.push({id:uid(), propA: generalA?null:propA, companyA, generalA, capA: capA||null,
     propB: generalB?null:propB, companyB, generalB, capB: capB||null,
@@ -12367,10 +12572,13 @@ async function proposeRentSwap(propA, companyA, propB, companyB, years, capA, ca
   if(!generalA){
     const propAObj = state.properties.find(x=>x.id===propA);
     if(!propAObj || propertyOwnedShare(propAObj, companyA)<=0) return fail(`${coA.name} ne possède aucune part de ce terrain — impossible de le proposer dans un swap.`);
+    
+    if(isPropertyLockedByRevenueSwap(propA, companyA)) return fail(`${coA.name} a vendu le revenu de ce terrain (swap de revenu fixe/variable) — impossible d'y proposer un nouveau swap de loyers tant que l'accord est actif.`);
   }
   if(!generalB){
     const propBObj = state.properties.find(x=>x.id===propB);
     if(!propBObj || propertyOwnedShare(propBObj, companyB)<=0) return fail(`${coB.name} ne possède aucune part de ce terrain — impossible de le proposer dans un swap.`);
+    if(isPropertyLockedByRevenueSwap(propB, companyB)) return fail(`${coB.name} a vendu le revenu de ce terrain (swap de revenu fixe/variable) — impossible d'y proposer un nouveau swap de loyers tant que l'accord est actif.`);
   }
   state.rentSwapOffers.push({id:uid(), fromCompanyId:companyA, propA: generalA?null:propA, generalA, capA: capA||null,
     toCompanyId:companyB, propB: generalB?null:propB, generalB, capB: capB||null, years: budgetMode?null:years,
@@ -12427,6 +12635,321 @@ async function cancelRentSwapOffer(id){
   }, {label:'Retrait d\'une proposition de swap de loyers'});
   if(!res.ok){ if(res.error) alert(res.error); return; }
   render();
+}
+
+
+
+
+
+function isPropertyLockedByRevenueSwap(propId, companyId){
+  return state.revenueSwaps.some(s=>s.sellerId===companyId && s.propertyIds.some(pid=>samePropertyOrLot(pid, propId)));
+}
+
+
+
+
+function revenueSwapSellableItems(companyId){
+  const owned = state.properties.filter(p=>{
+    const host = p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p;
+    return propertyOwnedShare(host, companyId)>0;
+  });
+  const seenMerge = new Set();
+  return owned.filter(p=>{
+    if(p.groupMergeId){
+      if(seenMerge.has(p.groupMergeId)) return false;
+      seenMerge.add(p.groupMergeId);
+    }
+    const host = p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p;
+    if((host.mortgages||[]).some(m=>m.companyId===companyId)) return false;
+    if(isPropertyLockedByRevenueSwap(p.id, companyId)) return false;
+    return true;
+  }).map(p=>({id:p.id, label: p.groupMergeId ? `Lot ${GROUPS[p.group].label}` : p.name}));
+}
+
+
+
+
+
+
+function absMaxCedablePct(){
+  return Math.max(0, 1 - (state.settings.loanOfferWithholdingPctMax!==undefined ? state.settings.loanOfferWithholdingPctMax : 1));
+}
+
+function computeAbsPricing(sellerId, propertyIds, cededPctOfShare, years){
+  const termRolls = Math.max(0, Math.round(years*6));
+  const totalCompanies = activeCompanies().length;
+  const visitorCount = Math.max(0, totalCompanies-1);
+  let meanRent = 0, varRent = 0;
+  
+  
+  
+  
+  
+  const expandedProperties = [];
+  const seenMerge = new Set();
+  (propertyIds||[]).forEach(pid=>{
+    const p = state.properties.find(x=>x.id===pid);
+    if(!p) return;
+    if(p.groupMergeId){
+      if(seenMerge.has(p.groupMergeId)) return;
+      seenMerge.add(p.groupMergeId);
+      expandedProperties.push(...lotProperties(p.groupMergeId));
+    } else expandedProperties.push(p);
+  });
+  
+  
+  
+  
+  
+  
+  
+  
+  expandedProperties.forEach(p=>{
+    const host = p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p;
+    const ownerShare = propertyOwnedShare(host, sellerId);
+    if(ownerShare<=0) return;
+    const perEventGrossToSeller = expectedRentValue(p) * (ownerShare/100);
+    const perEventCeded = perEventGrossToSeller * cededPctOfShare;
+    const q = p.prob * visitorCount;
+    meanRent += termRolls * q * perEventCeded;
+    varRent += termRolls * q * (1-q) * perEventCeded * perEventCeded;
+  });
+  const stdRent = Math.sqrt(Math.max(0, varRent));
+  const seniorCapacity = Math.max(0, meanRent - ABS_SENIOR_CONFIDENCE_Z*stdRent);
+  return {termRolls, meanRent, stdRent, seniorCapacity};
+}
+
+
+
+
+
+function computeAbsTranches(pricing, amountSought){
+  const seniorAmount = Math.max(0, Math.min(amountSought, pricing.seniorCapacity));
+  const juniorAmount = Math.max(0, amountSought - seniorAmount);
+  const seniorPremiumPct = ABS_SENIOR_BASE_PREMIUM_PCT * (1 + seniorAmount/Math.max(pricing.seniorCapacity, 1e-6));
+  return {seniorAmount, juniorAmount, seniorPremiumPct, seniorCapTotalTarget: seniorAmount*(1+seniorPremiumPct)};
+}
+async function postRevenueSwapListing(companyId, propertyIds, cededPctOfShare, amountSought, years, opts){
+  
+  
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  const co = companyById(companyId);
+  if(!co) return fail('Entreprise introuvable.');
+  
+  
+  
+  if(!tradingWindowOpen()) return fail('Une émission ABS ne peut être publiée qu’à l’ouverture du marché (début de semestre).');
+  if(!Array.isArray(propertyIds) || propertyIds.length===0) return fail('Choisissez au moins un terrain.');
+  if(!(amountSought>0)) return fail('Le montant total recherché doit être positif.');
+  if(!(years>0) || !Number.isInteger(years)) return fail('La durée doit être un nombre entier d’années positif.');
+  const maxCedablePct = absMaxCedablePct();
+  if(!(cededPctOfShare>0) || cededPctOfShare>maxCedablePct+1e-9) return fail(`La part cédée doit être entre 0% et ${Math.round(maxCedablePct*100)}% de la part détenue (plafond réservé pour la capacité d'emprunt — voir loanOfferWithholdingPctMax).`);
+  
+  const uniquePropertyIds = [];
+  propertyIds.forEach(pid=>{ if(!uniquePropertyIds.some(x=>samePropertyOrLot(x,pid))) uniquePropertyIds.push(pid); });
+  for(const pid of uniquePropertyIds){
+    const p = state.properties.find(x=>x.id===pid);
+    if(!p) return fail('Terrain introuvable — annonce annulée.');
+    const host = p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p;
+    const label = p.groupMergeId ? `Lot ${GROUPS[p.group].label}` : p.name;
+    if(propertyOwnedShare(host, companyId)<=0) return fail(`${co.name} ne possède aucune part de ${label} — impossible de l'inclure dans cette annonce.`);
+    if((host.mortgages||[]).some(m=>m.companyId===companyId)) return fail(`${co.name} a hypothéqué sa part de ${label} — remboursez l'hypothèque avant de pouvoir en vendre le revenu.`);
+    if(isPropertyLockedByRevenueSwap(pid, companyId)) return fail(`${label} fait déjà l'objet d'une émission ABS active.`);
+    if(state.revenueSwapListings.some(l=>l.sellerId===companyId && l.propertyIds.some(x=>samePropertyOrLot(x,pid)))) return fail(`${label} est déjà inclus dans une annonce de ${co.name} en attente.`);
+  }
+  const pricing = computeAbsPricing(companyId, uniquePropertyIds, cededPctOfShare, years);
+  const tranches = computeAbsTranches(pricing, amountSought);
+  state.revenueSwapListings.push({id:uid(), sellerId:companyId, propertyIds:uniquePropertyIds, cededPctOfShare, amountSought, years,
+    pricing, tranches, seniorSubs:[], juniorSubs:[], createdAt:nowLabel(), createdRoll:state.gameClock.rollCount});
+  const labels = uniquePropertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name; }).join(', ');
+  log(`${co.name} publie une émission ABS adossée au revenu de ${labels}: ${Math.round(cededPctOfShare*100)}% de sa part cédée pendant ${years} an(s), ${fmt(amountSought)} recherché(s) (${fmt(tranches.seniorAmount)} senior à ${Math.round(tranches.seniorPremiumPct*100)}% de prime, ${fmt(tranches.juniorAmount)} junior) — souscriptions ouvertes jusqu'au prochain lancer de dés (onglets Mon Entreprise et Portefeuille).`);
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
+}
+
+async function cancelRevenueSwapListing(listingId){
+  const res = await attemptActionWithRetry(async ()=>{
+    const listing = state.revenueSwapListings.find(l=>l.id===listingId);
+    if(!listing) return {ok:false};
+    const myCo = myCompany();
+    if(!myCo || myCo.id!==listing.sellerId) return {ok:false, error:'Seule l’entreprise auteure de l’annonce peut la retirer.'};
+    state.revenueSwapListings = state.revenueSwapListings.filter(l=>l.id!==listingId);
+    log(`${myCo.name} retire son émission ABS, avant résolution.`);
+    return {ok:true};
+  }, {label:'Retrait d\'une émission ABS'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
+}
+
+async function subscribeRevenueSwapTranche(listingId, tranche, holderType, holderId, maxAmount, opts){
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  if(tranche!=='senior' && tranche!=='junior') return fail('Tranche invalide.');
+  if(holderType!=='company' && holderType!=='player') return fail('Type de souscripteur invalide.');
+  const listing = state.revenueSwapListings.find(l=>l.id===listingId);
+  if(!listing) return fail('Cette émission n’est plus disponible.');
+  if(!(maxAmount>0)) return fail('Le montant maximal doit être positif.');
+  const seller = companyById(listing.sellerId);
+  let holderName = '?';
+  if(holderType==='company'){
+    if(holderId===listing.sellerId) return fail('L’entreprise émettrice ne peut pas souscrire à sa propre émission.');
+    const co = companyById(holderId);
+    if(!co) return fail('Entreprise introuvable.');
+    holderName = co.name;
+  } else {
+    if(seller && seller.ceoId===holderId) return fail('Le CEO de l’entreprise émettrice ne peut pas souscrire à sa propre émission — délit d’initié.');
+    const pl = state.players.find(p=>p.id===holderId);
+    if(!pl) return fail('Joueur introuvable.');
+    holderName = pl.name;
+  }
+  const subs = tranche==='senior' ? listing.seniorSubs : listing.juniorSubs;
+  const existing = subs.find(s=>s.holderType===holderType && s.holderId===holderId);
+  if(existing) existing.maxAmount = maxAmount;
+  else subs.push({id:uid(), holderType, holderId, maxAmount, createdAt:nowLabel()});
+  log(`${holderName} souscrit jusqu'à ${fmt(maxAmount)} à la tranche ${tranche==='senior'?'senior':'junior'} de l'émission ABS de ${seller?seller.name:'?'}.`);
+  if(!opts.silent){ await saveGame(); render(); }
+  return {ok:true};
+}
+
+async function cancelRevenueSwapSubscription(listingId, tranche, holderType, holderId){
+  const res = await attemptActionWithRetry(async ()=>{
+    const listing = state.revenueSwapListings.find(l=>l.id===listingId);
+    if(!listing) return {ok:false};
+    const subs = tranche==='senior' ? listing.seniorSubs : listing.juniorSubs;
+    const idx = subs.findIndex(s=>s.holderType===holderType && s.holderId===holderId);
+    if(idx<0) return {ok:false};
+    subs.splice(idx,1);
+    return {ok:true};
+  }, {label:'Retrait d\'une souscription ABS'});
+  if(!res.ok){ if(res.error) alert(res.error); return; }
+  render();
+}
+
+function levelAbsSubscriptions(subs, target){
+  let pool = (subs||[]).map(s=>({holderType:s.holderType, holderId:s.holderId, cap:s.maxAmount})).filter(s=>s.cap>1e-9);
+  const finalized = [];
+  let remaining = Math.max(0, target);
+  while(pool.length && remaining>1e-9){
+    const equalShare = remaining/pool.length;
+    const tooSmall = pool.filter(s=>s.cap<equalShare-1e-9);
+    if(tooSmall.length===0){
+      pool.forEach(s=>finalized.push({holderType:s.holderType, holderId:s.holderId, amount:equalShare}));
+      remaining = 0;
+      break;
+    }
+    tooSmall.forEach(s=>{ finalized.push({holderType:s.holderType, holderId:s.holderId, amount:s.cap}); remaining -= s.cap; });
+    pool = pool.filter(s=>s.cap>=equalShare-1e-9);
+  }
+  return finalized;
+}
+
+function maybeResolveRevenueSwapListings(){
+  if(!state.settings.features.revenueSwap) return;
+  if(!tradingWindowOpen()) return;
+  if(!state.revenueSwapListings.length) return;
+  const listings = state.revenueSwapListings;
+  state.revenueSwapListings = [];
+  listings.forEach(listing=>resolveRevenueSwapListing(listing));
+}
+function resolveRevenueSwapListing(listing){
+  const seller = companyById(listing.sellerId);
+  const labels = listing.propertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p?(p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name):'?'; }).join(', ');
+  if(!seller){ log(`Émission ABS annulée (entreprise émettrice introuvable).`); return; }
+  
+  
+  for(const pid of listing.propertyIds){
+    const p = state.properties.find(x=>x.id===pid);
+    const host = p ? (p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p) : null;
+    if(!p || propertyOwnedShare(host, seller.id)<=0){
+      log(`${seller.name} ne possède plus tous les terrains de son émission ABS (${labels}) — émission annulée, aucun argent n'a changé de main.`);
+      return;
+    }
+  }
+  
+  
+  const clampCash = (s)=>{
+    const cash = s.holderType==='company' ? (companyById(s.holderId)||{}).cash : (state.players.find(p=>p.id===s.holderId)||{}).cash;
+    return Object.assign({}, s, {maxAmount: Math.max(0, Math.min(s.maxAmount, cash||0))});
+  };
+  const seniorSubsClamped = listing.seniorSubs.map(clampCash);
+  const juniorSubsClamped = listing.juniorSubs.map(clampCash);
+  const seniorHolders = levelAbsSubscriptions(seniorSubsClamped, listing.tranches.seniorAmount);
+  const seniorRaised = seniorHolders.reduce((s,h)=>s+h.amount,0);
+  
+  if(seniorHolders.length===0){
+    log(`Émission ABS de ${seller.name} (${labels}) annulée — aucun souscripteur senior, condition d'existence non remplie. Aucun argent n'a changé de main.`);
+    return;
+  }
+  const juniorHoldersReal = levelAbsSubscriptions(juniorSubsClamped, listing.tranches.juniorAmount);
+  const juniorRaisedReal = juniorHoldersReal.reduce((s,h)=>s+h.amount,0);
+  
+  
+  
+  
+  
+  const juniorGap = Math.max(0, listing.tranches.juniorAmount - juniorRaisedReal);
+  const juniorHolders = juniorGap>1e-9 ? [...juniorHoldersReal, {holderType:'company', holderId:seller.id, amount:juniorGap}] : juniorHoldersReal;
+  
+  
+  seniorHolders.concat(juniorHoldersReal).forEach(h=>{
+    if(h.holderType==='company'){ const co=companyById(h.holderId); if(co){ co.cash -= h.amount; logFin(co.id, 'abs_subscription_outflow', -h.amount); } }
+    else { const pl=state.players.find(p=>p.id===h.holderId); if(pl) pl.cash -= h.amount; }
+  });
+  const totalRaised = seniorRaised + juniorRaisedReal;
+  seller.cash += totalRaised;
+  logFin(seller.id, 'abs_proceeds', totalRaised);
+  
+  
+  
+  const seniorCapTotal = seniorRaised * (1+listing.tranches.seniorPremiumPct);
+  state.revenueSwaps.push({id:uid(), sellerId:seller.id, propertyIds:[...listing.propertyIds], cededPctOfShare:listing.cededPctOfShare,
+    years:listing.years, yearsRemaining:listing.years, pricing:listing.pricing, seniorPremiumPct:listing.tranches.seniorPremiumPct,
+    seniorRaised, juniorRaised:juniorRaisedReal, seniorCapTotal, seniorPaidSoFar:0, seniorHolders, juniorHolders, createdAt:nowLabel()});
+  const seniorNames = seniorHolders.map(h=>h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(p=>p.id===h.holderId)||{}).name).join(', ');
+  const juniorNames = juniorHoldersReal.map(h=>h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(p=>p.id===h.holderId)||{}).name).join(', ') || 'aucun';
+  log(`Émission ABS de ${seller.name} résolue (${labels}, ${Math.round(listing.cededPctOfShare*100)}% cédé, ${listing.years} an(s)): ${fmt(seniorRaised)} levé(s) en tranche SENIOR (porteurs: ${seniorNames} — plafonnée à ${fmt(seniorCapTotal)} au total, prime ${Math.round(listing.tranches.seniorPremiumPct*100)}%), ${fmt(juniorRaisedReal)} levé(s) en tranche JUNIOR auprès de tiers (porteurs: ${juniorNames})${juniorGap>1e-9?`, ${fmt(juniorGap)} de junior non souscrit retenu par ${seller.name} elle-même (rétention du risque)`:''} — ${seller.name} reçoit ${fmt(totalRaised)} au total et ne peut plus vendre, hypothéquer ni signer de nouveau swap de loyers sur ces terrains tant que l'accord est actif (elle reste libre d'y construire ou de les fusionner en lot). Non-recours: à l'expiration, chaque porteur garde ce qu'il a reçu, sans obligation de ${seller.name}.`,
+    [{label:`${seller.name} (émission ABS, capital levé)`, amount:totalRaised}].concat(seniorHolders.concat(juniorHoldersReal).map(h=>({label:`${h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(p=>p.id===h.holderId)||{}).name} (souscription ABS)`, amount:-h.amount}))));
+}
+
+
+
+
+
+function creditAbsHolder(holder, amount, entries, deal, trancheLabel){
+  if(amount<=1e-9) return;
+  if(holder.holderType==='company'){
+    const co = companyById(holder.holderId);
+    if(!co) return;
+    co.cash += amount;
+    logFin(co.id, 'abs_income', amount);
+    entries.push({label:`${co.name} (revenu ABS ${trancheLabel})`, amount});
+  } else {
+    const pl = state.players.find(p=>p.id===holder.holderId);
+    if(!pl) return;
+    pl.cash += amount;
+    pl.cumAbsIncomeReceived = (pl.cumAbsIncomeReceived||0) + amount;
+    state.absIncomePayments = state.absIncomePayments || [];
+    state.absIncomePayments.push({id:uid(), playerId:pl.id, dealId:deal.id, amount, roll:state.gameClock.rollCount,
+      text:`Revenu ABS reçu (tranche ${trancheLabel}) — ${fmt(amount)} sur l'émission de ${(companyById(deal.sellerId)||{}).name||'?'}.`});
+    if(state.absIncomePayments.length>50) state.absIncomePayments.splice(0, state.absIncomePayments.length-50);
+    entries.push({label:`${pl.name} (revenu ABS ${trancheLabel})`, amount});
+  }
+}
+function distributeAbsCashflow(deal, cededAmount, entries){
+  if(cededAmount<=1e-9) return;
+  let remaining = cededAmount;
+  const seniorRemainingCap = Math.max(0, (deal.seniorCapTotal||0) - (deal.seniorPaidSoFar||0));
+  const toSenior = Math.min(remaining, seniorRemainingCap);
+  if(toSenior>1e-9 && deal.seniorRaised>1e-9){
+    (deal.seniorHolders||[]).forEach(h=>creditAbsHolder(h, toSenior*(h.amount/deal.seniorRaised), entries, deal, 'senior'));
+    deal.seniorPaidSoFar = (deal.seniorPaidSoFar||0) + toSenior;
+    remaining -= toSenior;
+  }
+  if(remaining>1e-9){
+    const juniorTarget = (deal.juniorHolders||[]).reduce((s,h)=>s+h.amount,0);
+    if(juniorTarget>1e-9) (deal.juniorHolders||[]).forEach(h=>creditAbsHolder(h, remaining*(h.amount/juniorTarget), entries, deal, 'junior'));
+  }
 }
 
 
@@ -12578,6 +13101,12 @@ function loanCapRemaining(borrowerId){
   return cap>0 ? Math.max(0, cap-activeLoanPrincipalSum(borrowerId)) : Infinity;
 }
 
+function loanWithholdingHeadroom(borrowerId){
+  const capMax = state.settings.loanOfferWithholdingPctMax!==undefined ? state.settings.loanOfferWithholdingPctMax : 1;
+  const usedPct = activeLoansOf(borrowerId).filter(l=>!l.lastResort).reduce((s,l)=>s+(l.withholdingPct||0), 0);
+  return Math.max(0, capMax-usedPct);
+}
+
 function activeLoanRequestOf(borrowerId){
   return state.loanRequests.find(r=>r.borrowerId===borrowerId);
 }
@@ -12653,8 +13182,12 @@ async function submitLoanOffer(requestId, player, withholdingPct, multiple, secu
     if(!req) return {ok:false, error:'Cette demande d’emprunt n’est plus disponible.'};
     const co = companyById(req.borrowerId);
     if(co && co.ceoId===player.id) return {ok:false, error:'Le CEO d’une entreprise ne peut pas prêter à sa propre compagnie — délit d’initié intégré au jeu.'};
-    const pctMin = state.settings.loanOfferWithholdingPctMin||0, pctMax = state.settings.loanOfferWithholdingPctMax||1;
-    if(!(withholdingPct>=pctMin-1e-9 && withholdingPct<=pctMax+1e-9)) return {ok:false, error:`Le % des loyers retenu doit être entre ${Math.round(pctMin*100)}% et ${Math.round(pctMax*100)}%.`};
+    const pctMin = state.settings.loanOfferWithholdingPctMin||0;
+    
+    
+    
+    const pctMax = Math.min(state.settings.loanOfferWithholdingPctMax||1, loanWithholdingHeadroom(req.borrowerId));
+    if(!(withholdingPct>=pctMin-1e-9 && withholdingPct<=pctMax+1e-9)) return {ok:false, error:`Le % des loyers retenu doit être entre ${Math.round(pctMin*100)}% et ${Math.round(pctMax*100)}% (plafond cumulatif de ${Math.round((state.settings.loanOfferWithholdingPctMax||1)*100)}% déjà réduit par les prêts actifs de ${co?co.name:'cette entreprise'}).`};
     const multMin = state.settings.loanOfferMultipleMin||1, multMax = state.settings.loanOfferMultipleMax||1;
     if(!(multiple>=multMin-1e-9 && multiple<=multMax+1e-9)) return {ok:false, error:`Le multiple de remboursement doit être entre ${multMin}× et ${multMax}×.`};
     
@@ -12738,6 +13271,15 @@ async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multip
   }
   const borrower = companyById(borrowerId);
   if(!borrower) return fail('Emprunteur introuvable.');
+  
+  
+  
+  
+  
+  const headroom = loanWithholdingHeadroom(borrowerId);
+  if(withholdingPct>headroom+1e-9){
+    return fail(`Le % de retenue (${Math.round(withholdingPct*100)}%) dépasse le plafond cumulatif encore disponible pour ${borrower.name} (${Math.round(headroom*100)}%, compte tenu de ses prêts déjà actifs) — le plafond de ${Math.round((state.settings.loanOfferWithholdingPctMax||1)*100)}% s'applique à la somme de tous les prêts, pas à chacun individuellement.`);
+  }
   const lenderPlayer = lenderId!=='BANK' ? state.players.find(p=>p.id===lenderId) : null;
   const lenderCo = (lenderId!=='BANK' && !lenderPlayer) ? companyById(lenderId) : null;
   const lenderKind = lenderId==='BANK' ? 'bank' : (lenderPlayer ? 'player' : 'company');
@@ -12768,8 +13310,12 @@ async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multip
   return true;
 }
 
-function applyLoanWithholding(companyId, grossAmount){
-  const loans = activeLoansOf(companyId);
+function applyLoanWithholding(companyId, grossAmount, opts){
+  opts = opts || {};
+  const allLoans = activeLoansOf(companyId);
+  const loans = opts.onlyLastResort ? allLoans.filter(l=>l.lastResort)
+    : opts.onlyNormal ? allLoans.filter(l=>!l.lastResort)
+    : allLoans.filter(l=>!l.lastResort).concat(allLoans.filter(l=>l.lastResort));
   if(!loans.length || grossAmount<=0) return {net:grossAmount, totalWithheld:0, withholdings:[]};
   let remainingGross = grossAmount;
   const withholdings = [];
@@ -12868,9 +13414,9 @@ function renderEtf(){
   const isCreator = myPlayerId===state.creatorId;
   const allOpened = state.etfs.every(e=>e.opened);
   return `
-  <div class="section-title">ETF de terrains</div>
-  <div class="small" style="margin-bottom:14px;">Chaque année, au 1er lancer, les entreprises soumettent une mise scellée pour le lot ENTIER d'un ETF — depuis le pop-up de fin de tour (comme le lot commercial). Le plus offrant remporte 100% du lot au 2e lancer, en rachetant les détenteurs actuels au prorata. Un détenteur peut ensuite revendre volontairement des parts à d'autres entreprises ci-dessous.</div>
-  ${isCreator?`<div style="margin-bottom:18px;"><button class="btn btn-gold btn-sm" id="openEtfsBtn" ${allOpened?'disabled':''}>${allOpened?'ETF déjà ouverts':'Ouvrir les ETF'}</button></div>`:''}
+  <div class="section-title">REIT de terrains</div>
+  <div class="small" style="margin-bottom:14px;">Chaque année, au 1er lancer, les entreprises soumettent une mise scellée pour le lot ENTIER d'un REIT — depuis le pop-up de fin de tour (comme le lot commercial). Le plus offrant remporte 100% du lot au 2e lancer, en rachetant les détenteurs actuels au prorata. Un détenteur peut ensuite revendre volontairement des parts à d'autres entreprises ci-dessous.</div>
+  ${isCreator?`<div style="margin-bottom:18px;"><button class="btn btn-gold btn-sm" id="openEtfsBtn" ${allOpened?'disabled':''}>${allOpened?'REIT déjà ouverts':'Ouvrir les REIT'}</button></div>`:''}
   ${state.etfs.map(e=>renderEtfCard(e, isCreator)).join('')}`;
 }
 
@@ -13488,8 +14034,8 @@ function tvSlideEtfDutch(etfId){
   const etf = state.etfs.find(e=>e.id===etfId);
   if(!def || !etf){
     return `
-    <div class="tv-title" style="text-align:center;">ETF indisponible</div>
-    <div class="tv-sub">Cet ETF n'existe pas dans cette partie — le créateur peut choisir un autre affichage dans l'onglet Administration.</div>
+    <div class="tv-title" style="text-align:center;">REIT indisponible</div>
+    <div class="tv-sub">Ce REIT n'existe pas dans cette partie — le créateur peut choisir un autre affichage dans l'onglet Administration.</div>
     `;
   }
   const groupLabels = def.groups.map(g=>GROUPS[g].label).join(' + ');
@@ -13765,6 +14311,10 @@ function bindTabEvents(t){
     if(openProposeCompBtn) openProposeCompBtn.addEventListener('click', modalProposeCompensation);
     
     
+    const openProposeRevenueSwapBtn = document.getElementById('openProposeRevenueSwapBtn');
+    if(openProposeRevenueSwapBtn) openProposeRevenueSwapBtn.addEventListener('click', modalProposeRevenueSwap);
+    
+    
     
     
     
@@ -13784,6 +14334,15 @@ function bindTabEvents(t){
     document.querySelectorAll('[data-refuse-comp-offer]').forEach(b=>b.addEventListener('click', ()=>refuseRentCompensationOffer(b.dataset.refuseCompOffer)));
     document.querySelectorAll('[data-cancel-swap-offer]').forEach(b=>b.addEventListener('click', ()=>cancelRentSwapOffer(b.dataset.cancelSwapOffer)));
     document.querySelectorAll('[data-cancel-comp-offer]').forEach(b=>b.addEventListener('click', ()=>cancelRentCompensationOffer(b.dataset.cancelCompOffer)));
+    
+    
+    
+    document.querySelectorAll('[data-subscribe-revenue-listing]').forEach(b=>b.addEventListener('click', ()=>{
+      const myCo = myCompany();
+      if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
+      modalSubscribeRevenueSwapTranche(b.dataset.subscribeRevenueListing, b.dataset.tranche, 'company', myCo.id);
+    }));
+    document.querySelectorAll('[data-cancel-revenue-listing]').forEach(b=>b.addEventListener('click', ()=>cancelRevenueSwapListing(b.dataset.cancelRevenueListing)));
     
     
     
@@ -14082,6 +14641,15 @@ function bindTabEvents(t){
     
     
     
+    document.querySelectorAll('[data-subscribe-revenue-listing-player]').forEach(b=>b.addEventListener('click', ()=>{
+      const meNow = state.players.find(p=>p.id===myPlayerId);
+      if(!meNow){ alert('Sélectionnez d’abord un joueur via « Vous êtes ».'); return; }
+      modalSubscribeRevenueSwapTranche(b.dataset.subscribeRevenueListingPlayer, b.dataset.tranche, 'player', meNow.id);
+    }));
+    
+    
+    
+    
     
     
     
@@ -14099,7 +14667,7 @@ function bindTabEvents(t){
     
     document.querySelectorAll('[data-etf-sell]').forEach(b=>b.addEventListener('click', ()=>{
       const myCo = myCompany();
-      if(!myCo){ alert('Vous devez fonder votre entreprise avant de vendre des parts d’ETF.'); return; }
+      if(!myCo){ alert('Vous devez fonder votre entreprise avant de vendre des parts de REIT.'); return; }
       const id = b.dataset.etfSell;
       const buyerId = document.getElementById('etfSellBuyer_'+id).value;
       const pct = parseFloat(document.getElementById('etfSellPct_'+id).value)||0;
@@ -14365,7 +14933,7 @@ function modalBuyShares(pid){
     <div class="small">Prix de base: ${fmt(p.basePrice)}${wasSeized?` · Valeur intrinsèque (suggérée, terrain déjà possédé par le passé): ${fmt(suggestedPrice)}`:''} (max ${state.settings.maxOwners} entreprises copropriétaires simultanées — ${existingOwnerIds.length} actuellement)</div>
     <label>Prix convenu (pour 100% du terrain, en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mPrice" value="${suggestedPrice}">
-    <label>Répartition entre entreprises acheteuses (max ${cap}% rachetable à la banque${cap<100?` — le reste (${100-cap}%) est réservé en permanence à la banque, module ETF activé`:''})</label>
+    <label>Répartition entre entreprises acheteuses (max ${cap}% rachetable à la banque${cap<100?` — le reste (${100-cap}%) est réservé en permanence à la banque, module REIT activé`:''})</label>
     <div id="mBuyerRows"></div>
     <button type="button" class="btn btn-ghost" id="mAddBuyerRow" style="margin:6px 0;">+ Ajouter une entreprise</button>
     <div class="small" id="mBuyerTotalText"></div>
@@ -14493,6 +15061,11 @@ function modalSellShare(pid){
       
       if((prop.mortgages||[]).some(m=>m.companyId===sellerId)){
         return {ok:false, error:`${companyById(sellerId)?.name||'Cette entreprise'} a hypothéqué sa part de ${prop.name} — remboursez l'hypothèque (repayMortgage) avant de pouvoir la vendre.`};
+      }
+      
+      
+      if(isPropertyLockedByRevenueSwap(pid, sellerId)){
+        return {ok:false, error:`${companyById(sellerId)?.name||'Cette entreprise'} a vendu le revenu de ${prop.name} (swap de revenu fixe/variable) — impossible de le vendre tant que l'accord est actif.`};
       }
       if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
         
@@ -14634,6 +15207,62 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
     distributionCuts.forEach(c=>{
       
       
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      const revenueSwap = state.revenueSwaps.find(s=>s.sellerId===c.companyId && s.propertyIds.some(pid=>samePropertyOrLot(pid, p.id)));
+      if(revenueSwap){
+        const full = c.amount;
+        const normalResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, full, {onlyNormal:true}) : {net:full, totalWithheld:0, withholdings:[]};
+        const cededAmount = full * revenueSwap.cededPctOfShare;
+        const retainedAmount = full - cededAmount;
+        distributeAbsCashflow(revenueSwap, cededAmount, entries);
+        const residualAfterCession = Math.max(0, normalResult.net - cededAmount);
+        const lastResortResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, residualAfterCession, {onlyLastResort:true}) : {net:residualAfterCession, totalWithheld:0, withholdings:[]};
+        const totalWithheld = normalResult.totalWithheld + lastResortResult.totalWithheld;
+        const allWithholdings = normalResult.withholdings.concat(lastResortResult.withholdings);
+        if(retainedAmount>1e-9 || totalWithheld>1e-9){
+          splitCuts.push({companyId:c.companyId, amount:retainedAmount, viaSwap:false,
+            net:lastResortResult.net, withheld:totalWithheld, withholdings:allWithholdings, _precomputedByAbs:true});
+        }
+        return;
+      }
+      
+      
       const split = swapSplit(p.id, c.companyId, visitorId, c.amount);
       if(split.toOwner>0) splitCuts.push({companyId:c.companyId, amount:split.toOwner, viaSwap:false});
       
@@ -14668,7 +15297,13 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
           
           
           
-          const r = state.settings.features.loan ? applyLoanWithholding(c.companyId, c.amount) : {net:c.amount, totalWithheld:0, withholdings:[]};
+          
+          
+          
+          
+          
+          const r = c._precomputedByAbs ? {net:c.net, totalWithheld:c.withheld, withholdings:c.withholdings}
+            : (state.settings.features.loan ? applyLoanWithholding(c.companyId, c.amount) : {net:c.amount, totalWithheld:0, withholdings:[]});
           const net = r.net;
           if(net>1e-9){
             contract.balance += (visitorId===contract.companyA ? 1 : -1) * net;
@@ -14737,7 +15372,9 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
       
       
       
-      if(c._precomputedByCompensation) return c;
+      
+      
+      if(c._precomputedByCompensation || c._precomputedByAbs) return c;
       const r = state.settings.features.loan ? applyLoanWithholding(c.companyId, c.amount) : {net:c.amount, totalWithheld:0, withholdings:[]};
       return Object.assign({}, c, {net:r.net, withheld:r.totalWithheld, withholdings:r.withholdings});
     });
@@ -14811,6 +15448,9 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
       logFin(owner.id, 'rent_revenue', c.amount); 
       addRealEstateRevenue(realEstateKeyFor(p), owner.id, c.amount); 
       if(c.withheld>0) logFin(owner.id, 'loan_repayment_via_rent', -c.withheld); 
+      
+      
+      
       
       
       
@@ -14930,6 +15570,35 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
   
   const splitCuts = [];
   distributionCuts.forEach(c=>{
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    const revenueSwap = state.revenueSwaps.find(s=>s.sellerId===c.companyId && s.propertyIds.some(pid=>samePropertyOrLot(pid, p.id)));
+    if(revenueSwap){
+      const full = c.amount;
+      const normalResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, full, {onlyNormal:true}) : {net:full, totalWithheld:0, withholdings:[]};
+      const cededAmount = full * revenueSwap.cededPctOfShare;
+      const retainedAmount = full - cededAmount;
+      distributeAbsCashflow(revenueSwap, cededAmount, entries);
+      const residualAfterCession = Math.max(0, normalResult.net - cededAmount);
+      const lastResortResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, residualAfterCession, {onlyLastResort:true}) : {net:residualAfterCession, totalWithheld:0, withholdings:[]};
+      const totalWithheld = normalResult.totalWithheld + lastResortResult.totalWithheld;
+      const allWithholdings = normalResult.withholdings.concat(lastResortResult.withholdings);
+      if(retainedAmount>1e-9 || totalWithheld>1e-9){
+        splitCuts.push({companyId:c.companyId, amount:retainedAmount, viaSwap:false,
+          net:lastResortResult.net, withheld:totalWithheld, withholdings:allWithholdings, _precomputedByAbs:true});
+      }
+      return;
+    }
     const split = swapSplit(p.id, c.companyId, pawnId, c.amount);
     if(split.toOwner>0) splitCuts.push({companyId:c.companyId, amount:split.toOwner, viaSwap:false});
     
@@ -14938,6 +15607,9 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
   });
   distributionCuts = splitCuts;
   const cutResults = distributionCuts.map(c=>{
+    
+    
+    if(c._precomputedByAbs) return c;
     const r = state.settings.features.loan ? applyLoanWithholding(c.companyId, c.amount) : {net:c.amount, totalWithheld:0, withholdings:[]};
     return Object.assign({}, c, {net:r.net, withheld:r.totalWithheld, withholdings:r.withholdings});
   });
@@ -14954,6 +15626,7 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
     logFin(owner.id, 'rent_revenue', c.amount);
     addRealEstateRevenue(realEstateKeyFor(p), owner.id, c.amount);
     if(c.withheld>0) logFin(owner.id, 'loan_repayment_via_rent', -c.withheld);
+    
     
     
     const ownerLabel = c.viaSwap
@@ -15089,13 +15762,13 @@ function buildHouseCore(pid, sourceCompanyId, compensationTotal, opts){
           payer.cash -= part; compTotal += part;
           logFin(payer.id, 'house_compensation_paid', -part);
           addRealEstateCapex(realEstateKeyFor(p), payer.id, part); 
-          entries.push({label:`${payer.name} (compensation maison, ${o.share}% des parts, hors banque/ETF)`, amount:-part});
+          entries.push({label:`${payer.name} (compensation maison, ${o.share}% des parts, hors banque/REIT)`, amount:-part});
         });
         source.cash += compTotal;
         logFin(source.id, 'house_compensation_revenue', compTotal);
         entries.push({label:`${source.name} (compensation reçue — maison de sa réserve)`, amount:compTotal});
       }
-      log(`Maison de ${p.name} prise dans la réserve de ${source.name} (réserve restante: ${source.houseReserve})${compTotal>0?` — compensation de ${fmt(compTotal)} versée par les autres copropriétaires, au pro rata des parts (hors banque/ETF).`:' — aucune compensation.'}`);
+      log(`Maison de ${p.name} prise dans la réserve de ${source.name} (réserve restante: ${source.houseReserve})${compTotal>0?` — compensation de ${fmt(compTotal)} versée par les autres copropriétaires, au pro rata des parts (hors banque/REIT).`:' — aucune compensation.'}`);
     }
   }
 
@@ -15150,11 +15823,11 @@ function modalHouseCompensation(pid, sourceId){
   const breakdown = amount => payers.length===0 ? '' : payers.map(o=>{
     const owner = companyById(o.companyId);
     const w = totalOwnersShare>0 ? (o.share/totalOwnersShare) : 0;
-    return `${owner?esc(owner.name):'?'}: ${fmt(amount*w)} (${Math.round(w*100)}% des parts, hors banque/ETF)`;
+    return `${owner?esc(owner.name):'?'}: ${fmt(amount*w)} (${Math.round(w*100)}% des parts, hors banque/REIT)`;
   }).join('<br>');
   openModal(`
     <h3>Compensation — ${esc(p.name)}</h3>
-    <div class="small" style="margin-bottom:8px;">Maison prise dans la réserve de <b>${esc(source?source.name:'?')}</b>. Si une compensation a été négociée entre les copropriétaires, inscrivez le montant total à lui transférer — réparti au pro rata des parts des AUTRES copropriétaires (jamais la banque ni les ETF). Laissez à 0 si aucune compensation n'a été convenue.</div>
+    <div class="small" style="margin-bottom:8px;">Maison prise dans la réserve de <b>${esc(source?source.name:'?')}</b>. Si une compensation a été négociée entre les copropriétaires, inscrivez le montant total à lui transférer — réparti au pro rata des parts des AUTRES copropriétaires (jamais la banque ni les REIT). Laissez à 0 si aucune compensation n'a été convenue.</div>
     ${payers.length===0 ? `<div class="small">Aucun autre copropriétaire sur ce terrain — aucune compensation possible.</div>` : `
     <label>Montant total à transférer à ${esc(source?source.name:'?')} (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" min="0" id="mCompAmount" value="0">
@@ -15887,7 +16560,7 @@ function modalAnnounceDividend(){
   
   openModal(`
     <h3>Annoncer un dividende — ${esc(myCo.name)}</h3>
-    <div class="small" style="margin-bottom:10px;">Annonce un montant total, immédiatement immobilisé (sorti) de la trésorerie de l'entreprise, versé au PROCHAIN semestre aux actionnaires RÉELS actuels (jamais la portion des parts encore détenue par la banque en attente d'introduction en bourse), au prorata de LEUR participation À CE MOMENT PRÉCIS. Si un actionnaire revend une partie de ses parts avant le versement, son dividende est réduit au prorata des parts qu'il lui reste (jamais annulé entièrement tant qu'il en garde au moins une) ; racheter davantage de parts entre-temps ne fait pas grossir son dividende au-delà de ce qu'il avait à l'annonce. C'est la RÉGULARITÉ des versements dans le temps, plus que le montant d'un seul versement, qui compte pour la confiance du marché. Un dividende versé alors que le bénéfice du dernier semestre clos est négatif, ou supérieur à ce bénéfice, est mal perçu par le marché (choc baissier) — surtout s'il se répète.</div>
+    <div class="small" style="margin-bottom:10px;">Dès l'annonce, le montant total est bloqué et retiré de la trésorerie. Le versement intervient le semestre suivant au prorata des actions détenues ce jour-là.</div>
     ${graceWarningHtml}
     <div class="small" style="margin-bottom:8px;">Trésorerie actuelle: <b>${fmt(myCo.cash)}</b>${inGracePeriod?` &nbsp;|&nbsp; Maximum autorisé pendant le délai de grâce: <b>${fmt(graceDividendCap)}</b>`:''}</div>
     <label>Montant total à annoncer (en ${esc(state.unit)})</label>
@@ -17534,6 +18207,130 @@ function modalProposeCompensation(){
 }
 
 
+function modalProposeRevenueSwap(){
+  const myCo = myCompany();
+  if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
+  if(!tradingWindowOpen()){ alert('Une émission ABS ne peut être publiée qu’à l’ouverture du marché (début de semestre).'); return; }
+  const items = revenueSwapSellableItems(myCo.id);
+  if(items.length===0){ alert('Aucun terrain éligible: tous vos terrains sont déjà hypothéqués ou déjà sous une émission ABS active.'); return; }
+  const maxCedablePct = absMaxCedablePct();
+  if(!(maxCedablePct>0)){ alert('Aucune part cessible actuellement (le réglage de retenue de prêt maximal est à 0%).'); return; }
+  const rows = items.map((it,idx)=>{
+    const p = state.properties.find(x=>x.id===it.id);
+    const host = p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p;
+    const share = propertyOwnedShare(host, myCo.id);
+    return `<div class="row" style="gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;">
+      <input type="checkbox" class="rswap-check" data-idx="${idx}" data-pid="${it.id}" style="width:auto;">
+      <span style="flex:1;min-width:140px;">${esc(it.label)} <span class="small" style="color:var(--muted);">(part détenue: ${share}%)</span></span>
+    </div>`;
+  }).join('');
+  openModal(`
+    <h3>Émission ABS — titriser le revenu de terrains</h3>
+    <div class="small" style="margin-bottom:10px;">Cochez un ou plusieurs terrains (ou lots regroupés — comptent pour un seul), choisissez la part de VOTRE part cédée (plafonnée pour ne jamais chevaucher votre capacité d'emprunt réservée), une durée en années et le montant total recherché, puis publiez: la répartition senior/junior et la prime senior sont calculées automatiquement par l'application à partir du risque du panier. L'émission se résout AUTOMATIQUEMENT au prochain lancer de dés (aucun report) — au moins un souscripteur senior est requis, sinon elle est annulée sans qu'aucun argent ne change de main. Tant qu'un accord résolu est actif: impossible de vendre, hypothéquer ou signer un nouveau swap de loyers sur ces terrains — construire des maisons et fusionner/défusionner un lot restent permis. La liste des terrains est figée à la publication.</div>
+    <div id="rswapRows">${rows}</div>
+    <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:8px;">
+      <div>
+        <label>Part cédée de votre part détenue (0-${Math.round(maxCedablePct*100)}%)</label>
+        <input type="number" step="1" min="1" max="${Math.round(maxCedablePct*100)}" id="mRSwapCededPct" value="${Math.round(maxCedablePct*100)}" style="width:90px;"> %
+      </div>
+      <div>
+        <label>Durée (années)</label>
+        <input type="number" min="1" step="1" id="mRSwapYears" value="1" style="width:90px;">
+      </div>
+      <div>
+        <label>Montant total recherché (en ${esc(state.unit)})</label>
+        <input type="number" step="0.01" min="0.01" id="mRSwapAmount" placeholder="ex. 1000000">
+      </div>
+    </div>
+    <div id="rswapPreview" style="margin-top:10px;"></div>
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mOk">Publier l'émission</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  const companyId = myCo.id;
+  const selectedPropertyIds = ()=>{
+    const ids = [];
+    document.querySelectorAll('.rswap-check').forEach(c=>{ if(c.checked) ids.push(c.dataset.pid); });
+    return ids;
+  };
+  const updatePreview = ()=>{
+    const el = document.getElementById('rswapPreview');
+    const propertyIds = selectedPropertyIds();
+    const cededPctOfShare = (parseFloat(document.getElementById('mRSwapCededPct').value)||0)/100;
+    const years = parseInt(document.getElementById('mRSwapYears').value)||0;
+    const amountSought = parseFloat(document.getElementById('mRSwapAmount').value)||0;
+    if(propertyIds.length===0 || !(cededPctOfShare>0) || !(years>0) || !(amountSought>0)){
+      el.innerHTML = '<div class="small" style="color:var(--muted);">Complétez la sélection et les champs ci-dessus pour voir l’aperçu de tarification.</div>';
+      return;
+    }
+    const pricing = computeAbsPricing(companyId, propertyIds, cededPctOfShare, years);
+    const tranches = computeAbsTranches(pricing, amountSought);
+    el.innerHTML = `<table><tr><th></th><th>Senior</th><th>Junior</th></tr>
+      <tr><td>Part cédée</td><td colspan="2">${Math.round(cededPctOfShare*100)}%</td></tr>
+      <tr><td>Durée</td><td colspan="2">${years} an(s)</td></tr>
+      <tr><td>Loyer attendu sur la durée</td><td colspan="2">${fmt(pricing.meanRent)} (± ${fmt(pricing.stdRent)})</td></tr>
+      <tr><td>Montant recherché</td><td class="money">${fmt(tranches.seniorAmount)}</td><td class="money">${fmt(tranches.juniorAmount)}</td></tr>
+      <tr><td>Seuil pour être servie en entier</td><td class="money">${fmt(tranches.seniorCapTotalTarget)} (prime ${Math.round(tranches.seniorPremiumPct*100)}%)</td><td>sans plafond</td></tr></table>`;
+  };
+  document.getElementById('rswapRows').addEventListener('change', updatePreview);
+  ['mRSwapCededPct','mRSwapYears','mRSwapAmount'].forEach(id=>document.getElementById(id).addEventListener('input', updatePreview));
+  updatePreview();
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const propertyIds = selectedPropertyIds();
+    if(propertyIds.length===0){ alert('Cochez au moins un terrain.'); return; }
+    const cededPctOfShare = (parseFloat(document.getElementById('mRSwapCededPct').value)||0)/100;
+    if(!(cededPctOfShare>0)){ alert('La part cédée doit être positive.'); return; }
+    const amountSought = parseFloat(document.getElementById('mRSwapAmount').value)||0;
+    if(!(amountSought>0)){ alert('Le montant total recherché doit être positif.'); return; }
+    const years = parseInt(document.getElementById('mRSwapYears').value)||1;
+    await runModalActionWithRetry(()=>postRevenueSwapListing(companyId, propertyIds, cededPctOfShare, amountSought, years, {silent:true}));
+  });
+}
+
+function modalSubscribeRevenueSwapTranche(listingId, tranche, subscriberType, subscriberId){
+  const listing = state.revenueSwapListings.find(l=>l.id===listingId);
+  if(!listing){ alert('Cette émission n’est plus disponible.'); return; }
+  const seller = companyById(listing.sellerId);
+  const target = tranche==='senior' ? listing.tranches.seniorAmount : listing.tranches.juniorAmount;
+  const existing = (tranche==='senior'?listing.seniorSubs:listing.juniorSubs).find(s=>s.holderType===subscriberType && s.holderId===subscriberId);
+  openModal(`
+    <h3>Souscrire à la tranche ${tranche==='senior'?'SENIOR':'JUNIOR'} — ${esc(seller?seller.name:'?')}</h3>
+    <table><tr><th></th><th>Senior</th><th>Junior</th></tr>
+      <tr><td>Part cédée</td><td colspan="2">${Math.round(listing.cededPctOfShare*100)}%</td></tr>
+      <tr><td>Durée</td><td colspan="2">${listing.years} an(s)</td></tr>
+      <tr><td>Loyer attendu sur la durée</td><td colspan="2">${fmt(listing.pricing.meanRent)} (± ${fmt(listing.pricing.stdRent)})</td></tr>
+      <tr><td>Montant recherché</td><td class="money">${fmt(listing.tranches.seniorAmount)}</td><td class="money">${fmt(listing.tranches.juniorAmount)}</td></tr>
+      <tr><td>Seuil pour être servie en entier</td><td class="money">${fmt(listing.tranches.seniorCapTotalTarget)} (prime ${Math.round(listing.tranches.seniorPremiumPct*100)}%)</td><td>sans plafond</td></tr></table>
+    <div class="small" style="margin:8px 0;">Montant recherché pour cette tranche: ${fmt(target)}. Répartition à la résolution: partage égal plafonné entre tous les souscripteurs de la tranche (chacun jusqu'à son propre maximum) — vous pourriez recevoir moins que votre maximum si d'autres souscrivent aussi. Aucun argent ne change de main avant la résolution (prochain lancer de dés).</div>
+    <label>Montant maximal que vous acceptez d'investir (en ${esc(state.unit)})</label>
+    <input type="number" step="0.01" min="0.01" id="mAbsSubMax" value="${existing?existing.maxAmount:''}" placeholder="ex. 300000">
+    <div class="small" id="mRetryStatus" style="margin:8px 0;color:var(--muted);"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      ${existing?`<button class="btn btn-ghost" id="mAbsSubRetirer">Retirer ma souscription</button>`:''}
+      <button class="btn btn-primary" id="mOk">${existing?'Mettre à jour':'Souscrire'}</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  
+  
+  
+  
+  if(existing){
+    document.getElementById('mAbsSubRetirer').addEventListener('click', async ()=>{
+      await cancelRevenueSwapSubscription(listingId, tranche, subscriberType, subscriberId);
+      closeModal();
+    });
+  }
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const maxAmount = parseFloat(document.getElementById('mAbsSubMax').value)||0;
+    if(!(maxAmount>0)){ alert('Le montant maximal doit être positif.'); return; }
+    await runModalActionWithRetry(()=>subscribeRevenueSwapTranche(listingId, tranche, subscriberType, subscriberId, maxAmount, {silent:true}));
+  });
+}
+
+
 
 
 
@@ -17755,8 +18552,8 @@ function renderSetup(){
       <label>Dette maximale empruntable par joueur au taux sans risque (en M$ — ex: 5 = 5M$)</label>
       <input type="number" step="0.01" min="0" id="setupBondShortMax" value="5">
 
-      <div class="setup-subhead">ETF de terrains</div>
-      <label>% de CHAQUE terrain réservé en permanence à la banque (jamais achetable directement — devient la matière première des ETF)</label>
+      <div class="setup-subhead">REIT de terrains</div>
+      <label>% de CHAQUE terrain réservé en permanence à la banque (jamais achetable directement — devient la matière première des REIT)</label>
       <input type="number" step="1" min="0" max="99" id="setupEtfReservePct" value="10"> %
 
       <div class="setup-subhead">Entreprises (CEO/joueurs)</div>

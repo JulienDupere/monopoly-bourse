@@ -5062,74 +5062,631 @@ function renderEntreprise(){
 }
 
 
+const PRODUCT_FAMILY_DEFS = [
+  {key:'flux', label:'Flux de loyers', color:'#047857'},
+  {key:'dette', label:'Dette', color:'var(--brick)'},
+  {key:'equity', label:'Capitaux propres', color:'var(--gold)'},
+  {key:'marche', label:'Marché — joueur', color:'var(--board)'},
+  {key:'option', label:'Options et stratégies', color:'#6D28D9'},
+  {key:'assur', label:'Assurance', color:'var(--metal)'},
+];
 
-function renderLexique(){
-  const term = (title, body) => `
-  <div style="margin:0 0 12px;padding:10px 14px;background:var(--cream);border:1px solid var(--line);border-radius:var(--radius-md);">
-    <div style="font-weight:700;color:var(--board);margin-bottom:4px;">${title}</div>
-    <div class="small" style="font-size:12px;line-height:1.6;color:var(--ink);">${body}</div>
-  </div>`;
-  const theme = title => `<div class="small" style="font-weight:600;margin-top:20px;font-size:13px;text-transform:uppercase;letter-spacing:0.4px;color:var(--board);">${title}</div>`;
+const PRODUCTS_MATRIX = [
+  
+  {f:'flux', nm:`Swap de loyers`, sub:`Un terrain précis contre un terrain précis`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
+    contre:`Une autre entreprise`, cout:`Aucun capital`, duree:`En années, fixée`,
+    plus:[
+      `Aucun capital, aucun frais, aucune dette au bilan.`,
+      `Transforme un revenu rare et gros en revenu petit et régulier.`,
+      `Le plafond est par événement, pas cumulatif — vous gardez la différence si le loyer dépasse.`,
+    ], moins:[
+      `Bilatéral : il faut convaincre quelqu'un.`,
+      `Les montants bougent entre la proposition et l'acceptation.`,
+      `Hypothéquer le terrain que vous avez mis dedans coupe le flux de votre côté — et votre réputation avec.`,
+    ], facts:[
+      `Plafond par visite optionnel`,
+      `Un lot compte comme un seul actif`,
+      `Ne se déclenche pas si le visiteur est le partenaire`,
+    ]},
+  {f:'flux', nm:`Swap général`, sub:`Tout votre portefeuille, présent et futur`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
+    contre:`Une autre entreprise`, cout:`Aucun capital`, duree:`En années, fixée`,
+    plus:[
+      `Capture les terrains que vous achèterez ensuite — un pari sur votre propre expansion.`,
+      `Ne révèle pas quel terrain vous jugez le meilleur.`,
+      `Se négocie pendant que votre portefeuille est encore modeste.`,
+    ], moins:[
+      `Vous ne savez pas ce que vous cédez au moment de signer.`,
+      `Accepter un général en face, c'est financer l'expansion d'un adversaire.`,
+      `Un swap spécifique l'emporte toujours sur lui pour le même terrain.`,
+    ], facts:[
+      `Aucun instantané à la signature`,
+      `Les deux côtés peuvent être généraux indépendamment`,
+    ]},
+  {f:'flux', nm:`Swap à budget cumulatif`, sub:`Sans durée — il s'arrête quand l'argent a fini de passer`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
+    contre:`Une autre entreprise`, cout:`Aucun capital`, duree:`Aucune — plafond total`,
+    plus:[
+      `Le seul contrat du jeu dont la valeur est connue à la signature. Un budget de 1 M$ vaut 1 M$, quel que soit le rythme des dés.`,
+      `Supprime le pari sur la durée.`,
+      `Le plafond par visite se combine avec le budget — le plus serré s'applique.`,
+    ], moins:[
+      `Les deux côtés s'épuisent indépendamment : vous arrêtez de toucher pendant que l'autre continue.`,
+      `Si la partie se termine avant, le solde n'est jamais versé.`,
+      `Toujours général des deux côtés — aucun terrain désigné.`,
+    ], facts:[
+      `Plafond cumulatif obligatoire par côté`,
+      `Se clôt tout seul quand les deux budgets sont atteints`,
+    ]},
+  {f:'flux', nm:`Accord de compensation`, sub:`On ne paie pas, on inscrit au registre`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
+    contre:`Une autre entreprise`, cout:`250 K$ chacun`, duree:`Jusqu'à la fin de l'année`,
+    plus:[
+      `Le seul financement qui n'injecte aucun cube et ne crée aucune dette.`,
+      `Réduit massivement les besoins de liquidité — seul le solde net se règle.`,
+      `Le netting se fait tout seul, aucune action à poser.`,
+    ], moins:[
+      `250 K$ de frais payés par chacune des deux entreprises, à l'acceptation.`,
+      `Aucune clôture manuelle : une fois signé, c'est jusqu'à la fin de l'année.`,
+      `L'intérêt s'applique au débiteur, quel qu'il soit — vous pouvez payer le taux que vous avez fixé.`,
+      `N'efface jamais la retenue due à un prêteur.`,
+    ], facts:[
+      `Taux d'intérêt fixé à la signature`,
+      `Règlement en comptant à la clôture annuelle`,
+      `À resigner chaque année`,
+    ]},
+  {f:'flux', nm:`Titrisation — l'émission`, sub:`Vendre aujourd'hui des loyers pas encore reçus`, poche:['entreprise'], fen:'semestre', dette:false, cubes:false,
+    contre:`Entreprises et joueurs`, cout:`Capital versé d'avance`, duree:`En années, fixée`,
+    plus:[
+      `Capital immédiat, aucune dette, aucun intérêt, aucune retenue — et votre cote de crédit ne bouge pas d'un cran.`,
+      `Sans recours : si les loyers ne viennent pas, l'investisseur perd et vous ne devez rien.`,
+      `Deux tranches, donc deux profils d'investisseur pour la même émission.`,
+      `Vous ne fixez que trois chiffres : les terrains, le pourcentage cédé et le montant recherché. Le découpage senior/junior est calculé, jamais choisi.`,
+    ], moins:[
+      `Au plus 60 % de votre part — le reste est réservé à la capacité de retenue de vos prêteurs.`,
+      `Terrains verrouillés : ni vente de part, ni hypothèque, ni nouveau swap dessus.`,
+      `Annulée d'office si aucun souscripteur senior ne se présente.`,
+      `Vous n'avez plus intérêt à construire sur un terrain dont vous avez cédé le revenu.`,
+      `Publication et résolution dans le même semestre — une émission ratée est à refaire en entier.`,
+    ], facts:[
+      `Un terrain hypothéqué ne peut pas être titrisé`,
+      `La junior non souscrite reste sur les bras de l'émetteur`,
+      `Un lot regroupé compte pour un seul actif`,
+    ]},
+  {f:'flux', nm:`Tranche senior`, sub:`Le côté investisseur, servi en premier`, poche:['entreprise','joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`L'entreprise émettrice`, cout:`Le capital souscrit`, duree:`Celle de l'émission`,
+    plus:[
+      `Servie avant la junior sur chaque loyer encaissé.`,
+      `La capacité est calculée à espérance − 1 écart-type : environ 84 % de chances que les loyers suffisent.`,
+      `Prime de 10 % de base ajoutée au capital à rembourser.`,
+    ], moins:[
+      `Rendement plafonné : capital + prime, jamais un dollar de plus, même si les loyers explosent.`,
+      `La prime double quand l'émission remplit la capacité — et ce doublement est précisément le signal que le risque monte.`,
+      `Un prêteur de l'émetteur passe encore devant vous sur le même loyer.`,
+      `Sans recours : si les loyers ne viennent pas, personne ne vous doit rien.`,
+    ], facts:[
+      `Prime = 10 % × (1 + utilisation de la capacité)`,
+      `Souscription par montant maximal déclaré`,
+      `Sans souscripteur senior, toute l'émission est annulée`,
+    ]},
+  {f:'flux', nm:`Tranche junior`, sub:`Premier rang de perte, aucun plafond de gain`, poche:['entreprise','joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`L'entreprise émettrice`, cout:`Le capital souscrit`, duree:`Celle de l'émission`,
+    plus:[
+      `Aucun plafond : tout ce qui reste après la senior vous revient.`,
+      `Si les loyers dépassent les attentes, c'est vous qui encaissez tout le surplus.`,
+      `Le seul instrument du jeu dont le rendement n'est borné ni par un taux, ni par une prime, ni par un prix de rappel.`,
+    ], moins:[
+      `Premier rang de perte : vous ne touchez rien tant que la senior n'est pas entièrement servie.`,
+      `Aucune prime contractuelle — votre rendement est un résidu, pas une promesse.`,
+      `Non souscrite, elle est retenue par l'émetteur, qui redevient son propre investisseur.`,
+      `Sans recours, comme la senior, mais sans le coussin.`,
+    ], facts:[
+      `Résiduel après la senior, à chaque loyer`,
+      `Montant junior = montant recherché − capacité senior`,
+      `Aucune prime fixée à l'émission`,
+    ]},
+  {f:'flux', nm:`Vente de part de terrain`, sub:`Sortir un actif du bilan, pour de bon`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
+    contre:`Une entreprise, ou la banque`, cout:`Prix librement convenu`, duree:`Immédiate, définitive`,
+    plus:[
+      `Se fait à n'importe quel lancer — aucune fenêtre à attendre.`,
+      `Entre deux entreprises, le prix est entièrement libre : c'est la seule transaction foncière vraiment négociée du jeu.`,
+      `Aucun minimum quand l'acheteur est une autre entreprise.`,
+      `La sortie propre pour un terrain dont vous ne financerez jamais la construction.`,
+    ], moins:[
+      `Vendre à la banque subit une double décote : 25 % de majoration, puis 10 % de pénalité de liquidation sur la valeur intrinsèque.`,
+      `La banque impose un pourcentage minimal par vente, sauf si vous cédez la totalité de votre part.`,
+      `Bloquée si la part est hypothéquée, ou si le revenu du terrain a été titrisé.`,
+      `Définitive : aucun droit de rachat, aucun retour en arrière.`,
+    ], facts:[
+      `Prix suggéré à la banque = valeur intrinsèque × 0,75 × 0,90`,
+      `Un lot regroupé se vend par le lot`,
+      `L'acheteur est toujours une entreprise, jamais un joueur en direct`,
+    ]},
+  
+  {f:'dette', nm:`Hypothèque`, sub:`Le plus rapide, et le plus cher`, poche:['entreprise'], fen:'libre', dette:true, cubes:false,
+    contre:`La banque`, cout:`35 % ajusté par la cote`, duree:`Aucune — remboursable`,
+    plus:[
+      `Immédiat, aucune négociation, aucune contrepartie à convaincre.`,
+      `Vous récupérez 50 % du prix de base en liquidités sur-le-champ.`,
+      `Remboursable quand vous voulez.`,
+    ], moins:[
+      `Le taux le plus élevé du jeu — 35 %, ajusté à la hausse si votre cote est mauvaise.`,
+      `La part hypothéquée cesse de rapporter du loyer.`,
+      `Compte dans votre dette, donc dégrade votre cote et renchérit tout le reste.`,
+      `Hypothéquer un terrain sous swap ou sous titrisation est bloqué.`,
+    ], facts:[
+      `Quotité de 50 %`,
+      `Intérêt à la fin de l'année financière`,
+    ]},
+  {f:'dette', nm:`Obligation d'entreprise`, sub:`Vous publiez un besoin, le marché fixe les conditions`, poche:['entreprise'], fen:'semestre', dette:true, cubes:false,
+    contre:`Un joueur, encaisse perso`, cout:`Multiple 1 à 2,5×`, duree:`Jusqu'au remboursement`,
+    plus:[
+      `Vous ne fixez qu'un chiffre — le capital. Les prêteurs proposent le reste et vous choisissez.`,
+      `Aucun intérêt à date fixe : ça se rembourse sur les loyers, quand ils rentrent.`,
+      `Une demande ne coûte rien tant qu'elle est ouverte.`,
+    ], moins:[
+      `Retenue de 5 à 40 % sur vos loyers, et ce plafond est cumulatif sur tous vos prêts.`,
+      `Aucune échéance : ni vous ni le prêteur ne pouvez sortir avant remboursement complet.`,
+      `La demande expire au lancer suivant si personne ne la prend.`,
+      `Le prêteur passe devant la titrisation sur le même loyer.`,
+    ], facts:[
+      `Plafond 5 M$ de principal cumulé`,
+      `Garantie ou non garantie`,
+      `Le CEO ne peut pas prêter à sa propre entreprise`,
+    ]},
+  {f:'dette', nm:`Subvention d'avance`, sub:`Vendre son salaire de la case Départ`, poche:['entreprise'], fen:'libre', dette:true, cubes:false,
+    contre:`La banque`, cout:`10 % ajusté par rang`, duree:`Jusqu'au passage`,
+    plus:[
+      `Instantané, aucune négociation.`,
+      `Moins cher qu'une hypothèque.`,
+      `Ne touche à aucun terrain.`,
+    ], moins:[
+      `Plafonné à 5 M$ par entreprise.`,
+      `Chaque avance supplémentaire est actualisée plus durement que la précédente.`,
+      `Vous mangez un revenu qui allait tomber tout seul.`,
+    ], facts:[
+      `Taux ajusté par la cote de crédit`,
+      `Se rembourse au passage sur la case Départ`,
+    ]},
+  {f:'dette', nm:`Prêt de dernier recours`, sub:`Le seul produit qui vous coûtera la partie`, poche:['entreprise'], fen:'libre', dette:true, cubes:true,
+    contre:`La banque`, cout:`2× le capital`, duree:`Jusqu'au remboursement`,
+    plus:[
+      `Il existe. C'est à peu près tout ce qu'on peut en dire de positif.`,
+      `Aucune condition, aucun plafond d'endettement à respecter.`,
+    ], moins:[
+      `50 % de tous vos loyers retenus, jusqu'à deux fois le capital.`,
+      `−20 % sur votre cours, immédiatement et définitivement.`,
+      `Sortie publique du CEO définitivement indisponible.`,
+      `Effets baissiers durablement amplifiés en bourse. Annonce majeure à toute la table.`,
+    ], facts:[
+      `Se sert après les porteurs de titrisation`,
+      `Conséquences permanentes, jamais réinitialisées`,
+    ]},
+  
+  {f:'equity', nm:`Émission d'actions`, sub:`Le financement le plus propre au bilan`, poche:['entreprise'], fen:'semestre', dette:false, cubes:true,
+    contre:`La banque`, cout:`Cubes rouges`, duree:`Aucune`,
+    plus:[
+      `Aucune dette, aucun intérêt, aucune retenue — et votre cote ne bouge pas.`,
+      `Personne n'est réellement dilué : le nombre de parts ne change pas.`,
+      `La banque finance l'opération, comme à l'IPO.`,
+    ], moins:[
+      `Plafonnée à 10 % des parts de départ, net des rachats déjà faits.`,
+      `Injecte toujours 1 à 2 cubes rouges, plus l'impact de taille — même sur une quantité minuscule.`,
+      `À éviter quand votre cours est bas : vous levez moins pour la même pression.`,
+    ], facts:[
+      `Aux frontières de semestre seulement`,
+      `Accumulateur de cubes dédié aux actions corporatives`,
+    ]},
+  {f:'equity', nm:`Rachat d'actions`, sub:`Acheter du vert avec de la trésorerie`, poche:['entreprise'], fen:'semestre', dette:false, cubes:true,
+    contre:`La banque`, cout:`Quantité × cours`, duree:`Aucune`,
+    plus:[
+      `Injecte des cubes verts — pression haussière sur votre propre cours.`,
+      `Aucun plafond.`,
+      `Devient une arme défensive quand quelqu'un accumule vos parts.`,
+    ], moins:[
+      `Sort du comptant réel de votre trésorerie.`,
+      `Peut vous mettre en encaisse négative — ce qui vous bloque au semestre suivant.`,
+      `Restaure le plafond d'émission, ce qui a déjà servi à autre chose.`,
+    ], facts:[
+      `Symétrique de l'émission`,
+      `Encaisse négative permise sauf pour une enchère REIT`,
+    ]},
+  {f:'equity', nm:`Parts privilégiées`, sub:`Un revenu contractuel, plafonné et rachetable`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`Les joueurs, encaisse perso`, cout:`Dividende annuel`, duree:`Jusqu'au rappel`,
+    plus:[
+      `Le capital levé n'entre pas dans votre dette — votre ratio s'améliore et votre cote monte.`,
+      `Presque toujours neutre ou positif à court terme.`,
+      `Un marché secondaire existe, à n'importe quel lancer.`,
+    ], moins:[
+      `Le dividende se sert avant vos actionnaires ordinaires.`,
+      `Un versement sauté devient un arriérage au passif, qui fait monter votre taux hypothécaire.`,
+      `Plafond de 5 M$ cumulatif pour toute la partie — un rachat ne libère rien.`,
+      `Le CEO ne peut en détenir aucune, ni neuve ni d'occasion.`,
+    ], facts:[
+      `Dividende annuel, distinct du semestriel ordinaire`,
+      `Rachetables au prix de rappel`,
+      `Valeur plafonnée à min(cours, prix de rappel)`,
+    ]},
+  {f:'equity', nm:`Marché secondaire des privilégiées`, sub:`Sortir d'une position sans attendre le rappel`, poche:['joueur'], fen:'libre', dette:false, cubes:false,
+    contre:`Un autre joueur`, cout:`min(cours, prix de rappel)`, duree:`Immédiate`,
+    plus:[
+      `Se fait à n'importe quel lancer, contrairement à la souscription primaire.`,
+      `Le prix n'est jamais négocié : aucun marchandage, aucune asymétrie d'information sur la valeur.`,
+      `Achat partiel possible — l'annonce se vide progressivement.`,
+      `La seule façon de sortir avant que l'entreprise ne rappelle la tranche.`,
+    ], moins:[
+      `Le prix appliqué est celui en vigueur au moment de l'achat, pas celui affiché à l'annonce.`,
+      `Le CEO ne peut pas racheter ses propres parts privilégiées, même d'occasion.`,
+      `Aucun mouvement de trésorerie de l'entreprise : elle ne sait même pas que ça change de mains.`,
+      `Sans acheteur, l'annonce ne fait rien — il n'y a pas de teneur de marché.`,
+    ], facts:[
+      `Annonce retirable à tout moment par le vendeur`,
+      `Le vendeur ne peut pas acheter sa propre annonce`,
+      `Prix plafonné par le prix de rappel`,
+    ]},
+  
+  {f:'marche', nm:`Achat et vente d'actions`, sub:`La position longue, la plus simple`, poche:['joueur'], fen:'semestre', dette:false, cubes:true,
+    contre:`Contrepartie de marché`, cout:`Le prix des parts`, duree:`Libre`,
+    plus:[
+      `Perte plafonnée à votre mise, gain illimité.`,
+      `Vous encaissez les dividendes tant que vous détenez au versement.`,
+      `Sert de couverture à un call écrit.`,
+    ], moins:[
+      `Injecte des cubes si la transaction franchit un palier de taille.`,
+      `Interdit sur votre propre entreprise — délit d'initié.`,
+      `Ne compte pas comme garantie si c'est votre propre entreprise.`,
+    ], facts:[
+      `Coût d'acquisition moyen pondéré`,
+      `Marché ouvert un lancer sur trois`,
+    ]},
+  {f:'marche', nm:`Vente à découvert`, sub:`Gagner quand les autres perdent`, poche:['joueur'], fen:'semestre', dette:false, cubes:true,
+    contre:`Contrepartie de marché`, cout:`3 % + prime de rareté`, duree:`Libre, mais coûteuse`,
+    plus:[
+      `Le seul moyen de profiter d'une baisse.`,
+      `Vous encaissez le produit immédiatement.`,
+      `Un pari sur le bilan plutôt que sur l'enthousiasme.`,
+    ], moins:[
+      `Perte illimitée — le miroir coupe au mauvais endroit.`,
+      `Frais d'emprunt prélevés à chaque lancer, et la prime grimpe quand tout le monde est short.`,
+      `Marge de maintien de 30 % du notionnel courant, qui grossit quand le cours monte.`,
+      `L'appel de marge ferme votre plus grosse position, sans prévenir.`,
+    ], facts:[
+      `Taux sans risque + prime de rareté (base 2 %/an)`,
+      `Vos parts CEO ne comptent pas dans la marge`,
+      `Bloquée sur une entreprise en prêt de dernier recours`,
+    ]},
+  {f:'marche', nm:`Bons gouvernementaux`, sub:`Placer, emprunter, et garantir`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`La banque`, cout:`3 %/an`, duree:`Libre`,
+    plus:[
+      `Sans risque, sans décote, valeur toujours connue.`,
+      `Couvrent un put écrit comme de l'encaisse — tout en portant intérêt.`,
+      `On peut aussi les vendre à découvert, donc emprunter au taux sans risque.`,
+    ], moins:[
+      `Le rendement le plus bas du jeu, par définition.`,
+      `Un solde négatif ne garantit rien du tout.`,
+      `Emprunt plafonné à 5 M$.`,
+    ], facts:[
+      `Taux sans risque, croissant au fil de la partie`,
+      `Retrait bridé si des bons sont engagés en garantie`,
+    ]},
+  {f:'marche', nm:`REIT de terrains`, sub:`Un panier, une enchère hollandaise par an`, poche:['joueur'], fen:'annee', dette:false, cubes:false,
+    contre:`La banque`, cout:`Le prix de l'enchère`, duree:`Jusqu'à revente`,
+    plus:[
+      `Une exposition à tout un groupe de couleur sans en posséder un seul terrain.`,
+      `L'enchère hollandaise laisse le prix descendre jusqu'au premier preneur.`,
+      `Aucun entretien, aucune construction à financer.`,
+    ], moins:[
+      `Une seule enchère par année financière — si vous la manquez, vous attendez.`,
+      `La banque garde une réserve permanente de 10 % qui ne se rachète jamais.`,
+      `Premier clic gagnant : deux appareils simultanés peuvent se marcher dessus.`,
+    ], facts:[
+      `Quatre REIT, un par groupe de couleur`,
+      `Réserve du REIT servie avant les copropriétaires`,
+      `Le code interne dit encore ETF — même chose`,
+    ]},
+  
+  {f:'option', nm:`Achat de call ou de put`, sub:`Le droit, pas le devoir — et rien à immobiliser`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`La banque`, cout:`La prime, payée d'avance`, duree:`1 à 3 semestres`,
+    plus:[
+      `Perte plafonnée à la prime, quoi qu'il arrive.`,
+      `Aucune marge exigée : un acheteur n'est jamais appelé.`,
+      `Un contrat porte 100 parts — l'exposition sans le capital.`,
+      `Règlement physique : vous recevez ou livrez de vraies parts à l'exercice.`,
+    ], moins:[
+      `Un plancher de 0,5 % du cours s'applique à l'achat : une option quasi sans valeur reste chère.`,
+      `La valeur temps fond, de plus en plus vite à l'approche de l'échéance.`,
+      `Achat de put interdit sur une entreprise en prêt de dernier recours.`,
+      `Le marché n'ouvre qu'un lancer sur trois — vous ne choisissez pas votre moment.`,
+    ], facts:[
+      `Prime Black-Scholes`,
+      `Cinq strikes dans la chaîne`,
+      `Le CEO ne peut trader aucune option sur sa propre entreprise`,
+    ]},
+  {f:'option', nm:`Protective put`, sub:`Un plancher sous un bloc que vous ne voulez pas vendre`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`La banque`, cout:`La prime, en pure perte si rien ne bouge`, duree:`1 à 3 semestres`,
+    plus:[
+      `Fixe un plancher de valeur sans vendre les parts.`,
+      `Vous gardez les dividendes et tout le potentiel de hausse au-dessus de la prime.`,
+      `Perte totale bornée à (cours d'achat − strike + prime), connue d'avance.`,
+      `Le seul moyen de rester exposé à une entreprise dont vous redoutez le prochain semestre.`,
+    ], moins:[
+      `La prime est un coût sec si le cours monte ou stagne.`,
+      `Ne protège que par tranches de 100 parts — un bloc de 150 laisse 50 parts à nu.`,
+      `Indisponible si l'entreprise a pris un prêt de dernier recours : exactement le moment où vous en voudriez un.`,
+      `Répété semestre après semestre, il coûte plus cher que les baisses qu'il évite.`,
+    ], facts:[
+      `C'est un achat de put ordinaire, adossé à des parts détenues`,
+      `Exemple type : 100 parts à 100 $, strike 90 $, prime 58 $`,
+    ]},
+  {f:'option', nm:`Covered call`, sub:`Faire payer un bloc dormant`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`La banque`, cout:`Aucune marge — les parts suffisent`, duree:`1 à 3 semestres`,
+    plus:[
+      `Aucune marge : chaque contrat écrit est couvert par 100 parts réellement détenues.`,
+      `La prime est encaissée immédiatement, en brut, sans plancher.`,
+      `Transforme un bloc que vous gardez de toute façon en revenu semestriel.`,
+    ], moins:[
+      `Plafonne votre gain au strike — la hausse au-delà appartient à l'acheteur.`,
+      `Vendre les parts sous-jacentes redécouvre la position à nu, et la marge réapparaît d'un coup.`,
+      `La couverture est calculée position par position : un même bloc peut sembler couvrir deux calls à la fois.`,
+      `Assigné, vous livrez de vraies parts, que vous vouliez les garder ou non.`,
+    ], facts:[
+      `1 contrat couvert = 100 parts détenues`,
+      `Parts comptées via l'actionnariat réel`,
+      `Vos parts de CEO ne comptent pas`,
+    ]},
+  {f:'option', nm:`Cash-secured put`, sub:`Être payé pour attendre un point d'entrée`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`La banque`, cout:`Encaisse ou bons immobilisés`, duree:`1 à 3 semestres`,
+    plus:[
+      `Aucune marge si l'encaisse couvre strike × 100 par contrat.`,
+      `Les bons gouvernementaux comptent comme du cash — la garantie continue de porter intérêt pendant ce temps.`,
+      `Si le put expire sans valeur, la prime est un gain net sur de l'argent qui dormait.`,
+      `Si on vous assigne, vous achetez au prix où vous vouliez acheter.`,
+    ], moins:[
+      `Un solde de bons négatif ne couvre rien : de l'argent emprunté n'est pas sa propre garantie.`,
+      `Si le cours s'effondre bien sous le strike, vous achetez quand même au strike.`,
+      `Couverture calculée position par position — plusieurs puts peuvent s'appuyer sur la même encaisse.`,
+      `L'encaisse immobilisée n'est plus disponible pour une enchère REIT ou un appel de marge ailleurs.`,
+    ], facts:[
+      `Couverture = (encaisse + bons positifs) ÷ (strike × 100)`,
+      `Règlement physique : vous recevez les parts`,
+    ]},
+  {f:'option', nm:`Écriture nue`, sub:`La prime intégrale, et tout le risque avec`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`La banque`, cout:`30 % du notionnel en valeur nette`, duree:`1 à 3 semestres`,
+    plus:[
+      `La prime brute, sans plancher, encaissée d'avance.`,
+      `Aucun capital versé : seule la marge est exigée, et elle reste votre argent.`,
+      `Le seul moyen d'encaisser une prime sans détenir ni parts ni encaisse correspondante.`,
+    ], moins:[
+      `Marge de maintien de 30 % du notionnel nu, recalculée au cours COURANT — elle grossit contre vous.`,
+      `Un call nu a une perte illimitée.`,
+      `L'appel de marge ferme votre plus grosse position, sans prévenir et sans vous demander laquelle.`,
+      `Vente de call interdite sur une entreprise en prêt de dernier recours.`,
+    ], facts:[
+      `Marge 30 % du notionnel courant`,
+      `Portion nue = contrats écrits − contrats couverts`,
+    ]},
+  {f:'option', nm:`Bull spread`, sub:`Deux calls : on paie moins, on gagne moins`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`La banque`, cout:`Débit net (ou crédit net à la vente)`, duree:`1 à 3 semestres`,
+    plus:[
+      `Coûte nettement moins qu'un call sec : la jambe écrite finance la jambe achetée.`,
+      `La jambe longue borne la marge exigée sur la jambe écrite — plus de sur-immobilisation.`,
+      `Les deux strikes sont à votre choix parmi les cinq de la chaîne.`,
+      `La garde d'encaisse ne porte que sur le débit net, pas sur le coût brut.`,
+    ], moins:[
+      `Gain plafonné par l'écart entre les deux strikes.`,
+      `Règlement toujours en cash — jamais de livraison de parts, contrairement aux options simples.`,
+      `Un appel de marge peut fermer une seule jambe et vous laisser l'autre, seule et nue.`,
+      `Refusé en bloc si une jambe serait un short call sur une entreprise en prêt de dernier recours.`,
+    ], facts:[
+      `Achat = long call bas + short call haut`,
+      `Deux jambes, même nombre de contrats`,
+      `Jamais fusionné avec une position simple existante`,
+    ]},
+  {f:'option', nm:`Bear spread`, sub:`Le pari baissier à perte bornée`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`La banque`, cout:`Débit net (ou crédit net à la vente)`, duree:`1 à 3 semestres`,
+    plus:[
+      `Joue la baisse avec une perte bornée — contrairement à la vente à découvert.`,
+      `Construit sur des puts, donc instrument réellement distinct : un bull spread vendu n'est pas un bear spread acheté.`,
+      `Aucun frais d'emprunt à chaque lancer, contrairement au short.`,
+      `La jambe longue borne la marge de la jambe écrite.`,
+    ], moins:[
+      `Gain plafonné par l'écart de strikes — la baisse au-delà ne vous rapporte rien.`,
+      `Règlement en cash uniquement.`,
+      `Même risque de jambe orpheline après un appel de marge.`,
+      `Refusé en bloc si une jambe serait un long put sur une entreprise en prêt de dernier recours.`,
+    ], facts:[
+      `Achat = long put haut + short put bas`,
+      `Un flux net nul à l'ouverture est refusé`,
+    ]},
+  {f:'option', nm:`ATM straddle`, sub:`Parier sur l'amplitude, pas sur la direction`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
+    contre:`La banque`, cout:`Deux primes (payées ou encaissées)`, duree:`1 à 3 semestres`,
+    plus:[
+      `Le seul produit qui gagne peu importe le sens du mouvement.`,
+      `Aucun strike à choisir : toujours le strike ATM courant, calculé au moment de l'ouverture.`,
+      `Idéal avant un semestre où vous savez qu'il va se passer quelque chose, sans savoir quoi.`,
+    ], moins:[
+      `Deux primes à payer : il faut un mouvement ample pour seulement rentrer dans ses frais.`,
+      `Vendu, c'est une exposition nue des deux côtés à la fois.`,
+      `Règlement en cash uniquement.`,
+      `Un marché calme le vide de sa valeur des deux côtés en même temps.`,
+    ], facts:[
+      `Long call ATM + long put ATM (ou l'inverse écrit)`,
+      `Strike figé à l'ouverture, jamais réajusté`,
+    ]},
+  
+  {f:'assur', nm:`Assurance de loyer`, sub:`Payer une prime pour ne pas payer un loyer`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
+    contre:`Une entreprise ou la banque`, cout:`Prime + 25 % de majoration`, duree:`Semestre ou année`,
+    plus:[
+      `Transforme un risque de gros loyer en dépense connue d'avance.`,
+      `Se souscrit à n'importe quel lancer, contrairement à presque tout le reste.`,
+      `Un marché de reprise permet de devenir l'assureur d'un contrat existant.`,
+    ], moins:[
+      `La majoration de 25 % fait que l'assurance coûte structurellement plus que le risque.`,
+      `Le terme annuel n'est signable qu'une fois sur six lancers, le semestriel deux fois.`,
+      `Une police n'est plus annulable dès qu'un lancer de dés a eu lieu.`,
+      `Assurer en permanence coûte plus cher, sur la durée, que les sinistres évités.`,
+    ], facts:[
+      `Prime = probabilité d'atterrissage × exposition`,
+      `Franchise paramétrable`,
+      `L'exposition exclut ce que personne ne peut encaisser`,
+    ]},
+  {f:'assur', nm:`Assurance sous-standard`, sub:`Un seul lancer, à prix fort`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
+    contre:`Une entreprise ou la banque`, cout:`Majoration de 100 %`, duree:`Un seul lancer`,
+    plus:[
+      `Disponible les quatre lancers où les deux autres termes sont fermés.`,
+      `Couvre exactement le risque du moment, pas un terme entier.`,
+      `Exclut les copropriétaires en prison du calcul — donc moins cher quand ils y sont.`,
+    ], moins:[
+      `Majoration de 100 % — le double du risque actuariel.`,
+      `Terrains seulement : aucune case taxe.`,
+      `Un seul lancer couvert, puis elle expire toute seule.`,
+      `Les terrains hors de portée d'un jet ne sont même pas proposés.`,
+    ], facts:[
+      `Le sinistre, s'il survient, survient maintenant`,
+      `Expiration automatique`,
+    ]},
+  {f:'assur', nm:`Devenir l'assureur`, sub:`Reprendre une police que la banque porte déjà`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
+    contre:`La banque, ou l'assureur en place`, cout:`Aucun — vous encaissez la prime`, duree:`Le reste du contrat repris`,
+    plus:[
+      `Vous encaissez la prime d'un contrat que vous n'avez pas eu à vendre.`,
+      `Se fait à n'importe quel lancer, élément par élément, à prix live.`,
+      `La banque cède ce qu'elle assure quelle que soit l'ancienneté du contrat.`,
+      `Le seul moyen de se mettre du côté de l'assureur sans convaincre personne de s'assurer.`,
+    ], moins:[
+      `Vous héritez du sinistre, pas seulement de la prime — et c'est un sinistre que vous n'avez pas tarifé.`,
+      `Impossible de reprendre un contrat où votre entreprise est déjà l'assurée.`,
+      `Le contrat groupé entier n'est plus reprenable : ligne par ligne seulement.`,
+      `Reprendre juste avant l'atterrissage, c'est acheter la perte au prix de la prime.`,
+    ], facts:[
+      `Reprise individuelle à prix live`,
+      `Le sous-standard a sa propre reprise`,
+      `L'ancien assureur restitue la prime`,
+    ]},
+];
 
+let PRODUITS_FILTER_STATE = {poche:new Set(), fen:new Set(), dette:new Set()};
+
+function produitsFenLabel(fen){
+  return {libre:'Tout lancer', semestre:'Semestres', annee:`Fin d'année`}[fen] || fen;
+}
+function produitsPocheLabel(poche){
+  if(poche.length>1) return `Trésorerie d'entreprise ou encaisse personnelle`;
+  return poche[0]==='entreprise' ? `Trésorerie d'entreprise` : `Encaisse personnelle`;
+}
+function produitsBadgesHtml(p){
+  const badges = p.poche.map(v=>`<span class="pm-badge pm-badge-outline">${v==='entreprise'?'entreprise':'joueur'}</span>`);
+  if(p.fen==='libre') badges.push(`<span class="pm-badge" style="background:#047857;">tout lancer</span>`);
+  else badges.push(`<span class="pm-badge" style="background:var(--board);">${p.fen==='semestre'?'semestre':`fin d'année`}</span>`);
+  if(p.dette) badges.push(`<span class="pm-badge" style="background:var(--brick);">dette</span>`);
+  if(p.cubes) badges.push(`<span class="pm-badge" style="background:var(--gold);">cubes</span>`);
+  return badges.join('');
+}
+function produitsRowHtml(p){
+  const list = arr => arr.map(x=>`<li>${x}</li>`).join('');
   return `
-  <div class="section-title">Lexique</div>
+  <details class="pm-row" data-poche="${p.poche.join(' ')}" data-fen="${p.fen}" data-dette="${p.dette?'oui':'non'}">
+    <summary class="pm-row-summary">
+      <span class="pm-col pm-col-name"><span class="pm-name">${p.nm}</span><span class="pm-sub">${p.sub}</span></span>
+      <span class="pm-col pm-col-contre">${p.contre}</span>
+      <span class="pm-col pm-col-cout">${p.cout}</span>
+      <span class="pm-col pm-col-duree">${p.duree}</span>
+      <span class="pm-badges">${produitsBadgesHtml(p)}</span>
+    </summary>
+    <div class="pm-detail">
+      <div class="pm-detail-col pm-plus"><div class="pm-detail-title">Avantages</div><ul>${list(p.plus)}</ul></div>
+      <div class="pm-detail-col pm-moins"><div class="pm-detail-title">Désavantages</div><ul>${list(p.moins)}</ul></div>
+      <div class="pm-detail-col pm-facts"><div class="pm-detail-title">Points de règle</div><ul>${list(p.facts)}</ul></div>
+    </div>
+  </details>`;
+}
+function produitsFamilyHtml(fam){
+  const rows = PRODUCTS_MATRIX.filter(p=>p.f===fam.key);
+  return `
+  <div class="pm-family" data-family="${fam.key}">
+    <div class="pm-family-header" style="color:${fam.color};">
+      <span class="pm-family-title">${fam.label}</span>
+      <span class="pm-family-line" style="background:${fam.color};"></span>
+      <span class="pm-family-count" data-family-count="${fam.key}">${rows.length}</span>
+    </div>
+    <div class="pm-family-rows" style="border-left:3px solid ${fam.color};">
+      ${rows.map(p=>produitsRowHtml(p)).join('')}
+    </div>
+  </div>`;
+}
+function produitsFilterBarHtml(){
+  const grp = (key, label, options) => `
+    <div class="pm-filter-group">
+      <span class="pm-filter-label">${label}</span>
+      ${options.map(([val,txt])=>`<button type="button" class="pm-filter-btn" data-filter-group="${key}" data-filter-value="${val}">${txt}</button>`).join('')}
+    </div>`;
+  return `
+  <div class="pm-filterbar">
+    ${grp('poche', 'Qui paie', [['entreprise', `Trésorerie d'entreprise`],['joueur','Encaisse personnelle']])}
+    ${grp('fen', 'Disponibilité', [['libre','Tout lancer'],['semestre','Semestres'],['annee',`Fin d'année`]])}
+    ${grp('dette', 'Bilan', [['oui','Crée une dette'],['non','Aucune dette']])}
+    <button type="button" class="btn btn-ghost btn-sm" id="pmFilterReset">Réinitialiser les filtres</button>
+  </div>
+  <div class="small" id="pmResultsCount" style="margin:6px 0 14px;color:var(--muted);"></div>`;
+}
 
-  ${theme('Valeur d’une entreprise')}
-  ${term('Valeur comptable', `Estimation comptable de ce que possède l'entreprise: <b>trésorerie + valeur intrinsèque de son immobilier + valeur de ses parts de REIT</b>. Ce n'est PAS un « prix de l'action » — c'est une simple addition de ce qui est déjà au bilan, jamais influencée par l'offre et la demande.`)}
-  ${term('Valeur comptable par part', `Valeur comptable divisée par le nombre total de parts de l'entreprise (émises ou non). Sert de référence de prix pour un rachat/une vente de parts, mais n'est pas garantie comme prix d'exécution réel.`)}
-  ${term(`Prix de l'action`, `Le prix réel de marché d'une entreprise — visible dans le classement des entreprises (onglet Résumé), à côté de sa valeur comptable (équité) pour comparaison ; les deux peuvent diverger, exactement comme dans un vrai marché boursier. Il évolue selon des facteurs réels: le type de compagnie choisi à la fondation (voir « Types d'entreprise » plus bas), la régularité des dividendes versés, et la santé financière réelle de l'entreprise (endettement, spirale de détresse). Comme pour le reste du marché boursier, aucun chiffre exact ni mécanisme précis n'est communiqué — seul le résultat (le prix affiché) se voit.`)}
-  ${term('Parts émises / IPO', `Chaque entreprise a un nombre total de parts fixé à sa fondation. Le CEO fondateur en achète un pourcentage fixé pour la partie (par défaut 30%), pour un montant proportionnel à la valorisation totale de fondation; la banque finance automatiquement le reste (introduction en bourse / IPO, onglet Administration) au même prix par part, pour que toutes les entreprises démarrent avec la même valorisation totale.`)}
-  ${term('Actionnariat', `Répartition des parts d'une entreprise entre ses actionnaires (joueurs, ou la banque tant que l'IPO n'est pas complétée). Ne donne pas de droit de gestion — seul le CEO agit au nom de l'entreprise.`)}
-
-  ${theme('Types d’entreprise')}
-  ${COMPANY_TYPES.map(t=>term(t.label, esc(COMPANY_TYPE_GUIDELINES[t.key]))).join('')}
-  ${term('Spirale de détresse (tous types)', esc(COMPANY_TYPE_GUIDELINE_UNIVERSAL))}
-
-  ${theme('Marché boursier')}
-  ${term('Dividende', `N'importe quel type d'entreprise peut annoncer un dividende — un montant total choisi par le CEO (bouton « 💎 Annoncer un dividende », menu ☰ Actions, Mon Entreprise), sorti de la trésorerie de l'entreprise dès l'annonce mais VERSÉ DE FAÇON DIFFÉRÉE (au lancer de dés convenu, pas immédiatement) et réparti au prorata entre ses VRAIS actionnaires au moment de l'annonce uniquement (jamais la portion de parts encore détenue par la banque en attente d'IPO). Ce qui compte pour la confiance du marché n'est PAS le montant brut d'un seul versement, mais la RÉGULARITÉ des versements au fil des semestres — une entreprise qui verse un dividende stable ou croissant semestre après semestre inspire davantage confiance qu'une autre qui attend la fin de partie pour tout distribuer d'un coup, ou qui verse de façon irrégulière. Aucun chiffre exact (montants, fourchettes, effet précis sur le prix) n'est jamais communiqué — comme pour le reste du marché boursier, seul le résultat (le prix affiché) se voit.`)}
-  ${term('Parts privilégiées', `Un troisième mode de financement par équité, en plus de l'émission/du rachat d'actions ordinaires (voir « Émission de nouvelles actions »/« Rachat d'actions », menu ☰ Actions) — mais SOUSCRIT PAR LES JOUEURS, pas par l'entreprise elle-même. Le CEO fixe librement le nombre de parts offertes, le taux de dividende préférentiel ANNUEL, et un prix de rachat (callable). Un avis est envoyé à tous les joueurs, qui ont jusqu'au prochain lancer de dés pour accepter ou refuser (bandeau du Portefeuille) — les parts offertes sont distribuées à PART ÉGALE entre tous les joueurs ayant accepté. La valeur d'une part détenue suit le cours de l'action ordinaire, PLAFONNÉE au prix de rachat — un gain et une perte restent possibles. Chaque année financière, l'entreprise doit décider de verser (ou non) son dividende préférentiel (montant affiché dans le pop-up de résumé de tour et dans Mon Entreprise) — un dividende non versé avant la fin de l'année financière suivante devient un arriérage permanent, qui bloque tout dividende ORDINAIRE tant qu'il n'est pas réglé. L'entreprise peut racheter (call) des parts à tout moment, au prix de rachat fixé à l'émission. Les parts détenues peuvent aussi se revendre entre joueurs, sur un marché secondaire, au prix courant.`)}
-
-  ${theme('Horloge de partie')}
-  ${term('Lancer / évènement', `Un « lancer » compte pour 1, que ce soit le lancer solo d'une seule entreprise ou un lancer « pour toutes » déclenché par le mécanisme Prêt (toutes les entreprises non emprisonnées lancent en même temps) — le nombre d'entreprises qui roulent en même temps ne change rien au compte.`)}
-  ${term('Semestre / année financière', `3 lancers = 1 semestre, 2 semestres (donc 6 lancers) = 1 année financière. L'année et le semestre en cours sont affichés en haut de l'application, à côté du code de partie.`)}
-  ${term('Effets de fin d’année financière', `À chaque fois qu'une année financière se complète: les intérêts d'hypothèque sont prélevés, une nouvelle tranche de REIT s'ouvre (avec dividende versé aux détenteurs de parts), tous les accords de compensation de loyer en cours se règlent en cash puis se clôturent automatiquement, et tous les contrats d'assurance normale en vigueur expirent.`)}
-
-  ${theme('Enquête de l\'AMF')}
-  ${term('Enquêtée par l\'AMF', `Une entreprise qui atterrit sur la case « → Prison » (case 30) fait l'objet d'une enquête de l'Autorité des marchés financiers (AMF) et ne perçoit ni ne verse aucun loyer sur ses terrains pendant que l'enquête est en cours. Elle peut soit laisser l'enquête suivre son cours pendant un nombre de tours fixé (elle est ensuite déclarée non coupable, sans frais), soit conclure immédiatement un règlement à l'amiable (un montant fixe versé à la banque) pour clore l'enquête sur-le-champ.`)}
-
-  ${theme('Immobilier')}
-  ${term('Hypothèque', `Une entreprise emprunte à la banque contre un terrain (ou un lot regroupé) qu'elle possède, jusqu'à un pourcentage maximum de sa valeur (LTV). Des intérêts sont prélevés chaque année financière tant que l'hypothèque n'est pas remboursée. Se gère depuis l'onglet Mon Entreprise, via le bouton « Hypothèque » du menu ☰ Actions.`)}
-  ${term('Regroupement de lot', `Fusionner tous les terrains d'un même groupe de couleur, déjà détenus par les mêmes copropriétaires dans les mêmes proportions, en un seul actif traité comme un tout (une seule hypothèque, une seule vente de part, un seul loyer combiné). Se fait depuis l'onglet Administration.`)}
-  ${term('Copropriété (parts de terrain)', `Un terrain peut être détenu par plusieurs entreprises à la fois, chacune avec un pourcentage de parts. Le loyer et la valeur du terrain se répartissent au prorata des parts détenues.`)}
-  ${term('Cases hostiles (exposition instantanée)', `Calcul distinct de la prime d'assurance (qui raisonne sur un tour complet): pour chaque terrain déjà possédé, même partiellement, par d'autres entreprises, ou chaque case taxe, indique ce que VOTRE entreprise devrait débourser (sa part seulement) si elle y atterrissait MAINTENANT, à cet instant précis. Une part déjà hypothéquée (sauf si l'option de partie « le loyer continue pendant l'hypothèque » est active) ou détenue par un copropriétaire actuellement enquêté par l'AMF ne représente aucun risque réel à cet instant et est exclue — à la différence d'une prime d'assurance normale sur tout un tour, où un copropriétaire enquêté par l'AMF reste compté comme un risque (rien ne garantit qu'il ne sorte pas d'enquête avant la fin du tour). Ce montant ne tient jamais compte d'une éventuelle assurance déjà en vigueur en votre faveur — c'est une exposition brute, pas nette.`)}
-
-  ${theme('Maisons')}
-  ${term('Réserve de maisons', `Nombre de maisons qu'une entreprise a en stock, prêtes à être placées sur ses terrains. Se gagne principalement via l'enchère de maisons. Affichage en lecture seule dans Mon Entreprise — les joueurs utilisent leur réserve en construisant (bouton « Construire une maison » du menu Actions, Mon Entreprise); un ajustement manuel exceptionnel reste possible depuis l'onglet Administration.`)}
-  ${term('Option « provenance des maisons »', `Quand cette option est activée, chaque construction doit obligatoirement provenir de la réserve d'une entreprise choisie au moment de bâtir (bouton « Construire une maison » du menu Actions, Mon Entreprise) — cette réserve se décrémente alors automatiquement. Quand elle est désactivée, la réserve reste purement indicative et la construction n'est jamais bloquée par un manque de maisons en stock.`)}
-  ${term('Enchère de maisons', `Mécanisme d'allocation des maisons disponibles à chaque tour: chaque entreprise soumet une offre (quantité souhaitée + prix qu'elle est prête à payer par maison) depuis l'onglet Mon Entreprise. Les offres restent cachées de toutes les autres entreprises jusqu'à la clôture, déclenchée manuellement par le créateur de la partie (onglet Administration). À la clôture, les offres au prix le plus élevé sont servies en premier jusqu'à épuisement du stock disponible; toutes les maisons allouées se paient au prix de la dernière offre servie (prix de marché unique, pas le prix individuel de chaque offre).`)}
-
-  ${theme('Assurances')}
-  ${term('Assurance simple (terrain)', `Une entreprise s'assure contre le loyer qu'elle devrait payer si elle atterrissait sur un terrain donné. La prime est calculée sur le nombre EXACT de lancers de dés restants jusqu'à la fin du terme choisi (semestre ou année financière), à partir de l'horloge de partie au moment de l'achat — plus ce nombre de lancers restants est grand, plus le risque (et donc la prime) est élevé. Formule exacte de la prime: <b>(nombre moyen de fois que l'entreprise devrait tomber sur cette case en ce nombre exact de lancers restants — calcul exact par processus de renouvellement qui tient compte des passages multiples, pas seulement du premier) × (montant réellement exposé − franchise)</b>, puis majorée du profit de la banque. Le terme choisi détermine aussi la durée RÉELLE de couverture: un contrat tarifé « Semestre » expire à la fin du semestre en cours (3 lancers), un contrat tarifé « Année financière » reste couvert jusqu'à la fin de l'année (6 lancers) — payer moins cher au terme « Semestre » signifie donc bien une couverture plus courte, pas un rabais gratuit. Augmenter la franchise diminue donc le risque assuré et la prime. Si l'entreprise assurée est déjà copropriétaire du terrain, seule la part détenue par LES AUTRES copropriétaires est à risque (donc assurable) — un terrain encore détenu à 100% par la banque ne représente aucun risque assurable.`)}
-  ${term('Franchise', `Montant du risque qui reste à la charge de l'entreprise assurée, non couvert par la prime — plus la franchise est élevée, plus la prime est basse. S'ajuste pour tous les contrats signés au cours du même tour, directement dans le modal « Contrat d'assurance » (bouton du menu ☰ Actions, Mon Entreprise). S'applique de façon identique aux trois termes du modal, y compris « Assurance sous-standard (1 tour) ».`)}
-  ${term('Contrat groupé', `Achat en un seul geste de plusieurs couvertures à la fois (plusieurs terrains et/ou cases taxe), avec un choix de terme (semestre ou année financière, ou « Assurance sous-standard (1 tour) » — voir plus bas) pour le calcul des primes — voir « Assurance simple (terrain) » — plutôt que de signer chaque contrat séparément. Accessible via le bouton « Contrat d'assurance » du menu ☰ Actions (Mon Entreprise), qui ouvre un modal unique affichant un sous-total dynamique des cases cochées.`)}
-  ${term('Assurance de taxe', `Couverture contre le montant d'une case taxe (impôt sur le revenu ou TPS/TVQ) si l'entreprise y atterrit — s'achète via le contrat groupé, au même principe qu'un terrain. Montant exact de la taxe couverte: <b>impôt sur le revenu</b> = le moindre entre 10% de la valeur de l'entreprise (trésorerie + immobilier + parts de REIT) et 2 M$; <b>TPS/TVQ</b> = montant fixe de 1 M$.`)}
-  ${term('Assurance sous-standard', `Couverture d'urgence, achetable à tout moment, mais qui ne protège que le TOUT PROCHAIN lancer de dé de l'entreprise assurée, sur un terrain seulement (jamais une taxe). Majoration nettement plus élevée que l'assurance normale (réglée séparément au début de la partie). La franchise du tour s'applique à ce produit exactement comme à l'assurance normale (déduite de l'exposition avant le calcul de la prime, et à la charge du visiteur lors d'un sinistre) — seul le mode de sinistre (récurrent/unique) ne s'applique jamais à ce produit (un seul lancé couvert, rien à récurrer). Sélectionnable comme un TERME parmi d'autres (« Assurance sous-standard (1 tour) ») dans le même modal « Contrat d'assurance » que l'assurance normale — sélectionner ce terme masque le mode de sinistre et ne propose que des terrains (jamais de case taxe).`)}
-  ${term('Marché des contrats (résiliation)', `Une entreprise assurée peut résilier son propre contrat (groupé ou sous-standard) — remboursement de la prime — mais SEULEMENT tant qu'aucun lancer de dé n'a eu lieu depuis sa signature (dès qu'un lancer de dé a eu lieu, la police n'est plus annulable). Il n'est plus possible de reprendre un contrat groupé ENTIER — seule la reprise INDIVIDUELLE, terrain par terrain ou case taxe par case taxe, reste possible: via « Devenir l'assureur » (ci-dessous, pour les éléments encore assurés par la banque) ou, pour le produit sous-standard, par le même mécanisme de reprise individuelle qu'avant.`)}
-  ${term(`Devenir l'assureur (marché de réassurance de la banque)`, `Section distincte du Marché des contrats — liste <b>chaque terrain, case taxe et assurance sous-standard encore assuré par la BANQUE, séparément</b> (un contrat groupé y apparaît éclaté en autant de lignes qu'il couvre d'éléments — une entreprise peut reprendre UN SEUL élément sans reprendre les autres), <b>sans aucune restriction d'ancienneté</b> (n'importe quel contrat bancaire encore actif est éligible, peu importe depuis combien de lancers il a été signé). Le prix affiché n'est PAS la prime d'origine: il est recalculé EN TEMPS RÉEL à chaque affichage, à partir (a) du nombre de lancers RÉELLEMENT restants jusqu'à la fin de l'année financière en cours (moins il en reste, plus le prix de reprise est bas) et (b) de la position ACTUELLE de l'entreprise assurée (donc de sa distance présente jusqu'à la case couverte) — avec le même type de couverture (sinistre unique ou récurrent) et la même franchise que le contrat original. La prime ORIGINALE affichée à côté reste, elle, inchangée pour toujours — seul le prix de reprise varie.`)}
-
-  ${theme('Swaps et compensations de loyer')}
-  ${term('Swap de loyers', `Deux entreprises échangent, pour une durée déterminée, les revenus de deux terrains (ou lots): quand un TIERS visite le terrain de l'une, le loyer normalement dû est redirigé vers l'autre — jusqu'à un plafond par évènement (ou sans plafond). N'a aucun effet si le visiteur est le propriétaire ou son partenaire de swap.`)}
-  ${term('Compensation de loyer', `Accord bilatéral entre deux entreprises: tant qu'il est actif, le loyer qu'elles se doivent mutuellement ne change jamais de main en cash — il s'inscrit comme dette au registre du contrat, et se compense automatiquement (netting) si l'autre retombe ensuite sur un de vos terrains. La balance se règle en cash (avec intérêt) à chaque fin d'année financière, puis le contrat se clôture automatiquement — il faut le signer à nouveau pour continuer d'en bénéficier.`)}
-  ${term('Vente de revenu (ABS — titre adossé à des actifs)', `Une entreprise émettrice met en vente, sur un marché OUVERT à toutes les autres entreprises et à tous les joueurs (sauf elle-même et son propre CEO — exclusion « délit d'initié »), le droit à une PART de son loyer futur sur un panier de terrains qu'elle choisit (liste figée à la publication). Elle fixe : les terrains, la durée (années), le % de sa part cédé (plafonné automatiquement à 1 − le plafond de retenue de prêt, pour ne jamais chevaucher la capacité d'emprunt) et le montant total recherché — le reste (répartition senior/junior et prime de la tranche senior) est calculé AUTOMATIQUEMENT par l'application à partir du risque du panier, jamais choisi par un CEO. Deux tranches, chacune souscrite séparément par plusieurs porteurs à la fois (partage égal plafonné au prorata des montants maximaux déclarés) : la SENIOR est servie en premier à chaque loyer encaissé jusqu'à récupérer son capital plus une prime fixe (rendement plafonné) ; la JUNIOR ne reçoit rien tant que la senior n'est pas servie en entier, mais empoche tout le surplus sans plafond — l'émetteur conserve automatiquement toute part junior non souscrite (rétention du risque). L'annonce se publie et se résout dans le MÊME semestre, automatiquement, juste avant le lancer de dés suivant — sans souscripteur senior, l'opération entière est annulée (aucun argent ne bouge). Non-recours : à l'expiration, chaque porteur garde ce qu'il a reçu, aucune obligation de l'émetteur. Tant que l'accord est actif, l'émettrice ne peut plus vendre, hypothéquer ni signer de nouveau swap de loyers sur ces terrains précis — construire des maisons et fusionner un lot restent permis. Priorité de paiement inchangée face à un swap de loyers ordinaire (l'ABS l'emporte toujours sur un terrain donné).`)}
-
-  ${theme('Subventions d\'avance et prêts')}
-  ${term('Subvention d\'avance', `Une entreprise vend d'avance à la banque son prochain passage sur la case Départ, contre de l'argent immédiat — en échange, elle ne touchera pas le salaire GO correspondant le moment venu (le passage est déjà « consommé » par la vente).`)}
-  ${term('Prêt', `Un prêteur (un autre JOUEUR, depuis son encaisse personnelle — ou la banque, pour un prêt de dernier recours automatique) avance un capital à une entreprise emprunteuse. En retour, un pourcentage fixe de TOUS les loyers reçus par l'emprunteuse est automatiquement retenu et versé au prêteur, jusqu'à ce que le total retenu atteigne un multiple convenu du capital emprunté. Une entreprise peut avoir plusieurs prêts actifs simultanément (avec des prêteurs différents), mais la somme des pourcentages de retenue de TOUS ses prêts actifs ne peut jamais dépasser le plafond de retenue du réglage (40% par défaut) — un plafond CUMULATIF, pas par prêt: le formulaire d'offre affiche et borne le pourcentage encore disponible compte tenu des prêts déjà actifs.`)}
-
-  ${theme('REIT de terrains')}
-  ${term('Réserve permanente de la banque', `Dès que le module REIT est activé, la banque garde en permanence un pourcentage fixe de chaque terrain DE COULEUR — cette part ne peut jamais être achetée par une entreprise directement, seulement via des parts de REIT. Les 4 REIT sont fixes, chacun regroupant 2 groupes de couleur: <b>Première rue</b> (Brun &amp; Bleu pâle), <b>Deuxième rue</b> (Rose &amp; Orange), <b>Troisième rue</b> (Rouge &amp; Jaune), <b>Quatrième rue</b> (Vert &amp; Bleu foncé). Les aéroports et les services n'ont aucun fonds REIT et restent toujours achetables à 100% par les entreprises. La réserve de chaque terrain est fixée une fois pour toutes à sa création et ne bouge plus jamais ensuite: une vente à la banque ne fait jamais grossir la réserve d'un REIT — la part libérée redevient une simple part de banque ORDINAIRE, rachetable normalement par n'importe quelle entreprise, bien distincte de la réserve REIT.`)}
-  ${term('Fonds ETF et dividende', `Chaque REIT (un par regroupement de 2 groupes de couleur — voir « Réserve permanente de la banque » ci-dessus, jamais les aéroports/services) collecte dans son fonds le loyer généré par sa réserve — mais seulement une fois ouvert par l'administrateur (action manuelle et irréversible): tant qu'un REIT n'est pas ouvert, ce loyer n'est collecté par personne (perdu, comme d'habitude pour une part de banque non collectée). Une fois ouvert, seule la portion de la réserve RÉELLEMENT DÉTENUE par une entreprise (0% avant toute enchère remportée, 100% dès qu'une l'a été — voir « Enchère annuelle » ci-dessous) est effectivement facturée au visiteur et collectée par le fonds — la portion jamais remportée reste non facturée, exactement comme avant l'ouverture. À chaque fin d'année financière, le fonds est distribué en dividende (encaisse normale, jamais boursière) aux entreprises qui détiennent des parts de ce REIT, au prorata des parts détenues.`)}
-  ${term('Enchère annuelle', `Une fois un REIT ouvert, son lot ENTIER (100% de sa réserve) est mis aux enchères chaque année: au 1er lancer de dés de l'année, chaque entreprise soumet une mise scellée pour le lot complet depuis le pop-up de fin de tour (une mise de 0, ou trop faible, vaut « pas intéressée » — ne peut jamais gagner ; une mise ne peut jamais dépasser l'encaisse actuelle de l'entreprise). Au 2e lancer, le plus offrant remporte les 100% du lot, en rachetant automatiquement TOUS les détenteurs actuels au prorata de ce qu'ils détenaient (un détenteur qui regagne SA PROPRE portion ne se rachète jamais lui-même — seule la portion rachetée à d'autres entreprises change réellement de main). Aucune mise valide cette année-là: rien ne change, les détenteurs actuels gardent leurs parts. Le gagnant peut ensuite, s'il le souhaite, revendre volontairement des fractions à d'autres entreprises (voir ci-dessous) — c'est ce canal, pas l'enchère elle-même, qui permet la co-propriété. La valeur affichée au bilan d'une entreprise pour ses parts de REIT est basée sur le DERNIER PRIX RÉELLEMENT PAYÉ lors de la plus récente enchère, jamais une estimation.`)}`;
+function produitsApplyFilters(){
+  const st = PRODUITS_FILTER_STATE;
+  let totalVisible = 0, totalAll = 0;
+  document.querySelectorAll('.pm-family').forEach(famEl=>{
+    let famVisible = 0;
+    famEl.querySelectorAll('.pm-row').forEach(rowEl=>{
+      totalAll++;
+      const poche = (rowEl.dataset.poche||'').split(' ').filter(Boolean);
+      const fen = rowEl.dataset.fen, dette = rowEl.dataset.dette;
+      let ok = true;
+      if(st.poche.size && !poche.some(v=>st.poche.has(v))) ok = false;
+      if(ok && st.fen.size && !st.fen.has(fen)) ok = false;
+      if(ok && st.dette.size && !st.dette.has(dette)) ok = false;
+      rowEl.classList.toggle('pm-hidden', !ok);
+      if(ok){ famVisible++; totalVisible++; }
+    });
+    famEl.classList.toggle('pm-hidden', famVisible===0);
+    const countEl = famEl.querySelector('[data-family-count]');
+    if(countEl) countEl.textContent = famVisible;
+  });
+  const resultsEl = document.getElementById('pmResultsCount');
+  const anyFilter = st.poche.size || st.fen.size || st.dette.size;
+  if(resultsEl) resultsEl.textContent = anyFilter ? `${totalVisible} produit(s) affiché(s) sur ${totalAll}` : `${totalAll} produits`;
+}
+function renderProduitsMatrice(){
+  return `
+  <style>
+    .pm-filterbar{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-bottom:2px;}
+    .pm-filter-group{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+    .pm-filter-label{font-size:11px;text-transform:uppercase;letter-spacing:0.4px;color:var(--muted);margin-right:2px;}
+    .pm-filter-btn{border:1px solid var(--line-strong);background:var(--paper-solid);border-radius:999px;padding:4px 11px;font-size:12px;cursor:pointer;color:var(--ink);}
+    .pm-filter-btn.pm-active{background:var(--board);border-color:var(--board);color:#fff;font-weight:600;}
+    .pm-family{margin:22px 0 8px;}
+    .pm-family-header{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;}
+    .pm-family-line{flex:1;height:2px;opacity:0.35;}
+    .pm-family-count{font-variant-numeric:tabular-nums;opacity:0.75;}
+    .pm-family-rows{display:flex;flex-direction:column;gap:6px;padding-left:12px;}
+    .pm-row{background:var(--paper-solid);border:1px solid var(--line);border-radius:var(--radius-md);overflow:hidden;}
+    .pm-row-summary{display:grid;grid-template-columns:2.1fr 1.3fr 1.2fr 1fr auto;gap:10px;align-items:center;padding:10px 14px;cursor:pointer;list-style:none;}
+    .pm-row-summary::-webkit-details-marker{display:none;}
+    .pm-name{display:block;font-weight:700;font-size:13px;}
+    .pm-sub{display:block;font-size:11px;color:var(--muted);font-weight:400;}
+    .pm-col{font-size:12.5px;}
+    .pm-badges{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;}
+    .pm-badge{color:#fff;font-size:10px;padding:2px 7px;border-radius:999px;white-space:nowrap;}
+    .pm-badge-outline{background:transparent;border:1px solid var(--line-strong);color:var(--muted);}
+    .pm-detail{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;padding:2px 16px 14px;border-top:1px solid var(--line);}
+    .pm-detail-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin:10px 0 4px;color:var(--muted);}
+    .pm-detail ul{margin:0;padding-left:18px;}
+    .pm-detail li{font-size:12px;line-height:1.5;margin-bottom:5px;}
+    .pm-hidden{display:none !important;}
+    @media (max-width:760px){
+      .pm-row-summary{grid-template-columns:1fr;gap:3px;}
+      .pm-badges{justify-content:flex-start;margin-top:4px;}
+      .pm-detail{grid-template-columns:1fr;}
+    }
+  </style>
+  <div class="section-title">Produits financiers</div>
+  <div class="small" style="margin-bottom:14px;">Aide-mémoire de tous les produits financiers du jeu — 31 produits, 6 familles. Cliquez une ligne pour voir ses avantages, désavantages et points de règle.</div>
+  ${produitsFilterBarHtml()}
+  ${PRODUCT_FAMILY_DEFS.map(fam=>produitsFamilyHtml(fam)).join('')}`;
 }
 
 
@@ -6009,7 +6566,13 @@ function visibleTabs(){
   
   
   
-  tabs.push('lexique');
+  
+  
+  
+  
+  
+  
+  tabs.push('matrice');
   
   
   
@@ -6308,7 +6871,8 @@ function render(){
 function tabLabel(t){
   
   
-  return {portefeuille:'Portefeuille', entreprise:'Mon Entreprise', admin:'Administration', etf:'REIT', lexique:'Lexique'}[t];
+  
+  return {portefeuille:'Portefeuille', entreprise:'Mon Entreprise', admin:'Administration', etf:'REIT', matrice:'Produits'}[t];
 }
 
 function renderTab(t){
@@ -6319,7 +6883,12 @@ function renderTab(t){
   if(t==='admin') return renderAdmin();
   
   if(t==='etf') return renderEtf();
-  if(t==='lexique') return renderLexique();
+  
+  
+  
+  
+  
+  if(t==='matrice') return renderProduitsMatrice();
 }
 
 
@@ -14674,6 +15243,33 @@ function bindTabEvents(t){
       const price = parseFloat(document.getElementById('etfSellPrice_'+id).value)||0;
       sellEtfUnits(id, myCo.id, buyerId, pct, price);
     }));
+  }
+  
+  
+  
+  
+  
+  
+  
+  
+  if(t==='matrice'){
+    document.querySelectorAll('.pm-filter-btn').forEach(btn=>{
+      const grp = btn.dataset.filterGroup, val = btn.dataset.filterValue;
+      if(PRODUITS_FILTER_STATE[grp] && PRODUITS_FILTER_STATE[grp].has(val)) btn.classList.add('pm-active');
+      btn.addEventListener('click', ()=>{
+        const set = PRODUITS_FILTER_STATE[grp];
+        if(set.has(val)) set.delete(val); else set.add(val);
+        btn.classList.toggle('pm-active');
+        produitsApplyFilters();
+      });
+    });
+    const resetBtn = document.getElementById('pmFilterReset');
+    if(resetBtn) resetBtn.addEventListener('click', ()=>{
+      PRODUITS_FILTER_STATE.poche.clear(); PRODUITS_FILTER_STATE.fen.clear(); PRODUITS_FILTER_STATE.dette.clear();
+      document.querySelectorAll('.pm-filter-btn.pm-active').forEach(b=>b.classList.remove('pm-active'));
+      produitsApplyFilters();
+    });
+    produitsApplyFilters();
   }
   
   

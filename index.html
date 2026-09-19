@@ -231,6 +231,14 @@ input[type=text],input[type=number],select{
   background:var(--paper);border:1px solid var(--line);border-radius:var(--radius-md);
   padding:5px 14px;margin-bottom:6px;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:11.5px;}
 .actionstatusbar b{color:var(--ink);}
+/* Section 279 (voir RESUME_ET_REGLES.md) — bandeau « FIN DE SEMESTRE »/« FIN D'ANNÉE FINANCIÈRE », rendu
+   par render() juste sous .actionstatusbar et juste au-dessus de .tabs, visible seulement dans ces deux
+   fenêtres (voir periodEndBannerHtml). Une couleur distincte par état, écriture blanche, jamais
+   var(--brick) (réservée aux pertes/montants négatifs, convention section 232). */
+.periodendbanner{text-align:center;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;
+  color:#fff;padding:6px 14px;border-radius:var(--radius-md);margin-bottom:6px;font-size:12.5px;}
+.periodendbanner-semester{background:var(--board);}
+.periodendbanner-year{background:var(--gold);}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;color:#fff;}
 .money{font-family:'IBM Plex Mono',monospace;font-weight:600;font-variant-numeric:tabular-nums;}
 table{width:100%;border-collapse:collapse;font-size:13px;}
@@ -523,34 +531,41 @@ const HOUSE_COST_BY_GROUP = {
   VERT:2.0, BLEU_FONCE:2.0,
 };
 const PLAYER_COLORS = ['#C0392B','#2E8B57','#1B3A6B','#E8821E','#8E44AD','#D6409F','#16A085','#7B4B2A'];
+
+
+
+
+
+
+
 const FEATURE_LIST = [
-  {key:'insurance', label:'Assurances (terrains + taxes)'},
-  {key:'houseAuction', label:'Enchères de maisons'},
+  {key:'insurance', short:'Assurances', label:'Assurances (terrains + taxes)'},
+  {key:'houseAuction', short:'Enchères de maisons', label:'Enchères de maisons'},
   
   
   
-  {key:'goAdvance', label:'Marché des subventions d\'avance (salaire, case GO)'},
-  {key:'mortgage', label:'Hypothèques formelles'},
-  {key:'rentSwap', label:'Swaps de loyers'},
-  
-  
-  
-  
-  
-  
-  
-  {key:'revenueSwap', label:'Émission ABS (titrisation du revenu futur d’un panier de terrains, en tranches senior/junior — voir RESUME_ET_REGLES.md section 275)'},
-  {key:'rentCompensation', label:'Accords de compensation de loyer (netting bilatéral)'},
-  {key:'loan', label:'Prêts (retenue automatique sur les loyers reçus)'},
-  {key:'etf', label:'REIT de terrains (réserve permanente de la banque, émise progressivement aux joueurs)'},
-  {key:'subInsurance', label:'Assurance sous-standard (1 seul lancé de dé, prime fortement majorée, terrains seulement, achetable en tout temps)'},
-  {key:'houseSource', label:'Provenance des maisons (chaque construction retire une maison de la réserve d’un joueur, avec compensation possible entre copropriétaires)'},
+  {key:'goAdvance', short:'Subventions d\'avance (GO)', label:'Marché des subventions d\'avance (salaire, case GO)'},
+  {key:'mortgage', short:'Hypothèques', label:'Hypothèques formelles'},
+  {key:'rentSwap', short:'Swaps de loyers', label:'Swaps de loyers'},
   
   
   
   
   
-  {key:'terrainLot', label:'Lot commercial (ancien parking) — enchère annuelle entre entreprises'},
+  
+  
+  {key:'revenueSwap', short:'Émission ABS', label:'Émission ABS (titrisation du revenu futur d’un panier de terrains, en tranches senior/junior — voir RESUME_ET_REGLES.md section 275)'},
+  {key:'rentCompensation', short:'Compensation de loyer', label:'Accords de compensation de loyer (netting bilatéral)'},
+  {key:'loan', short:'Prêts', label:'Prêts (retenue automatique sur les loyers reçus)'},
+  {key:'etf', short:'REIT de terrains', label:'REIT de terrains (réserve permanente de la banque, émise progressivement aux joueurs)'},
+  {key:'subInsurance', short:'Assurance sous-standard', label:'Assurance sous-standard (1 seul lancé de dé, prime fortement majorée, terrains seulement, achetable en tout temps)'},
+  {key:'houseSource', short:'Provenance des maisons', label:'Provenance des maisons (chaque construction retire une maison de la réserve d’un joueur, avec compensation possible entre copropriétaires)'},
+  
+  
+  
+  
+  
+  {key:'terrainLot', short:'Lot commercial', label:'Lot commercial (ancien parking) — enchère annuelle entre entreprises'},
 ];
 
 
@@ -761,6 +776,25 @@ function entrepriseAccordionOpen(key){
 
 
 
+
+
+
+
+let DISMISSED_PENDING_IDS = {};
+function isPendingDismissed(scopeKey, itemKey){
+  return !!(DISMISSED_PENDING_IDS[scopeKey] && DISMISSED_PENDING_IDS[scopeKey].has(itemKey));
+}
+function dismissPending(scopeKey, itemKey){
+  (DISMISSED_PENDING_IDS[scopeKey] = DISMISSED_PENDING_IDS[scopeKey] || new Set()).add(itemKey);
+}
+
+
+
+
+
+
+
+
 let portefeuilleSelectedSemester = null;
 
 
@@ -852,6 +886,33 @@ function fmtShares(n){
 }
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function nowLabel(){ const d=new Date(); return d.toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'}); }
+
+
+
+
+
+
+
+function resizeImageFileToDataUrl(file, maxDim){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Image invalide.'));
+      img.onload = () => {
+        const scale = Math.min(1, maxDim/Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width*scale)), h = Math.max(1, Math.round(img.height*scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 function freshProperties(settings){
   
@@ -1140,6 +1201,14 @@ function migrateState(s){
   
   
   
+  s.revenueSwaps.forEach(deal=>{
+    (deal.seniorHolders||[]).forEach(h=>{ if(h.receivedSoFar===undefined) h.receivedSoFar = 0; });
+    (deal.juniorHolders||[]).forEach(h=>{ if(h.receivedSoFar===undefined) h.receivedSoFar = 0; });
+  });
+  
+  
+  
+  
   
   
   if(!s.rentSwapOffers) s.rentSwapOffers = [];
@@ -1342,6 +1411,18 @@ function migrateState(s){
     
     
     if(p.bondBalance===undefined) p.bondBalance = 0;
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    if(p.cumBondInterest===undefined) p.cumBondInterest = 0;
     
     
     
@@ -1588,6 +1669,10 @@ function migrateState(s){
     
     
     if(co.type==='valeur') co.type = 'garp';
+    
+    
+    
+    if(co.logoDataUrl===undefined) co.logoDataUrl = null;
     if(co.stockReserve===undefined) co.stockReserve = Object.assign({}, STOCK_TYPE_RESERVE[co.type] || STOCK_TYPE_RESERVE.garp);
     
     
@@ -1779,7 +1864,7 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
   
   const players = names.map((n,i)=>({id:uid(), name:n, cash:startCash, color:PLAYER_COLORS[i%PLAYER_COLORS.length],
     stats:freshStats(), goAdvancesUsed:0, companyId:null, shortPositions:{}, bondBalance:0, optionPositions:[],
-    startingCash:startCash, cumDividendsReceived:0, cumRealizedPnl:0, cumOptionNetPremium:0, cumInterestReceived:0, cumInterestPaid:0}));
+    startingCash:startCash, cumDividendsReceived:0, cumRealizedPnl:0, cumOptionNetPremium:0, cumInterestReceived:0, cumInterestPaid:0, cumBondInterest:0}));
   const s = {
     code, createdAt:Date.now(), unit: unit||'M$',
     
@@ -2153,7 +2238,15 @@ function companyOfPlayer(playerId){
   const p = state.players.find(x=>x.id===playerId);
   return p && p.companyId ? companyById(p.companyId) : null;
 }
-async function createCompany(playerId, name, description, type, dividendPromisedAnnualPct, croissanceTier){
+
+
+
+
+
+
+
+
+async function createCompany(playerId, name, description, type, dividendPromisedAnnualPct, croissanceTier, logoDataUrl){
   name = (name||'').trim();
   
   
@@ -2245,6 +2338,10 @@ async function createCompany(playerId, name, description, type, dividendPromised
     
     
     currentDeductible: 0,
+    
+    
+    
+    logoDataUrl: logoDataUrl || null,
   };
   
   
@@ -2462,7 +2559,11 @@ function renderPortefeuille(){
       anyItm = true;
       projected -= pos.shares * OPTION_CONTRACT_MULTIPLIER * pos.strike;
     });
-    return anyItm ? `<div class="small" style="opacity:0.75;margin-top:2px;">(${fmt(projected)} si les options actuellement dans la monnaie (achat call/vente put) expiraient et entraînaient une acquisition de stock)</div>` : '';
+    
+    
+    
+    
+    return anyItm ? `<div class="small" style="opacity:0.75;margin-top:2px;">(${fmt(projected)}, encaisse considérant l'exercice des options)</div>` : '';
   })();
   
   
@@ -2485,7 +2586,9 @@ function renderPortefeuille(){
   const nw = marginableNetWorth(me);
   const availableMargin = nw - requiredMargin;
   const marginRatioLabel = requiredMargin>1e-9 ? `${(nw/requiredMargin).toFixed(2)}×` : 'aucune position à marge';
-  const availableMarginLine = `<tr><td>Marge disponible <span class="small" style="opacity:0.7;">(vente à découvert/options écrites)</span></td><td class="money" style="${availableMargin<0?'color:var(--brick,#C0392B);':''}">${fmt(availableMargin)} (${marginRatioLabel})</td></tr>`;
+  
+  
+  const availableMarginLine = `<tr><td>Marge disponible</td><td class="money" style="${availableMargin<0?'color:var(--brick,#C0392B);':''}">${fmt(availableMargin)} (${marginRatioLabel})</td></tr>`;
   return `
   ${renderPortefeuilleTopBar(me, company)}
   <div class="section-title">Portefeuille de ${esc(me.name)}</div>
@@ -2686,7 +2789,7 @@ function renderPortefeuilleTrading(me, company){
   
   const loanRequestLines = !state.settings.features.loan ? [] : (state.loanRequests||[]).filter(r=>{
     const borrowerCo = companyById(r.borrowerId);
-    return !(borrowerCo && borrowerCo.ceoId===me.id); 
+    return !(borrowerCo && borrowerCo.ceoId===me.id) && !isPendingDismissed(myPlayerId, `loanreq:${r.id}`); 
   }).map(r=>{
     const borrowerCo = companyById(r.borrowerId);
     const offersOnThis = state.loanOffers.filter(o=>o.requestId===r.id);
@@ -2714,12 +2817,27 @@ function renderPortefeuilleTrading(me, company){
     
     
     
-    const expiryHtml = ` <span class="small" style="color:var(--brick);">⏳ expire au prochain lancer de dés si non acceptée</span>`;
-    return `<div style="margin-bottom:4px;">🏦 Demande d'emprunt ${borrowerCo?esc(borrowerCo.name):'—'}${ratingHtml} : ${fmt(r.principal)} (${offersOnThis.length} offre${offersOnThis.length===1?'':'s'} reçue${offersOnThis.length===1?'':'s'})${expiryHtml}${headroomHtml} — ${offerForm}</div>`;
+    
+    
+    const dismissBtn = ` <button class="btn btn-brick btn-sm" data-dismiss-pending="loanreq:${r.id}">Refuser</button>`;
+    
+    
+    
+    return `<div style="margin-bottom:4px;">🏦 Demande d'emprunt ${borrowerCo?esc(borrowerCo.name):'—'}${ratingHtml}<br>${fmt(r.principal)} (${offersOnThis.length} offre${offersOnThis.length===1?'':'s'} reçue${offersOnThis.length===1?'':'s'})${headroomHtml} — ${offerForm}${dismissBtn}</div>`;
   });
-  const announcementBannerHtml = (dividendAnnouncementLines.length>0 || ceoAnnouncementLines.length>0 || ceoPublicStatementLines.length>0 || loanRequestLines.length>0)
-    ? `<div class="small" id="pfAnnouncementBanner" style="margin:2px 0 14px;">${[...dividendAnnouncementLines, ...ceoAnnouncementLines, ...ceoPublicStatementLines, ...loanRequestLines].join('')}</div>`
+  
+  
+  
+  
+  const announcementBannerHtml = (dividendAnnouncementLines.length>0 || ceoAnnouncementLines.length>0 || ceoPublicStatementLines.length>0)
+    ? `<div class="small" id="pfAnnouncementBanner" style="margin:2px 0 14px;">${[...dividendAnnouncementLines, ...ceoAnnouncementLines, ...ceoPublicStatementLines].join('')}</div>`
     : '';
+  
+  
+  
+  
+  
+  
   
   
   
@@ -2733,30 +2851,29 @@ function renderPortefeuilleTrading(me, company){
   
   const absPortefeuilleListings = !state.settings.features.revenueSwap ? [] : (state.revenueSwapListings||[]).filter(l=>{
     const sellerCo = companyById(l.sellerId);
-    return !(sellerCo && sellerCo.ceoId===me.id);
+    return !(sellerCo && sellerCo.ceoId===me.id) && !isPendingDismissed(myPlayerId, `abs:${l.id}`);
   });
-  const absPortefeuilleMarketHtml = absPortefeuilleListings.length===0 ? '' : `
-  <div class="small" style="font-weight:600;margin-top:2px;margin-bottom:6px;">Marché des émissions ABS</div>
-  <table style="margin-bottom:14px;">
-    <tr><th>Émettrice</th><th>Terrain(s)</th><th>% cédé</th><th>Durée</th><th>Senior (recherché / prime)</th><th>Junior (recherché)</th><th>Souscriptions</th><th></th></tr>
-    ${absPortefeuilleListings.map(l=>{
-      const seller = companyById(l.sellerId);
-      const labels = l.propertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p?(p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name):'?'; }).join(', ');
-      const seniorSubTotal = l.seniorSubs.reduce((s,x)=>s+x.maxAmount,0), juniorSubTotal = l.juniorSubs.reduce((s,x)=>s+x.maxAmount,0);
-      const subsText = `Senior: ${l.seniorSubs.length} souscripteur(s), ${fmt(seniorSubTotal)} max cumulé<br>Junior: ${l.juniorSubs.length} souscripteur(s), ${fmt(juniorSubTotal)} max cumulé`;
-      const actionHtml = `<button class="btn btn-gold btn-sm" data-subscribe-revenue-listing-player="${l.id}" data-tranche="senior">Souscrire (senior)</button> <button class="btn btn-gold btn-sm" data-subscribe-revenue-listing-player="${l.id}" data-tranche="junior">Souscrire (junior)</button>`;
-      return `<tr>
-        <td>${esc(seller?seller.name:'?')}</td>
-        <td>${esc(labels)}</td>
-        <td>${Math.round(l.cededPctOfShare*100)}%</td>
-        <td>${l.years} an(s)</td>
-        <td class="money">${fmt(l.tranches.seniorAmount)} (prime ${Math.round(l.tranches.seniorPremiumPct*100)}%)</td>
-        <td class="money">${fmt(l.tranches.juniorAmount)}</td>
-        <td class="small">${subsText}</td>
-        <td>${actionHtml}</td>
-      </tr>`;
-    }).join('')}
-  </table>`;
+  
+  
+  
+  
+  
+  const absPortefeuilleMarketHtml = absPortefeuilleListings.map(l=>{
+    const seller = companyById(l.sellerId);
+    const labels = l.propertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p?(p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name):'?'; }).join(', ');
+    const mySeniorSub = l.seniorSubs.find(s=>s.holderType==='player' && s.holderId===me.id);
+    const myJuniorSub = l.juniorSubs.find(s=>s.holderType==='player' && s.holderId===me.id);
+    const mySubsConfirmHtml = (mySeniorSub||myJuniorSub) ? `<div class="small" style="color:#047857;margin-top:2px;">
+      ${mySeniorSub?`✓ Vous avez souscrit jusqu'à ${fmt(mySeniorSub.maxAmount)} (senior). `:''}${myJuniorSub?`✓ Vous avez souscrit jusqu'à ${fmt(myJuniorSub.maxAmount)} (junior).`:''}
+    </div>` : '';
+    return `<div class="deed-actions" style="margin-bottom:6px;">
+      <span class="ownerchip">📄 Émission ABS — ${esc(seller?seller.name:'?')} (${esc(labels)}, ${Math.round(l.cededPctOfShare*100)}% cédé, ${l.years} an(s), senior ${fmt(l.tranches.seniorAmount)} @ prime ${Math.round(l.tranches.seniorPremiumPct*100)}% / junior ${fmt(l.tranches.juniorAmount)})</span>
+      <button class="btn btn-gold btn-sm" data-subscribe-revenue-listing-player="${l.id}" data-tranche="senior">${mySeniorSub?'Modifier (senior)':'Souscrire (senior)'}</button>
+      <button class="btn btn-gold btn-sm" data-subscribe-revenue-listing-player="${l.id}" data-tranche="junior">${myJuniorSub?'Modifier (junior)':'Souscrire (junior)'}</button>
+      <button class="btn btn-brick btn-sm" data-dismiss-pending="abs:${l.id}">Refuser</button>
+      ${mySubsConfirmHtml}
+    </div>`;
+  }).join('');
   
   
   
@@ -2772,7 +2889,11 @@ function renderPortefeuilleTrading(me, company){
     const price = co.stockPrice||0;
     const notional = pos.shares*price;
     const pnl = (pos.avgOpenPrice-price)*pos.shares;
-    return `<tr><td>${esc(co.name)}</td><td>${pos.shares.toFixed(4)}</td><td class="money">${fmtPrice(pos.avgOpenPrice)}</td><td class="money">${fmtPrice(price)}</td><td class="money">${fmt(notional)}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td></tr>`;
+    
+    
+    
+    
+    return `<tr><td>${esc(co.name)}</td><td>${fmtShares(pos.shares)}</td><td class="money">${fmtPrice(pos.avgOpenPrice)}</td><td class="money">${fmtPrice(price)}</td><td class="money">${fmt(notional)}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td></tr>`;
   }).join('');
   const shortsHtml = myShorts.length>0
     ? `<table><tr><th>Entreprise</th><th>Parts empruntées</th><th>Prix moyen d'ouverture</th><th>Prix courant</th><th>Valeur notionnelle (passif)</th><th>P&amp;L latent</th></tr>${shortsRows}</table>`
@@ -2788,10 +2909,33 @@ function renderPortefeuilleTrading(me, company){
   
   
   
+  
   const bondBalanceNow = me.bondBalance||0;
-  const bondBalanceRowLabel = bondBalanceNow<0 ? 'Solde actuel (dette empruntée)' : 'Solde actuel';
+  const bondBalanceRowLabel = bondBalanceNow<0 ? 'Solde total (dette empruntée)' : 'Solde total';
   const bondBalanceColor = bondBalanceNow<0 ? 'color:var(--brick);' : '';
-  const bondsHtml = `<table><tr><td>${bondBalanceRowLabel}</td><td class="money" style="${bondBalanceColor}">${fmt(bondBalanceNow)}</td></tr><tr><td>Taux annuel courant</td><td>${(bondAnnualRate*100).toFixed(2)}%/an (${(bondAnnualRate/6*100).toFixed(3)}%/lancer de dé)</td></tr>${bondBalanceNow<0?`<tr><td>Dette maximale autorisée</td><td class="money">${fmt(state.settings.bondShortMax||0)}</td></tr>`:''}</table>`;
+  
+  
+  
+  
+  
+  
+  
+  const bondInterestNow = me.cumBondInterest||0;
+  const bondPrincipalNow = bondBalanceNow - bondInterestNow;
+  const bondInterestRowLabel = bondInterestNow<0 ? 'Intérêts payés' : 'Intérêts reçus';
+  const bondInterestColor = bondInterestNow<0 ? 'color:var(--brick);' : '';
+  const bondPrincipalRowLabel = bondPrincipalNow<0 ? 'Solde initial (dette empruntée)' : 'Solde initial';
+  const bondPrincipalColor = bondPrincipalNow<0 ? 'color:var(--brick);' : '';
+  
+  
+  
+  
+  const bondMaxDebtCellHtml = bondBalanceNow<0 ? `<th>Dette maximale autorisée</th>` : '';
+  const bondMaxDebtValueHtml = bondBalanceNow<0 ? `<td class="money">${fmt(state.settings.bondShortMax||0)}</td>` : '';
+  const bondsHtml = `<table>
+    <tr><th>${bondPrincipalRowLabel}</th><th>${bondInterestRowLabel}</th><th>${bondBalanceRowLabel}</th><th>Taux annuel courant</th>${bondMaxDebtCellHtml}</tr>
+    <tr><td class="money" style="${bondPrincipalColor}">${fmt(bondPrincipalNow)}</td><td class="money" style="${bondInterestColor}">${fmt(bondInterestNow)}</td><td class="money" style="${bondBalanceColor}">${fmt(bondBalanceNow)}</td><td>${(bondAnnualRate*100).toFixed(2)}%/an (${(bondAnnualRate/6*100).toFixed(3)}%/lancer de dé)</td>${bondMaxDebtValueHtml}</tr>
+  </table>`;
   
   
   
@@ -2827,16 +2971,15 @@ function renderPortefeuilleTrading(me, company){
     const sideLabel = pos.side==='long' ? 'Longue' : 'Écrite';
     
     
+    const strategyLabel = optionPositionStrategyLabel(me, co, pos);
     
     
     
     
-    const greeks = greeksForDisplay(optionPositionGreeks(co, pos));
-    const greekCell = (v, decimals) => `<td class="money" style="color:${v>=0?'#047857':'var(--brick)'};">${v>=0?'+':''}${v.toFixed(v>=1000||v<=-1000?0:decimals)}</td>`;
-    return `<tr><td>${esc(co.name)}</td><td>${typeLabel}</td><td>${sideLabel}</td><td class="money">${fmtPrice(pos.strike)}</td><td>${rollsLeft}</td><td>${pos.shares.toFixed(4)}</td><td class="money">${fmtPrice(pos.premiumAtOpen)}</td><td class="money">${fmt(marketValue)}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td>${greekCell(greeks.delta,2)}${greekCell(greeks.gamma,2)}${greekCell(greeks.vega,3)}${greekCell(greeks.theta,3)}<td><button class="btn btn-ghost btn-sm" data-close-option="${pos.id}">Clôturer</button></td></tr>`;
+    return `<tr><td>${esc(co.name)}</td><td>${typeLabel}</td><td>${sideLabel}</td><td>${esc(strategyLabel)}</td><td class="money">${fmtPrice(pos.strike)}</td><td>${rollsLeft}</td><td>${pos.shares.toFixed(4)}</td><td class="money">${fmtPrice(pos.premiumAtOpen)}</td><td class="money">${fmt(marketValue)}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td><td><button class="btn btn-ghost btn-sm" data-option-position-details="${pos.id}">Détail</button> <button class="btn btn-ghost btn-sm" data-close-option="${pos.id}">Clôturer</button></td></tr>`;
   }).join('');
   const optionsPositionsHtml = myOptions.length>0
-    ? `<table><tr><th>Entreprise</th><th>Type</th><th>Côté</th><th>Strike</th><th>Lancers restants</th><th>Contrats</th><th>Prime à l'ouverture</th><th>Valeur de marché</th><th>P&amp;L latent</th><th title="Delta — exposition en $ à une variation de 1$ du cours">Δ</th><th title="Gamma — variation du Delta pour 1$ de variation du cours">Γ</th><th title="Vega — exposition en $ à une variation de 1 point de volatilité annuelle">V</th><th title="Theta — décroissance en $ par lancer de dé">Θ</th><th></th></tr>${optionsRows}</table>`
+    ? `<table><tr><th>Entreprise</th><th>Type</th><th>Côté</th><th>Stratégie</th><th>Strike</th><th>Lancers restants</th><th>Contrats</th><th>Prime à l'ouverture</th><th>Valeur de marché</th><th>P&amp;L latent</th><th></th></tr>${optionsRows}</table>`
     : '<div class="empty">Aucune position d’option pour le moment.</div>';
 
   
@@ -2866,9 +3009,14 @@ function renderPortefeuilleTrading(me, company){
     });
     const pnl = valueNow - costAtOpen;
     const rollsLeft = Math.max(0, expiryRoll - state.gameClock.rollCount);
-    const strikesLabel = kind==='straddle'
-      ? `ATM (${fmtPrice(legs[0].strike)})`
-      : legs.map(l=>`${l.type==='call'?'C':'P'} ${fmtPrice(l.strike)} (${l.side==='long'?'+':'-'})`).join(' / ');
+    
+    
+    
+    
+    
+    
+    
+    const strikesLabel = legs.map(l=>`${l.side==='long'?'+':'-'}${l.type==='call'?'C':'P'} ${fmtPrice(l.strike)}`).join('<br>');
     
     
     
@@ -2996,15 +3144,40 @@ function renderPortefeuilleTrading(me, company){
   
   
   
+  
+  
+  
+  
+  
+  
+  
   const myPendingPreferredOffers = [];
   state.companies.forEach(co=>{
-    (co.preferredIssuances||[]).forEach(i=>{ if(i.status==='pending' && co.ceoId!==me.id) myPendingPreferredOffers.push({co,i}); });
+    (co.preferredIssuances||[]).forEach(i=>{ if(i.status==='pending' && co.ceoId!==me.id && i.responses[me.id]===undefined) myPendingPreferredOffers.push({co,i}); });
   });
+  
+  
+  
   const pendingPreferredRows = myPendingPreferredOffers.map(({co,i})=>{
-    const myResp = i.responses[me.id];
-    const respLabel = myResp===true?'✅ Accepté':(myResp===false?'❌ Refusé':'⏳ Pas encore répondu');
-    return `<tr><td>${esc(co.name)}</td><td>${fmtShares(i.qty)}</td><td class="money">${fmtPrice(i.issuePrice)}</td><td>${(i.dividendRate*100).toFixed(2)}%/an</td><td class="money">${fmtPrice(i.callPrice)}</td><td>${respLabel}</td><td><button class="btn btn-pale-success btn-sm" data-accept-preferred="${i.id}">Accepter</button> <button class="btn btn-ghost btn-sm" data-decline-preferred="${i.id}">Refuser</button></td></tr>`;
+    return `<tr><td>${esc(co.name)}</td><td>${fmtShares(i.qty)}</td><td class="money">${fmtPrice(i.issuePrice)}</td><td>${(i.dividendRate*100).toFixed(2)}%/an</td><td class="money">${fmtPrice(i.callPrice)}</td><td><button class="btn btn-pale-success btn-sm" data-accept-preferred="${i.id}">Accepter</button> <button class="btn btn-brick btn-sm" data-decline-preferred="${i.id}">Refuser</button></td></tr>`;
   }).join('');
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  const pendingProposalsHtml = (loanRequestLines.length===0 && absPortefeuilleListings.length===0 && myPendingPreferredOffers.length===0) ? '' : `
+  <div class="section-title" style="margin-top:0;">Propositions en attente</div>
+  ${loanRequestLines.join('')}
+  ${absPortefeuilleMarketHtml}
+  ${myPendingPreferredOffers.length>0?`<div class="small" style="font-weight:600;margin-top:8px;margin-bottom:6px;">📈 Émission(s) de parts privilégiées</div><table><tr><th>Entreprise</th><th>Parts offertes</th><th>Prix d'émission</th><th>Taux annuel</th><th>Rachat</th><th></th></tr>${pendingPreferredRows}</table>`:''}
+  `;
   const myPreferredHoldings = [];
   state.companies.forEach(co=>{
     (co.preferredIssuances||[]).forEach(i=>{
@@ -3031,12 +3204,46 @@ function renderPortefeuilleTrading(me, company){
     const co = companyById(l.companyId);
     return `<tr><td>${esc(co?co.name:'?')}</td><td>${fmtShares(l.qty)}</td><td><button class="btn btn-ghost btn-sm" data-cancel-preferred-listing="${l.id}">Retirer</button></td></tr>`;
   }).join('');
-  const showPreferred = myPendingPreferredOffers.length>0 || myPreferredHoldings.length>0 || otherPreferredListings.length>0 || myPreferredListings.length>0;
+  
+  
+  const showPreferred = myPreferredHoldings.length>0 || otherPreferredListings.length>0 || myPreferredListings.length>0;
+  
+  
+  
+  
+  const myAbsHoldingsList = state.settings.features.revenueSwap ? myAbsHoldings('player', me.id) : [];
+  
+  
+  
+  const myAbsHoldingsRows = myAbsHoldingsList.map(r=>`<tr>
+    <td>${esc(r.seller?r.seller.name:'?')}</td>
+    <td>${r.trancheLabel}</td>
+    <td class="money">${fmt(r.cost)}</td>
+    <td class="money">${fmt(r.receivedSoFar)}</td>
+    <td>${r.yearsRemaining}</td>
+    <td class="money">${fmt(r.seniorReceivedTotal)}</td>
+    <td class="money">${fmt(r.seniorRemainingToReceive)}</td>
+    <td class="money">${fmt(r.juniorReceivedTotal)}</td>
+  </tr>`).join('');
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   const instrumentsTradingHtml = (() => {
-    
-    
-    
-    
     
     
     
@@ -3053,25 +3260,43 @@ function renderPortefeuilleTrading(me, company){
     
     
     
-    const showOptions = myOptions.length>0 || myStrategies.length>0;
+    const showOptionsSimple = myOptions.length>0;
+    const showStrategies = myStrategies.length>0;
     const showLoans = myLoansAsLender.length>0;
-    const blocks = [
-      showShort ? entrepriseAccordion('pf-short', 'Mes positions à découvert', shortsHtml) : '',
-      showBons ? entrepriseAccordion('pf-bons', 'Mes bons gouvernementaux', bondsHtml) : '',
-      showLoans ? entrepriseAccordion('pf-loans', 'Mes prêts aux entreprises', myLoansHtml) : '',
-      showOptions ? entrepriseAccordion('pf-options', 'Options (PUT/CALL)', `
-      <div class="small" style="margin-bottom:8px;">Consultez la chaîne de primes (calls/puts) depuis le menu ☰ Actions ci-dessus — « 📊 Voir la chaîne d'options ».</div>
-      ${optionsPositionsHtml}
-      <div class="small" style="font-weight:600;margin-top:16px;margin-bottom:6px;">Mes stratégies d'options (règlement cash uniquement, jamais de livraison de parts)</div>
-      <div class="small" style="margin-bottom:8px;">Ouvrez un bull spread, un bear spread ou un ATM straddle depuis le menu ☰ Actions ci-dessus — « 🧩 Stratégies d'options ».</div>
-      ${strategiesHtml}`) : '',
-      showPreferred ? entrepriseAccordion('pf-preferred', 'Parts privilégiées', `
-      ${myPendingPreferredOffers.length>0?`<div class="small" style="font-weight:600;margin-bottom:6px;">Offres en attente de réponse</div><table><tr><th>Entreprise</th><th>Parts offertes</th><th>Prix d'émission</th><th>Taux annuel</th><th>Rachat</th><th>Ma réponse</th><th></th></tr>${pendingPreferredRows}</table>`:''}
-      ${myPreferredHoldings.length>0?`<div class="small" style="font-weight:600;margin-top:12px;margin-bottom:6px;">Mes parts privilégiées détenues</div><table><tr><th>Entreprise</th><th>Parts</th><th>Rachat</th><th>Taux annuel</th><th>Valeur (min cours/rachat)</th><th></th></tr>${preferredHoldingsRows}</table>`:''}
-      ${otherPreferredListings.length>0?`<div class="small" style="font-weight:600;margin-top:12px;margin-bottom:6px;">Marché secondaire — annonces d'autres joueurs</div><table><tr><th>Entreprise</th><th>Vendeur</th><th>Parts</th><th>Prix (min cours/rachat)</th><th></th></tr>${preferredMarketRows}</table>`:''}
-      ${myPreferredListings.length>0?`<div class="small" style="font-weight:600;margin-top:12px;margin-bottom:6px;">Mes annonces de vente</div><table><tr><th>Entreprise</th><th>Parts</th><th></th></tr>${myPreferredListingsRows}</table>`:''}
-      `) : '',
-    ];
+    
+    
+    const showAbs = myAbsHoldingsList.length>0;
+    
+    
+    const showActions = myPositions.length>0;
+    
+    
+    
+    const positionGroups = [
+      {icon:'📈', label:'Positions longues', html: showActions ? positionsHtml : ''},
+      {icon:'📉', label:'Positions courtes', html: showShort ? shortsHtml : ''},
+      {icon:'🏛️', label:'Obligations gouvernementales', html: showBons ? bondsHtml : ''},
+      {icon:'🏦', label:"Obligations d'entreprise (Prêt)", html: showLoans ? myLoansHtml : ''},
+      {icon:'⭐', label:'Actions privilégiées', html: showPreferred ? `
+        ${myPreferredHoldings.length>0?`<table><tr><th>Entreprise</th><th>Parts</th><th>Rachat</th><th>Taux annuel</th><th>Valeur (min cours/rachat)</th><th></th></tr>${preferredHoldingsRows}</table>`:''}
+        ${otherPreferredListings.length>0?`<div class="small" style="font-weight:600;margin-top:12px;margin-bottom:6px;">Marché secondaire — annonces d'autres joueurs</div><table><tr><th>Entreprise</th><th>Vendeur</th><th>Parts</th><th>Prix (min cours/rachat)</th><th></th></tr>${preferredMarketRows}</table>`:''}
+        ${myPreferredListings.length>0?`<div class="small" style="font-weight:600;margin-top:12px;margin-bottom:6px;">Mes annonces de vente</div><table><tr><th>Entreprise</th><th>Parts</th><th></th></tr>${myPreferredListingsRows}</table>`:''}
+      ` : ''},
+      {icon:'🎯', label:'Options', html: showOptionsSimple ? `
+        ${optionsPositionsHtml}
+      ` : ''},
+      {icon:'🧩', label:"Stratégie d'option", html: showStrategies ? `
+        ${strategiesHtml}
+      ` : ''},
+      {icon:'📄', label:'Titrisation', html: showAbs ? `
+        <table><tr><th>Émettrice</th><th>Tranche</th><th>Capital de référence</th><th>Reçu à ce jour</th><th>Années restantes</th><th>Senior — reçu</th><th>Senior — reste à recevoir</th><th>Junior — reçu</th></tr>${myAbsHoldingsRows}</table>
+      ` : ''},
+    ].filter(g=>g.html);
+    const positionGroupsHtml = positionGroups.map((g,idx)=>`
+    <div style="${idx>0?'border-top:1px solid var(--line);padding-top:12px;margin-top:14px;':''}">
+      <div class="small" style="font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--muted);margin-bottom:6px;">${g.icon} ${g.label}</div>
+      ${g.html}
+    </div>`).join('');
     
     
     
@@ -3079,25 +3304,17 @@ function renderPortefeuilleTrading(me, company){
     
     
     
-    if(!showShort && !showBons && !showLoans && !showOptions && !showPreferred){
+    
+    
+    
+    if(!showShort && !showBons && !showLoans && !showAbs && !showOptionsSimple && !showStrategies && !showPreferred && !showActions){
       return '';
     }
-    return `<div class="section-title" style="margin-top:16px;">Instruments de trading</div>${blocks.join('')}`;
+    return `<div class="section-title" style="margin-top:16px;">MES POSITIONS</div>${positionGroupsHtml}`;
   })();
   return `
+  ${pendingProposalsHtml}
   ${announcementBannerHtml}
-  ${absPortefeuilleMarketHtml}
-  ${(() => {
-    
-    
-    
-    
-    
-    
-    
-    
-    return myPositions.length>0 ? entrepriseAccordion('pf-comptant', 'Mes positions boursières', positionsHtml) : '';
-  })()}
   ${instrumentsTradingHtml}
   <!-- Section 146 (ALPHA test 2, voir RESUME_ET_REGLES.md) — item 2, demande explicite de l'utilisateur:
   « Mettre le graphique sectoriel à côté du graphique d'évolution des cours » — pf-valeur-nette et
@@ -3119,7 +3336,10 @@ function renderPortefeuilleTrading(me, company){
     </div>
     <div style="flex:0.3;min-width:220px;">
     ${entrepriseAccordion('pf-secteur', 'Répartition sectorielle', `
-    <div class="small" style="margin-bottom:8px;">Proportion de la valeur de marché de vos positions boursières longues seulement.</div>
+    <!-- Demande explicite de l'utilisateur, verbatim: « Change ça : "Proportion de la valeur de marché de
+    vos positions boursières longues seulement." Pour ça "Proportion de vos positions longues" » — texte
+    raccourci, aucun changement de calcul (sectorMixHtml reste basé sur les positions longues seulement). -->
+    <div class="small" style="margin-bottom:8px;">Proportion de vos positions longues.</div>
     ${sectorMixHtml}`)}
     </div>
   </div>`;
@@ -3627,11 +3847,20 @@ function renderEntrepriseFinancials(company){
     <tr style="font-weight:700;"><td>Équité</td>${statements.map(s=>`<td>${bsCell(s,'equity')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Équité par action</td>${statements.map(s=>`<td>${equityPerShareCell(s)}</td>`).join('')}</tr>
     <tr><td class="small">↳ Parts émises / total</td>${statements.map(s=>`<td>${sharesIssuedCell(s)}</td>`).join('')}</tr>`;
-  const identityLines = statements.filter(s=>s.bs).map(s=>{
+  
+  
+  
+  
+  
+  
+  
+  const identityLineFor = s => {
     const delta = s.bs.totalAssets - (s.bs.totalLiabilities + s.bs.equity);
     const ok = Math.abs(delta) < 0.01;
     return `${esc(s.period.label)} : ${ok ? 'Actifs = Passifs + Équité ✓' : `⚠️ écart de ${fmt(delta)} entre Actifs et Passifs+Équité (ne devrait normalement jamais arriver)`}`;
-  }).join('<br>');
+  };
+  const latestStatementWithBs = statements.find(s=>s.bs);
+  const identityLines = latestStatementWithBs ? identityLineFor(latestStatementWithBs) : '';
 
   bodyHtml += `
   <div class="section-title" style="margin-top:22px;">Bilan</div>
@@ -4065,7 +4294,12 @@ function renderEntreprise(){
   
   
   
-  const houseBidHintHtml = !auctionOn ? '' : `<div class="small" style="margin-top:8px;">${myBid?`Votre offre actuelle: ${myBid.qty} maison(s) à ${fmt(myBid.price)}/maison. `:''}Soumettre ou retirer une offre se fait via le bouton « 🏠 Enchère de maisons » tout en haut de page.</div>`;
+  
+  
+  
+  
+  
+  const houseBidHintHtml = (!auctionOn || !myBid) ? '' : `<div class="small" style="margin-top:8px;">Votre offre actuelle: ${myBid.qty} maison(s) à ${fmt(myBid.price)}/maison.</div>`;
 
   
   
@@ -4136,8 +4370,10 @@ function renderEntreprise(){
   
   
   
+  
+  
   const goAdvanceButtonHtml = (f.goAdvance && !company.inJail && !atMaxGo)
-    ? `<button class="btn btn-pale-gold btn-sm" data-go-advance="${company.id}" title="${esc(nextGoAdvanceTooltip)}">💸 Vendre la prochaine subvention d'avance</button>`
+    ? `<button class="btn btn-pale-gold btn-sm" data-go-advance="${company.id}" title="${esc(nextGoAdvanceTooltip)}">💸 Subvention d'avance</button>`
     : '';
   const loansAsBorrower = (state.loans||[]).filter(l=>l.borrowerId===company.id && l.repaidSoFar<l.totalDue-1e-9);
   const loansAsLender = (state.loans||[]).filter(l=>l.lenderId===company.id && l.repaidSoFar<l.totalDue-1e-9);
@@ -4223,8 +4459,22 @@ function renderEntreprise(){
   
   
   
-  const proposeRevenueSwapButtonHtml = (f.revenueSwap && otherActiveCompaniesExist && revenueSwapSellableItems(company.id).length>0)
-    ? `<button class="btn btn-ghost btn-sm" id="openProposeRevenueSwapBtn">💱 Vente de revenu (ABS)</button>`
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  const proposeRevenueSwapButtonHtml = (f.revenueSwap && tradingWindowOpen() && absMaxCedablePct()>0 && otherActiveCompaniesExist && revenueSwapSellableItems(company.id).length>0)
+    ? `<button class="btn btn-pale-gold btn-sm" id="openProposeRevenueSwapBtn">💱 Titrisation</button>`
     : '';
 
   
@@ -4244,9 +4494,14 @@ function renderEntreprise(){
   
   
   const companyOwnsAnyProperty = state.properties.some(p=>p.owners.some(o=>o.companyId===company.id));
-  const sellShareButtonHtml = companyOwnsAnyProperty ? `<button class="btn btn-ghost btn-sm" id="openSellShareBtn">💵 Vendre une part</button>` : '';
+  
+  
+  
+  
+  
+  const sellShareButtonHtml = companyOwnsAnyProperty ? `<button class="btn btn-pale-gold btn-sm" id="openSellShareBtn">💵 Vendre une part</button>` : '';
   const mortgageButtonHtml = (f.mortgage && companyOwnsAnyProperty)
-    ? `<button class="btn btn-ghost btn-sm" id="openMortgageBtn">🏦 Hypothéquer</button>`
+    ? `<button class="btn btn-pale-gold btn-sm" id="openMortgageBtn">🏦 Hypothéquer</button>`
     : '';
   
   
@@ -4299,8 +4554,13 @@ function renderEntreprise(){
   const insuranceHasAnyItem = insuranceDefaultTerm==='sub'
     ? subInsurableItems(company.id).length>0
     : insurableItems(company.id, 'recurring', insuranceDefaultTermRolls).length>0;
+  
+  
+  
+  
+  
   const insuranceBundleButtonHtml = ((f.insurance||f.subInsurance) && insuranceHasAnyItem)
-    ? `<button class="btn btn-pale-gold btn-sm" id="openInsureBundleBtn">🛡️ Contrat d'assurance</button>`
+    ? `<button class="btn btn-ghost btn-sm" id="openInsureBundleBtn">🛡️ Contrat d'assurance</button>`
     : '';
   
   
@@ -4316,7 +4576,10 @@ function renderEntreprise(){
   
   
   
-  const payDividendButtonHtml = company.preferredDividendArrears>0 ? '' : `<button class="btn btn-pale-gold btn-sm" id="openPayDividendBtn">💎 Annoncer un dividende</button>`;
+  
+  
+  
+  const payDividendButtonHtml = company.preferredDividendArrears>0 ? '' : `<button class="btn btn-ghost btn-sm" id="openPayDividendBtn">💎 Annoncer un dividende</button>`;
   
   
   
@@ -4371,8 +4634,13 @@ function renderEntreprise(){
   
   
   const issueSharesDisabled = !!tradingWindowClosedReason || shareIssuanceRemaining<=1e-9;
-  const issueSharesButtonHtml = issueSharesDisabled ? '' : `<button class="btn btn-pale-gold btn-sm" id="openIssueSharesBtn">📤 Émission de nouvelles actions</button>`;
-  const buybackSharesButtonHtml = tradingWindowClosedReason ? '' : `<button class="btn btn-pale-gold btn-sm" id="openBuybackSharesBtn">📥 Rachat d'actions</button>`;
+  
+  
+  
+  const issueSharesButtonHtml = issueSharesDisabled ? '' : `<button class="btn btn-pale-gold btn-sm" id="openIssueSharesBtn">📤 Émission d'actions</button>`;
+  
+  
+  const buybackSharesButtonHtml = tradingWindowClosedReason ? '' : `<button class="btn btn-ghost btn-sm" id="openBuybackSharesBtn">📥 Rachat d'actions</button>`;
 
   
   
@@ -4385,7 +4653,10 @@ function renderEntreprise(){
   
   
   const issuePreferredDisabled = !!tradingWindowClosedReason || preferredCapRemainingForMe<=1e-9;
-  const issuePreferredButtonHtml = issuePreferredDisabled ? '' : `<button class="btn btn-pale-gold btn-sm" id="openIssuePreferredBtn">🎫 Émettre des parts privilégiées</button>`;
+  
+  
+  
+  const issuePreferredButtonHtml = issuePreferredDisabled ? '' : `<button class="btn btn-pale-gold btn-sm" id="openIssuePreferredBtn">🎫 Parts privilégiées</button>`;
 
   
   
@@ -4416,7 +4687,15 @@ function renderEntreprise(){
   
   
   
-  const hasAnyPendingItems = incomingSwapOffers.length || outgoingSwapOffers.length || incomingCompOffers.length || outgoingCompOffers.length || company.inJail;
+  
+  const otherAbsListingsToShow = !f.revenueSwap ? [] : state.revenueSwapListings.filter(l=>l.sellerId!==myCoId && !isPendingDismissed(myCoId, `abs:${l.id}`));
+  
+  
+  
+  
+  
+  
+  const hasAnyPendingItems = incomingSwapOffers.length || outgoingSwapOffers.length || incomingCompOffers.length || outgoingCompOffers.length || company.inJail || otherAbsListingsToShow.length;
   const offersHtml = !hasAnyPendingItems ? '' : `
   <div class="section-title" style="margin-top:16px;">Propositions en attente</div>
   ${company.inJail ? `
@@ -4431,18 +4710,8 @@ function renderEntreprise(){
     
     
     
-    
-    const fromAsset = swapAssetValueSummary(o.propA, o.fromCompanyId, o.generalA);
-    const toAsset = swapAssetValueSummary(o.propB, o.toCompanyId, o.generalB);
-    
-    
-    
-    const eventCapText = (o.capA||o.capB) ? ` (plafond par événement: ${o.capA?fmt(o.capA):'illimité'} / ${o.capB?fmt(o.capB):'illimité'})` : '';
-    const durationCapText = o.budgetMode
-      ? ` — budget cumulatif (jusqu'à ${fmt(o.budgetCapA)} pour ${esc(from?from.name:'?')} / ${fmt(o.budgetCapB)} pour vous), sans durée${eventCapText}`
-      : ` pour ${o.years} an(s)${eventCapText}`;
     return `<div class="deed-actions" style="margin-bottom:6px;">
-      <span class="ownerchip">🔄 Swap de loyers — ${esc(from?from.name:'?')} propose: ${esc(fromAsset.label)} (vous obtiendriez ${fromAsset.rentShareLabel} par visite d'un tiers) ⇄ ${esc(toAsset.label)} (vous céderiez ${toAsset.rentShareLabel} par visite d'un tiers)${durationCapText}</span>
+      <span class="ownerchip">🔄 Swap de loyers — ${esc(from?from.name:'?')}</span>
       <button class="btn btn-ghost btn-sm" data-swap-offer-details="${o.id}">Détails</button>
       <button class="btn btn-primary btn-sm" data-accept-swap-offer="${o.id}">Accepter</button>
       <button class="btn btn-brick btn-sm" data-refuse-swap-offer="${o.id}">Refuser</button>
@@ -4450,8 +4719,11 @@ function renderEntreprise(){
   }).join('')}
   ${incomingCompOffers.map(o=>{
     const from = companyById(o.fromCompanyId);
+    
+    
     return `<div class="deed-actions" style="margin-bottom:6px;">
-      <span class="ownerchip">🤝 Accord de compensation de loyer — ${esc(from?from.name:'?')} propose (intérêt: ${(o.interestRate*100).toFixed(0)}%, frais de ${fmt(state.settings.rentCompensationFee)} chacun à l'acceptation)</span>
+      <span class="ownerchip">🤝 Accord de compensation — ${esc(from?from.name:'?')}</span>
+      <button class="btn btn-ghost btn-sm" data-comp-offer-details="${o.id}">Détails</button>
       <button class="btn btn-primary btn-sm" data-accept-comp-offer="${o.id}">Accepter</button>
       <button class="btn btn-brick btn-sm" data-refuse-comp-offer="${o.id}">Refuser</button>
     </div>`;
@@ -4460,14 +4732,12 @@ function renderEntreprise(){
     const to = companyById(o.toCompanyId);
     
     
-    const yourAsset = swapAssetValueSummary(o.propA, o.fromCompanyId, o.generalA);
-    const theirAsset = swapAssetValueSummary(o.propB, o.toCompanyId, o.generalB);
     
     
-    const eventCapSuffix = (o.capA||o.capB) ? ` (plafond par événement: ${o.capA?fmt(o.capA):'illimité'} / ${o.capB?fmt(o.capB):'illimité'})` : '';
-    const budgetSuffix = o.budgetMode ? ` (budget cumulatif: jusqu'à ${fmt(o.budgetCapA)} pour vous / ${fmt(o.budgetCapB)} pour ${esc(to?to.name:'?')}, sans durée)${eventCapSuffix}` : '';
+    
+    
     return `<div class="deed-actions" style="margin-bottom:6px;">
-      <span class="small">🔄 Swap de loyers proposé à ${esc(to?to.name:'?')} — ${esc(yourAsset.label)} (vous céderiez ${yourAsset.rentShareLabel} par visite d'un tiers) ⇄ ${esc(theirAsset.label)} (vous obtiendriez ${theirAsset.rentShareLabel} par visite d'un tiers)${budgetSuffix} — en attente de sa réponse.</span>
+      <span class="small">🔄 Swap de loyers proposé à ${esc(to?to.name:'?')} — en attente de sa réponse.</span>
       <button class="btn btn-ghost btn-sm" data-swap-offer-details="${o.id}">Détails</button>
       <button class="btn btn-ghost btn-sm" data-cancel-swap-offer="${o.id}">Retirer</button>
     </div>`;
@@ -4477,6 +4747,32 @@ function renderEntreprise(){
     return `<div class="deed-actions" style="margin-bottom:6px;">
       <span class="small">🤝 Accord de compensation proposé à ${esc(to?to.name:'?')} — en attente de sa réponse.</span>
       <button class="btn btn-ghost btn-sm" data-cancel-comp-offer="${o.id}">Retirer</button>
+    </div>`;
+  }).join('')}
+  ${otherAbsListingsToShow.map(l=>{
+    const seller = companyById(l.sellerId);
+    const labels = l.propertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p?(p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name):'?'; }).join(', ');
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    const mySeniorSub = l.seniorSubs.find(s=>s.holderType==='company' && s.holderId===myCoId);
+    const myJuniorSub = l.juniorSubs.find(s=>s.holderType==='company' && s.holderId===myCoId);
+    const mySubsConfirmHtml = (mySeniorSub||myJuniorSub) ? `<div class="small" style="color:#047857;margin-top:2px;">
+      ${mySeniorSub?`✓ Vous avez souscrit jusqu'à ${fmt(mySeniorSub.maxAmount)} (senior). `:''}${myJuniorSub?`✓ Vous avez souscrit jusqu'à ${fmt(myJuniorSub.maxAmount)} (junior).`:''}
+    </div>` : '';
+    return `<div class="deed-actions" style="margin-bottom:6px;">
+      <span class="ownerchip">📄 Émission ABS — ${esc(seller?seller.name:'?')} (${esc(labels)}, ${Math.round(l.cededPctOfShare*100)}% cédé, ${l.years} an(s), senior ${fmt(l.tranches.seniorAmount)} @ prime ${Math.round(l.tranches.seniorPremiumPct*100)}% / junior ${fmt(l.tranches.juniorAmount)})</span>
+      <button class="btn btn-gold btn-sm" data-subscribe-revenue-listing="${l.id}" data-tranche="senior">${mySeniorSub?'Modifier (senior)':'Souscrire (senior)'}</button>
+      <button class="btn btn-gold btn-sm" data-subscribe-revenue-listing="${l.id}" data-tranche="junior">${myJuniorSub?'Modifier (junior)':'Souscrire (junior)'}</button>
+      <button class="btn btn-brick btn-sm" data-dismiss-pending="abs:${l.id}">Refuser</button>
+      ${mySubsConfirmHtml}
     </div>`;
   }).join('')}
   `;
@@ -4495,47 +4791,19 @@ function renderEntreprise(){
   
   
   
-  const allSubInsuredProps = state.properties.filter(p=>p.subInsurance);
-  
-  
-  
-  
-  const subInsuranceActiveListHtml = (f.subInsurance && allSubInsuredProps.length>0) ? `
-  <div class="small" style="margin-top:10px;font-weight:600;">Contrats sous-standard en vigueur</div>
-  ${allSubInsuredProps.map(p=>{
-    const insured = companyById(p.subInsurance.insuredCompanyId);
-    return `<div class="deed-actions" style="margin-bottom:6px;">
-      <span class="ownerchip">${propertyColorChip(p)} — ${esc(insured?insured.name:'?')} · vendeur: ${esc(insurerLabel(p.subInsurance.insurerId))} · prime ${fmt(p.subInsurance.premium)} · expire automatiquement après le prochain lancer de ${esc(insured?insured.name:'?')}</span>
-      <button class="btn btn-ghost btn-sm" data-cancel-sub-insurance="${p.id}">Annuler (rembourse)</button>
-    </div>`;
-  }).join('')}` : '';
   
   
   
   
   
   
-  const produitsContractRow = c=>{
-    const insuredCo = companyById(c.insuredCompanyId);
-    return `<tr>
-      <td>${c.items.map(itemNameChip).join(', ')}</td>
-      <td>${esc(insuredCo?insuredCo.name:'?')}</td>
-      <td>${esc(insurerLabel(c.insurerId))}</td>
-      <td class="money">${fmt(c.premium)}</td>
-      <td></td>
-    </tr>`;
-  };
-  const produitsSubRow = p=>{
-    const insuredCo = companyById(p.subInsurance.insuredCompanyId);
-    const canTakeOver = myCoId!==p.subInsurance.insuredCompanyId && myCoId!==p.subInsurance.insurerId;
-    return `<tr>
-      <td>${propertyColorChip(p)} (sous-standard)</td>
-      <td>${esc(insuredCo?insuredCo.name:'?')}</td>
-      <td>${esc(insurerLabel(p.subInsurance.insurerId))}</td>
-      <td class="money">${fmt(p.subInsurance.premium)}</td>
-      <td>${canTakeOver?`<button class="btn btn-gold btn-sm" data-takeover-subinsurance="${p.id}">Reprendre (devenir assureur)</button>`:''}</td>
-    </tr>`;
-  };
+  
+  
+  
+  
+  
+  
+  
   
   
   
@@ -4549,117 +4817,25 @@ function renderEntreprise(){
   
   const allProductsEmpty = myInsuredContracts.length===0 && subInsuredMine.length===0
     && myInsurerContracts.length===0 && subInsurerMine.length===0
-    && contracts.length===0 && allSubInsuredProps.length===0
     && (!f.rentSwap || state.rentSwaps.length===0)
     && (!f.rentCompensation || state.rentCompensations.length===0)
     
     
     
     
-    && (!f.revenueSwap || (state.revenueSwapListings.length===0 && state.revenueSwaps.length===0))
+    
+    
+    && (!f.revenueSwap || (state.revenueSwapListings.filter(l=>l.sellerId===myCoId).length===0 && state.revenueSwaps.length===0))
     && loansAsBorrower.length===0 && loansAsLender.length===0;
   
   
   
   
   
-  const marketContractsHtml = (contracts.length===0 && allSubInsuredProps.length===0) ? '' : `
-  <div class="small" style="font-weight:600;margin-top:14px;">Marché des contrats — contrats actifs (reprise sous-standard uniquement ; la résiliation de votre propre contrat se fait plus bas, dans la section où vous apparaissez comme assurée)</div>
-  ${contracts.length>0?`
-  <table>
-    <tr><th>Couverture</th><th>Assuré</th><th>Assureur actuel</th><th>Prime</th><th></th></tr>
-    ${contracts.map(produitsContractRow).join('')}
-  </table>` : ''}
-  ${(f.subInsurance && allSubInsuredProps.length>0)?`
-  <table style="margin-top:8px;">
-    <tr><th>Couverture</th><th>Assuré</th><th>Assureur actuel</th><th>Prime</th><th></th></tr>
-    ${allSubInsuredProps.map(produitsSubRow).join('')}
-  </table>` : ''}`;
   
   
   
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  const bankInsuredProps = state.properties.filter(p=>p.insurance && p.insurance.insurerId==='BANK');
-  const bankTaxInsurances = state.taxInsurances.filter(t=>t.insurerId==='BANK');
-  const bankSubInsuredProps = f.subInsurance ? allSubInsuredProps.filter(p=>p.subInsurance.insurerId==='BANK') : [];
-  const liveTakeoverPropRow = p=>{
-    const insuredCo = companyById(p.insurance.insuredCompanyId);
-    const canTakeOver = myCoId!==p.insurance.insuredCompanyId;
-    const live = liveTakeoverPropQuote(p, p.insurance.insuredCompanyId, p.insurance.claimMode, p.insurance.deductible, p.insurance.quotedTerm);
-    return `<tr>
-      <td>${propertyColorChip(p)}</td>
-      <td>${esc(insuredCo?insuredCo.name:'?')}</td>
-      <td class="money">${fmt(p.insurance.premium)}</td>
-      <td class="money" style="font-weight:700;color:var(--gold);">${fmt(live.ceil)}</td>
-      <td>${canTakeOver?`<button class="btn btn-gold btn-sm" data-takeover-live-prop="${p.id}">Devenir l'assureur</button>`:''}</td>
-    </tr>`;
-  };
-  const liveTakeoverTaxRow = t=>{
-    const insuredCo = companyById(t.insuredCompanyId);
-    const canTakeOver = myCoId!==t.insuredCompanyId;
-    const label = (TAX_SQUARES.find(x=>x.pos===t.taxPos)||{}).label || 'Taxe';
-    const live = liveTakeoverTaxQuote(t.taxPos, t.insuredCompanyId, t.claimMode, t.deductible, t.quotedTerm);
-    return `<tr>
-      <td>${esc(label)}</td>
-      <td>${esc(insuredCo?insuredCo.name:'?')}</td>
-      <td class="money">${fmt(t.premium)}</td>
-      <td class="money" style="font-weight:700;color:var(--gold);">${fmt(live.ceil)}</td>
-      <td>${canTakeOver?`<button class="btn btn-gold btn-sm" data-takeover-live-tax="${t.taxPos}" data-takeover-live-tax-co="${t.insuredCompanyId}">Devenir l'assureur</button>`:''}</td>
-    </tr>`;
-  };
-  const liveTakeoverSubRow = p=>{
-    const insuredCo = companyById(p.subInsurance.insuredCompanyId);
-    const canTakeOver = myCoId!==p.subInsurance.insuredCompanyId;
-    
-    
-    
-    const live = liveTakeoverSubQuote(p, p.subInsurance.insuredCompanyId, p.subInsurance.deductible);
-    return `<tr>
-      <td>${propertyColorChip(p)} (sous-standard)</td>
-      <td>${esc(insuredCo?insuredCo.name:'?')}</td>
-      <td class="money">${fmt(p.subInsurance.premium)}</td>
-      <td class="money" style="font-weight:700;color:var(--gold);">${fmt(live.ceil)}</td>
-      <td>${canTakeOver?`<button class="btn btn-gold btn-sm" data-takeover-live-sub="${p.id}">Devenir l'assureur</button>`:''}</td>
-    </tr>`;
-  };
-  
-  
-  
-  const becomeInsurerEmpty = (bankInsuredProps.length+bankTaxInsurances.length+bankSubInsuredProps.length)===0;
-  const becomeInsurerHtml = `
-  <div class="small" style="font-weight:600;margin-top:14px;">Devenir l'assureur</div>
-  ${becomeInsurerEmpty?'<div class="empty">Aucun contrat actuellement assuré par la banque pour le moment.</div>':`
-  <table>
-    <tr><th>Couverture</th><th>Assuré</th><th>Prime d'origine</th><th>Prix de reprise actuel</th><th></th></tr>
-    ${bankInsuredProps.map(liveTakeoverPropRow).join('')}
-    ${bankTaxInsurances.map(liveTakeoverTaxRow).join('')}
-    ${bankSubInsuredProps.map(liveTakeoverSubRow).join('')}
-  </table>`}`;
-  
-  
-  
-  
-  
-  const produitsFinanciersEmpty = allProductsEmpty && becomeInsurerEmpty;
+  const produitsFinanciersEmpty = allProductsEmpty;
   
   
   
@@ -4747,19 +4923,18 @@ function renderEntreprise(){
   
   
   
-  const revenueSwapListingsMarketHtml = (!f.revenueSwap || state.revenueSwapListings.length===0) ? '' : `
-  <div class="small" style="font-weight:600;margin-top:14px;">Marché des émissions ABS</div>
+  
+  const myAbsListings = state.revenueSwapListings.filter(l=>l.sellerId===myCoId);
+  const revenueSwapListingsMarketHtml = (!f.revenueSwap || myAbsListings.length===0) ? '' : `
+  <div class="small" style="font-weight:600;margin-top:14px;">Marché des émissions ABS — mon annonce</div>
   <table style="margin-top:6px;">
     <tr><th>Émettrice</th><th>Terrain(s)</th><th>% cédé</th><th>Durée</th><th>Senior (recherché / prime)</th><th>Junior (recherché)</th><th>Souscriptions</th><th></th></tr>
-    ${state.revenueSwapListings.map(l=>{
+    ${myAbsListings.map(l=>{
       const seller = companyById(l.sellerId);
       const labels = l.propertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p?(p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name):'?'; }).join(', ');
-      const mine = l.sellerId===myCoId;
       const seniorSubTotal = l.seniorSubs.reduce((s,x)=>s+x.maxAmount,0), juniorSubTotal = l.juniorSubs.reduce((s,x)=>s+x.maxAmount,0);
       const subsText = `Senior: ${l.seniorSubs.length} souscripteur(s), ${fmt(seniorSubTotal)} max cumulé<br>Junior: ${l.juniorSubs.length} souscripteur(s), ${fmt(juniorSubTotal)} max cumulé`;
-      const actionHtml = mine
-        ? `<button class="btn btn-ghost btn-sm" data-cancel-revenue-listing="${l.id}">Retirer</button>`
-        : `<button class="btn btn-gold btn-sm" data-subscribe-revenue-listing="${l.id}" data-tranche="senior">Souscrire (senior)</button> <button class="btn btn-gold btn-sm" data-subscribe-revenue-listing="${l.id}" data-tranche="junior">Souscrire (junior)</button>`;
+      const actionHtml = `<button class="btn btn-ghost btn-sm" data-cancel-revenue-listing="${l.id}">Retirer</button>`;
       return `<tr>
         <td>${esc(seller?seller.name:'?')}</td>
         <td>${esc(labels)}</td>
@@ -4797,6 +4972,88 @@ function renderEntreprise(){
       </tr>`;
     }).join('')}
   </table>`;
+  
+  
+  
+  
+  
+  
+  
+  
+  const myAbsHoldingsList = f.revenueSwap ? myAbsHoldings('company', myCoId) : [];
+  const myAbsHoldingsHtml = myAbsHoldingsList.length===0 ? '' : `
+  <div class="small" style="font-weight:600;margin-top:14px;">Mes émissions ABS souscrites</div>
+  <table style="margin-top:6px;">
+    <tr><th>Émettrice</th><th>Tranche</th><th>Capital de référence</th><th>Reçu à ce jour</th><th>Années restantes</th><th>Senior — reçu</th><th>Senior — reste à recevoir</th><th>Junior — reçu</th></tr>
+    ${myAbsHoldingsList.map(r=>`<tr>
+      <td>${esc(r.seller?r.seller.name:'?')}${r.seller && r.seller.id===myCoId && r.tranche==='junior'?' <span class="small">(rétention)</span>':''}</td>
+      <td>${r.trancheLabel}</td>
+      <td class="money">${fmt(r.cost)}</td>
+      <td class="money">${fmt(r.receivedSoFar)}</td>
+      <td>${r.yearsRemaining}</td>
+      <td class="money">${fmt(r.seniorReceivedTotal)}</td>
+      <td class="money">${fmt(r.seniorRemainingToReceive)}</td>
+      <td class="money">${fmt(r.juniorReceivedTotal)}</td>
+    </tr>`).join('')}
+  </table>`;
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  const produitsAssuranceHtml = (f.insurance||f.subInsurance) ? `
+  ${(myInsuredContracts.length>0 || subInsuredMine.length>0)?`
+  <div class="small" style="font-weight:600;">Assurances — en tant qu'assurée</div>
+  <table><tr><th>Éléments couverts</th><th>Assureur</th><th>Prime</th><th></th></tr>
+    ${myInsuredContracts.map(c=>{
+      
+      
+      
+      const cancellable = state.gameClock.rollCount === c.signedAtRoll;
+      return `<tr><td>${c.items.map(itemNameChip).join(', ')}</td><td>${esc(insurerLabel(c.insurerId))}</td><td class="money">${fmt(c.premium)}</td><td>${cancellable?`<button class="btn btn-ghost btn-sm" data-cancel-contract="${c.contractId}">Annuler (rembourse)</button>`:''}</td></tr>`;
+    }).join('')}
+    ${subInsuredMine.map(p=>{
+      const cancellable = state.gameClock.rollCount === p.subInsurance.signedAtRoll;
+      return `<tr><td>${propertyColorChip(p)} (sous-standard)</td><td>${esc(insurerLabel(p.subInsurance.insurerId))}</td><td class="money">${fmt(p.subInsurance.premium)}</td><td>${cancellable?`<button class="btn btn-ghost btn-sm" data-cancel-sub-insurance="${p.id}">Annuler (rembourse)</button>`:''}</td></tr>`;
+    }).join('')}
+  </table>` : ''}
+  ${(myInsurerContracts.length>0 || subInsurerMine.length>0)?`
+  <div class="small" style="font-weight:600;margin-top:8px;">Assurances — en tant qu'assureur</div>
+  <table><tr><th>Éléments couverts</th><th>Assurée</th><th>Prime perçue</th></tr>
+    ${myInsurerContracts.map(c=>`<tr><td>${c.items.map(itemNameChip).join(', ')}</td><td>${esc((companyById(c.insuredCompanyId)||{}).name||'?')}</td><td class="money">${fmt(c.premium)}</td></tr>`).join('')}
+    ${subInsurerMine.map(p=>`<tr><td>${propertyColorChip(p)} (sous-standard)</td><td>${esc((companyById(p.subInsurance.insuredCompanyId)||{}).name||'?')}</td><td class="money">${fmt(p.subInsurance.premium)}</td></tr>`).join('')}
+  </table>` : ''}` : '';
+  const loansBorrowerHtml = (f.loan && loansAsBorrower.length>0)?`
+  <div class="small" style="font-weight:600;">Prêts — emprunté (à rembourser)</div>
+  <table><tr><th>Prêteur</th><th>Principal</th><th>Total dû</th><th>Remboursé</th><th>Type</th></tr>
+    ${loansAsBorrower.map(l=>`<tr><td>${esc(loanLenderLabel(l))}</td><td class="money">${fmt(l.principal)}</td><td class="money">${fmt(l.totalDue)}</td><td class="money">${fmt(l.repaidSoFar)}</td><td>${l.secured?'🔒 Garantie':'Non garantie'}</td></tr>`).join('')}
+  </table>
+  ${loansAsBorrower.some(l=>l.secured) ? `<div class="small" style="margin-top:4px;">🔒 Au moins un de ces prêts est <b>garanti</b> — voir RESUME_ET_REGLES.md section 233: si ${esc(company.name)} n'a pas fini de le rembourser, la valeur de vos parts de fondateur dans ${esc(company.name)} sera amputée en fin de partie pour couvrir le solde encore dû (plafonné à la valeur de ces parts).</div>` : ''}` : '';
+  const loansLenderHtml = (f.loan && loansAsLender.length>0)?`
+  <div class="small" style="font-weight:600;${loansBorrowerHtml?'margin-top:8px;':''}">Prêts — prêté (à recevoir)</div>
+  <table><tr><th>Emprunteuse</th><th>Principal</th><th>Total dû</th><th>Remboursé</th></tr>
+    ${loansAsLender.map(l=>`<tr><td>${esc((companyById(l.borrowerId)||{}).name||'?')}</td><td class="money">${fmt(l.principal)}</td><td class="money">${fmt(l.totalDue)}</td><td class="money">${fmt(l.repaidSoFar)}</td></tr>`).join('')}
+  </table>` : '';
+  
+  
+  
+  const produitsGroups = [
+    {icon:'🛡️', label:'Assurances', html: produitsAssuranceHtml},
+    {icon:'🔄', label:'Swaps & compensations de loyer', html: swapsActiveHtml + compensationActiveHtml},
+    {icon:'📄', label:'Émissions ABS', html: revenueSwapListingsMarketHtml + revenueSwapsActiveHtml + myAbsHoldingsHtml},
+    {icon:'🏦', label:'Prêts', html: loansBorrowerHtml + loansLenderHtml}
+  ].filter(g=>g.html);
+  const produitsGroupsHtml = produitsGroups.map((g,idx)=>`
+  <div style="${idx>0?'border-top:1px solid var(--line);padding-top:12px;margin-top:14px;':''}">
+    <div class="small" style="font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--muted);margin-bottom:6px;">${g.icon} ${g.label}</div>
+    ${g.html}
+  </div>`).join('');
 
   
   
@@ -4812,6 +5069,7 @@ function renderEntreprise(){
     ? ` <span class="small" style="font-weight:400;">(Subventions d'avance : ${company.goAdvancesOwed}${state.settings.goAdvanceMax>0?` / ${state.settings.goAdvanceMax}`:''})</span>`
     : '';
 
+  
   
   
   
@@ -4911,13 +5169,16 @@ function renderEntreprise(){
   
   
   
+  
+  
+  
+  
   return `
   ${entActionsMenuHtml}${reviewLastTurnButtonHtml('ent')}
   ${negativeCashBannerHtml}
   ${offersHtml}
 
   ${entrepriseAccordion('identite', `${esc(company.name)} <span class="small">(${esc(typeLabel)})</span>`, `
-  ${company.description ? `<div class="small" style="margin-bottom:10px;">${esc(company.description)}</div>` : ''}
   <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
     <div style="flex:1 1 200px;">
       <div class="small" style="font-weight:600;">Trésorerie</div>
@@ -4975,41 +5236,7 @@ function renderEntreprise(){
   `)}
 
   ${produitsFinanciersEmpty ? '' : entrepriseAccordion('produits', `Produits financiers`, `
-  ${(f.insurance||f.subInsurance)?`
-  ${(myInsuredContracts.length>0 || subInsuredMine.length>0)?`
-  <div class="small" style="font-weight:600;">Assurances — en tant qu'assurée</div>
-  <table><tr><th>Éléments couverts</th><th>Assureur</th><th>Prime</th><th></th></tr>
-    ${myInsuredContracts.map(c=>`<tr><td>${c.items.map(itemNameChip).join(', ')}</td><td>${esc(insurerLabel(c.insurerId))}</td><td class="money">${fmt(c.premium)}</td><td><button class="btn btn-ghost btn-sm" data-cancel-contract="${c.contractId}">Annuler (rembourse)</button></td></tr>`).join('')}
-    ${subInsuredMine.map(p=>`<tr><td>${propertyColorChip(p)} (sous-standard)</td><td>${esc(insurerLabel(p.subInsurance.insurerId))}</td><td class="money">${fmt(p.subInsurance.premium)}</td><td><button class="btn btn-ghost btn-sm" data-cancel-sub-insurance="${p.id}">Annuler (rembourse)</button></td></tr>`).join('')}
-  </table>` : ''}
-  ${(myInsurerContracts.length>0 || subInsurerMine.length>0)?`
-  <div class="small" style="font-weight:600;margin-top:8px;">Assurances — en tant qu'assureur</div>
-  <table><tr><th>Éléments couverts</th><th>Assurée</th><th>Prime perçue</th></tr>
-    ${myInsurerContracts.map(c=>`<tr><td>${c.items.map(itemNameChip).join(', ')}</td><td>${esc((companyById(c.insuredCompanyId)||{}).name||'?')}</td><td class="money">${fmt(c.premium)}</td></tr>`).join('')}
-    ${subInsurerMine.map(p=>`<tr><td>${propertyColorChip(p)} (sous-standard)</td><td>${esc((companyById(p.subInsurance.insuredCompanyId)||{}).name||'?')}</td><td class="money">${fmt(p.subInsurance.premium)}</td></tr>`).join('')}
-  </table>` : ''}
-  ${subInsuranceActiveListHtml}
-
-  ${marketContractsHtml}` : ''}
-
-  ${swapsActiveHtml}
-  ${compensationActiveHtml}
-  ${revenueSwapListingsMarketHtml}
-  ${revenueSwapsActiveHtml}
-
-  ${(f.loan && loansAsBorrower.length>0)?`
-  <div class="small" style="font-weight:600;margin-top:14px;">Prêts — emprunté (à rembourser)</div>
-  <table><tr><th>Prêteur</th><th>Principal</th><th>Total dû</th><th>Remboursé</th><th>Type</th></tr>
-    ${loansAsBorrower.map(l=>`<tr><td>${esc(loanLenderLabel(l))}</td><td class="money">${fmt(l.principal)}</td><td class="money">${fmt(l.totalDue)}</td><td class="money">${fmt(l.repaidSoFar)}</td><td>${l.secured?'🔒 Garantie':'Non garantie'}</td></tr>`).join('')}
-  </table>
-  ${loansAsBorrower.some(l=>l.secured) ? `<div class="small" style="margin-top:4px;">🔒 Au moins un de ces prêts est <b>garanti</b> — voir RESUME_ET_REGLES.md section 233: si ${esc(company.name)} n'a pas fini de le rembourser, la valeur de vos parts de fondateur dans ${esc(company.name)} sera amputée en fin de partie pour couvrir le solde encore dû (plafonné à la valeur de ces parts).</div>` : ''}` : ''}
-  ${(f.loan && loansAsLender.length>0)?`
-  <div class="small" style="font-weight:600;margin-top:8px;">Prêts — prêté (à recevoir)</div>
-  <table><tr><th>Emprunteuse</th><th>Principal</th><th>Total dû</th><th>Remboursé</th></tr>
-    ${loansAsLender.map(l=>`<tr><td>${esc((companyById(l.borrowerId)||{}).name||'?')}</td><td class="money">${fmt(l.principal)}</td><td class="money">${fmt(l.totalDue)}</td><td class="money">${fmt(l.repaidSoFar)}</td></tr>`).join('')}
-  </table>` : ''}
-  ${allProductsEmpty?'<div class="empty">Aucun produit financier actif pour le moment.</div>':''}
-  ${becomeInsurerHtml}
+  ${allProductsEmpty?'<div class="empty">Aucun produit financier actif pour le moment.</div>':produitsGroupsHtml}
   `)}
 
   ${(()=>{
@@ -5059,6 +5286,84 @@ function renderEntreprise(){
       </div>`).join('')}
   </div>
   `)}`;
+}
+
+
+
+
+
+
+
+
+function renderDevenirAssureur(){
+  const company = myCompany();
+  if(!company) return '<div class="empty">Vous n’êtes CEO d’aucune entreprise.</div>';
+  const myCoId = company.id;
+  const f = state.settings.features;
+  const allSubInsuredProps = state.properties.filter(p=>p.subInsurance);
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  const bankInsuredProps = state.properties.filter(p=>p.insurance && p.insurance.insurerId==='BANK');
+  const bankTaxInsurances = state.taxInsurances.filter(t=>t.insurerId==='BANK');
+  const bankSubInsuredProps = f.subInsurance ? allSubInsuredProps.filter(p=>p.subInsurance.insurerId==='BANK') : [];
+  const liveTakeoverPropRow = p=>{
+    const insuredCo = companyById(p.insurance.insuredCompanyId);
+    const canTakeOver = myCoId!==p.insurance.insuredCompanyId;
+    const live = liveTakeoverPropQuote(p, p.insurance.insuredCompanyId, p.insurance.claimMode, p.insurance.deductible, p.insurance.quotedTerm);
+    return `<tr>
+      <td>${propertyColorChip(p)}</td>
+      <td>${esc(insuredCo?insuredCo.name:'?')}</td>
+      <td class="money">${fmt(p.insurance.premium)}</td>
+      <td class="money" style="font-weight:700;color:var(--gold);">${fmt(live.ceil)}</td>
+      <td>${canTakeOver?`<button class="btn btn-gold btn-sm" data-takeover-live-prop="${p.id}">Devenir l'assureur</button>`:''}</td>
+    </tr>`;
+  };
+  const liveTakeoverTaxRow = t=>{
+    const insuredCo = companyById(t.insuredCompanyId);
+    const canTakeOver = myCoId!==t.insuredCompanyId;
+    const label = (TAX_SQUARES.find(x=>x.pos===t.taxPos)||{}).label || 'Taxe';
+    const live = liveTakeoverTaxQuote(t.taxPos, t.insuredCompanyId, t.claimMode, t.deductible, t.quotedTerm);
+    return `<tr>
+      <td>${esc(label)}</td>
+      <td>${esc(insuredCo?insuredCo.name:'?')}</td>
+      <td class="money">${fmt(t.premium)}</td>
+      <td class="money" style="font-weight:700;color:var(--gold);">${fmt(live.ceil)}</td>
+      <td>${canTakeOver?`<button class="btn btn-gold btn-sm" data-takeover-live-tax="${t.taxPos}" data-takeover-live-tax-co="${t.insuredCompanyId}">Devenir l'assureur</button>`:''}</td>
+    </tr>`;
+  };
+  const liveTakeoverSubRow = p=>{
+    const insuredCo = companyById(p.subInsurance.insuredCompanyId);
+    const canTakeOver = myCoId!==p.subInsurance.insuredCompanyId;
+    
+    
+    
+    const live = liveTakeoverSubQuote(p, p.subInsurance.insuredCompanyId, p.subInsurance.deductible);
+    return `<tr>
+      <td>${propertyColorChip(p)} (sous-standard)</td>
+      <td>${esc(insuredCo?insuredCo.name:'?')}</td>
+      <td class="money">${fmt(p.subInsurance.premium)}</td>
+      <td class="money" style="font-weight:700;color:var(--gold);">${fmt(live.ceil)}</td>
+      <td>${canTakeOver?`<button class="btn btn-gold btn-sm" data-takeover-live-sub="${p.id}">Devenir l'assureur</button>`:''}</td>
+    </tr>`;
+  };
+  const becomeInsurerEmpty = (bankInsuredProps.length+bankTaxInsurances.length+bankSubInsuredProps.length)===0;
+  return `
+  <div class="section-title">Devenir l'assureur</div>
+  <div class="small" style="margin-bottom:14px;">Reprenez individuellement, à prix live, un contrat d'assurance encore assuré par la banque — élément par élément, sans convaincre personne.</div>
+  ${becomeInsurerEmpty?'<div class="empty">Aucun contrat actuellement assuré par la banque pour le moment.</div>':`
+  <table>
+    <tr><th>Couverture</th><th>Assuré</th><th>Prime d'origine</th><th>Prix de reprise actuel</th><th></th></tr>
+    ${bankInsuredProps.map(liveTakeoverPropRow).join('')}
+    ${bankTaxInsurances.map(liveTakeoverTaxRow).join('')}
+    ${bankSubInsuredProps.map(liveTakeoverSubRow).join('')}
+  </table>`}`;
 }
 
 
@@ -5749,6 +6054,12 @@ function renderCompanySetupGate(me){
       </div>
       <label>Suffixe juridique (cosmétique)</label>
       <select id="cSuffix"><option value="">Aucun</option><option value="Inc.">Inc.</option><option value="Ltée">Ltd. / Ltée</option><option value="Corp.">Corp. / Corpo</option><option value="S.A.N.">S.A.N.</option></select>
+      <!-- Section 282 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: logo optionnel à la
+           fondation, visible UNIQUEMENT dans la diffusion sur l'écran télé (mode spectateur) lors de la
+           présentation de l'entreprise — jamais ailleurs (voir tvSlideCompanyShowcase). -->
+      <label>Logo (optionnel — visible uniquement sur l'écran spectateur lors de la présentation de l'entreprise)</label>
+      <input type="file" id="cLogo" accept="image/*">
+      <div id="cLogoPreview" style="margin-top:6px;"></div>
       <div class="small" style="margin-top:10px;">Montant investi (fixe, identique pour tous): <b>${fmt(amount)}</b> — achète ${ceoShares}/${totalShares} parts (${ceoStartPctLabel}% du total) à ${fmtPrice(priceShare)}/part. Votre encaisse: ${fmt(me.cash)}.</div>
       ${insufficient?`<div class="small" style="color:var(--brick,#C0392B);margin-top:6px;">Encaisse insuffisante pour ce montant fixe — contactez le créateur de la partie pour ajuster votre encaisse (onglet Administration) avant de fonder votre entreprise.</div>`:''}
       <div class="modal-actions" style="margin-top:14px;">
@@ -5784,6 +6095,24 @@ function renderCompanySetupGate(me){
     const growthRow = document.getElementById('cCroissanceTierRow');
     if(growthRow) growthRow.style.display = e.target.value==='croissance' ? 'block' : 'none';
   });
+  
+  
+  
+  
+  let cLogoDataUrl = null;
+  const cLogoInput = document.getElementById('cLogo');
+  if(cLogoInput) cLogoInput.addEventListener('change', async ()=>{
+    const file = cLogoInput.files && cLogoInput.files[0];
+    const previewEl = document.getElementById('cLogoPreview');
+    if(!file){ cLogoDataUrl = null; if(previewEl) previewEl.innerHTML = ''; return; }
+    try{
+      cLogoDataUrl = await resizeImageFileToDataUrl(file, 240);
+      if(previewEl) previewEl.innerHTML = `<img src="${cLogoDataUrl}" alt="Logo" style="max-height:80px;max-width:200px;border-radius:6px;border:1px solid var(--line);">`;
+    }catch(err){
+      cLogoDataUrl = null;
+      if(previewEl) previewEl.innerHTML = `<div class="small" style="color:var(--brick,#C0392B);">Impossible de charger cette image.</div>`;
+    }
+  });
   document.getElementById('cSubmit').addEventListener('click', async ()=>{
     const name = document.getElementById('cName').value;
     const desc = document.getElementById('cDesc').value;
@@ -5800,7 +6129,7 @@ function renderCompanySetupGate(me){
     
     
     const croissanceTier = type==='croissance' ? document.getElementById('cCroissanceTier').value : undefined;
-    await createCompany(me.id, finalName, desc, type, dividendPct, croissanceTier);
+    await createCompany(me.id, finalName, desc, type, dividendPct, croissanceTier, cLogoDataUrl);
   });
 }
 
@@ -6519,6 +6848,11 @@ function visibleTabs(){
   
   
   
+  if(myCompany()) tabs.push('assureur');
+  
+  
+  
+  
   
   if(f.etf) tabs.push('etf');
   
@@ -6841,6 +7175,19 @@ function render(){
   <div class="actionstatusbar">
     <div style="flex:1;min-width:200px;">${readinessRowHtml}</div>
   </div>` : '';
+  
+  
+  
+  
+  
+  
+  
+  
+  const periodEndBannerHtml = yearEndWindowOpen()
+    ? `<div class="periodendbanner periodendbanner-year">FIN D'ANNÉE FINANCIÈRE</div>`
+    : semesterStartWindowOpen()
+      ? `<div class="periodendbanner periodendbanner-semester">FIN DE SEMESTRE</div>`
+      : '';
   let html = `
   <div class="topbar">
     <div>Partie <span class="codebox">${esc(gameCode)}</span> &nbsp; Vous êtes:
@@ -6851,6 +7198,7 @@ function render(){
     <div>Banque: <b>${fmt(state.bank.cash)}</b> &nbsp;|&nbsp; Année : <b>${currentGameYear()}</b> (semestre ${currentSemesterInYear()}/2 — ${rollsInCurrentSemester()}/3)${readyHeaderHtml}${gameEndedHeaderHtml}${bankGraceHeaderHtml} &nbsp;|&nbsp; <span style="cursor:pointer;text-decoration:underline;" id="leaveGame">quitter la partie</span></div>
   </div>
   ${actionStatusRowHtml}
+  ${periodEndBannerHtml}
   <div class="tabs">
     ${tabs.map(t=>`<div class="tab ${t===activeTab?'active':''}" data-tab="${t}">${tabLabel(t)}</div>`).join('')}
   </div>
@@ -6872,7 +7220,7 @@ function tabLabel(t){
   
   
   
-  return {portefeuille:'Portefeuille', entreprise:'Mon Entreprise', admin:'Administration', etf:'REIT', matrice:'Produits'}[t];
+  return {portefeuille:'Portefeuille', entreprise:'Mon Entreprise', assureur:'Devenir l\'assureur', admin:'Administration', etf:'REIT', matrice:'Produits'}[t];
 }
 
 function renderTab(t){
@@ -6880,6 +7228,9 @@ function renderTab(t){
   
   if(t==='portefeuille') return renderPortefeuille();
   if(t==='entreprise') return renderEntreprise();
+  
+  
+  if(t==='assureur') return renderDevenirAssureur();
   if(t==='admin') return renderAdmin();
   
   if(t==='etf') return renderEtf();
@@ -7672,6 +8023,11 @@ async function expireContract(contractId){
   log('Contrat groupé expiré (fin du tour) — primes conservées par le vendeur.');
   await saveGame(); render();
 }
+
+
+
+
+
 
 
 
@@ -10722,6 +11078,11 @@ function accrueBondInterest(){
     
     if(interest>=0) p.cumInterestReceived = (p.cumInterestReceived||0) + interest;
     else p.cumInterestPaid = (p.cumInterestPaid||0) - interest;
+    
+    
+    
+    
+    p.cumBondInterest = (p.cumBondInterest||0) + interest;
   });
 }
 
@@ -10936,11 +11297,24 @@ function blackScholesPremium(S, K, T, r, sigma, type){
   }
 }
 
+
+
+
+
+
+
+
+
+
+function optionDeltaRoundsToZero(delta){
+  return Number(delta.toFixed(2))===0;
+}
 function optionPremiumFor(company, type, strike, expiryRoll, isBuying){
   const S = company.stockPrice||0;
   const T = Math.max(0, (expiryRoll - state.gameClock.rollCount)/6);
   const r = state.settings.riskFreeRateAnnual||0;
   const sigma = companyAnnualSigma(company);
+  if(optionDeltaRoundsToZero(blackScholesGreeks(S, strike, T, r, sigma, type).delta)) return 0;
   const raw = blackScholesPremium(S, strike, T, r, sigma, type);
   return isBuying===false ? raw : Math.max(raw, OPTION_PREMIUM_FLOOR_PCT*S);
 }
@@ -10988,6 +11362,16 @@ function optionPositionGreeks(company, pos){
   return {delta:g.delta*scale, gamma:g.gamma*scale, vega:g.vega*scale, theta:g.theta*scale};
 }
 
+function optionPositionStrategyLabel(player, company, pos){
+  const contractsShares = pos.shares * OPTION_CONTRACT_MULTIPLIER;
+  const stake = (company.shareholders||[]).find(s=>s.playerId===player.id);
+  const sharesHeld = stake ? stake.shares : 0;
+  if(pos.type==='call' && pos.side==='short' && sharesHeld+1e-9>=contractsShares) return 'Covered Call';
+  if(pos.type==='put' && pos.side==='long' && sharesHeld+1e-9>=contractsShares) return 'Protective Put';
+  if(pos.type==='put' && pos.side==='short' && (player.cash||0)+1e-9>=optionNotional(pos.shares, pos.strike)) return 'Cash-Secured Put';
+  return 'Naked';
+}
+
 function greeksForDisplay(g){
   return {delta: g.delta, gamma: g.gamma/1e6, vega: g.vega*1e6, theta: g.theta*1e6};
 }
@@ -11026,6 +11410,11 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
   
   
   const premium = optionPremiumFor(company, type, strike, expiryRoll, side==='long');
+  
+  
+  
+  
+  if(premium<=1e-9) return {ok:false, error:`Cette option a un delta arrondi à 0,00 (trop loin du cours et/ou trop proche de l'échéance) — elle n'a plus de valeur réelle négociable et ne peut pas être contractée.`};
   const notional = optionNotional(shares, premium);
   const typeLabel = type==='call' ? 'CALL' : 'PUT';
   const entries = [];
@@ -11156,6 +11545,14 @@ function openOptionStrategy(company, player, kind, direction, strikeLow, strikeH
   
   
   const priced = legs.map(l=>({...l, premium: optionPremiumFor(company, l.type, l.strike, expiryRoll, l.side==='long')}));
+  
+  
+  
+  
+  
+  if(priced.some(l=>l.premium<=1e-9)){
+    return {ok:false, error:`Au moins une jambe de cette stratégie a un delta arrondi à 0,00 (trop loin du cours et/ou trop proche de l'échéance) — elle n'a plus de valeur réelle négociable, la stratégie entière ne peut pas être contractée.`};
+  }
   
   
   const netFlow = priced.reduce((s,l)=> s + (l.side==='short' ? optionNotional(contracts,l.premium) : -optionNotional(contracts,l.premium)), 0);
@@ -13445,11 +13842,6 @@ function resolveRevenueSwapListing(listing){
   const juniorSubsClamped = listing.juniorSubs.map(clampCash);
   const seniorHolders = levelAbsSubscriptions(seniorSubsClamped, listing.tranches.seniorAmount);
   const seniorRaised = seniorHolders.reduce((s,h)=>s+h.amount,0);
-  
-  if(seniorHolders.length===0){
-    log(`Émission ABS de ${seller.name} (${labels}) annulée — aucun souscripteur senior, condition d'existence non remplie. Aucun argent n'a changé de main.`);
-    return;
-  }
   const juniorHoldersReal = levelAbsSubscriptions(juniorSubsClamped, listing.tranches.juniorAmount);
   const juniorRaisedReal = juniorHoldersReal.reduce((s,h)=>s+h.amount,0);
   
@@ -13457,8 +13849,42 @@ function resolveRevenueSwapListing(listing){
   
   
   
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  if(listing.tranches.seniorAmount>1e-9 && seniorHolders.length===0){
+    log(`Émission ABS de ${seller.name} (${labels}) annulée — aucun souscripteur senior, condition d'existence non remplie. Aucun argent n'a changé de main.`);
+    return;
+  }
+  
+  
+  
+  
+  if(listing.tranches.seniorAmount<=1e-9 && juniorHoldersReal.length===0){
+    log(`Émission ABS de ${seller.name} (${labels}) annulée — aucun souscripteur (la tranche senior est nulle pour ce panier, trop petit ou trop volatile pour être garantie — voir le tableau de tarification — et personne n'a souscrit à la tranche junior). Aucun argent n'a changé de main.`);
+    return;
+  }
+  
+  
+  
+  
+  
   const juniorGap = Math.max(0, listing.tranches.juniorAmount - juniorRaisedReal);
   const juniorHolders = juniorGap>1e-9 ? [...juniorHoldersReal, {holderType:'company', holderId:seller.id, amount:juniorGap}] : juniorHoldersReal;
+  
+  
+  
+  seniorHolders.forEach(h=>{ h.receivedSoFar = 0; });
+  juniorHolders.forEach(h=>{ h.receivedSoFar = 0; });
   
   
   seniorHolders.concat(juniorHoldersReal).forEach(h=>{
@@ -13475,7 +13901,11 @@ function resolveRevenueSwapListing(listing){
   state.revenueSwaps.push({id:uid(), sellerId:seller.id, propertyIds:[...listing.propertyIds], cededPctOfShare:listing.cededPctOfShare,
     years:listing.years, yearsRemaining:listing.years, pricing:listing.pricing, seniorPremiumPct:listing.tranches.seniorPremiumPct,
     seniorRaised, juniorRaised:juniorRaisedReal, seniorCapTotal, seniorPaidSoFar:0, seniorHolders, juniorHolders, createdAt:nowLabel()});
-  const seniorNames = seniorHolders.map(h=>h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(p=>p.id===h.holderId)||{}).name).join(', ');
+  
+  
+  
+  
+  const seniorNames = seniorHolders.map(h=>h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(p=>p.id===h.holderId)||{}).name).join(', ') || 'aucun';
   const juniorNames = juniorHoldersReal.map(h=>h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(p=>p.id===h.holderId)||{}).name).join(', ') || 'aucun';
   log(`Émission ABS de ${seller.name} résolue (${labels}, ${Math.round(listing.cededPctOfShare*100)}% cédé, ${listing.years} an(s)): ${fmt(seniorRaised)} levé(s) en tranche SENIOR (porteurs: ${seniorNames} — plafonnée à ${fmt(seniorCapTotal)} au total, prime ${Math.round(listing.tranches.seniorPremiumPct*100)}%), ${fmt(juniorRaisedReal)} levé(s) en tranche JUNIOR auprès de tiers (porteurs: ${juniorNames})${juniorGap>1e-9?`, ${fmt(juniorGap)} de junior non souscrit retenu par ${seller.name} elle-même (rétention du risque)`:''} — ${seller.name} reçoit ${fmt(totalRaised)} au total et ne peut plus vendre, hypothéquer ni signer de nouveau swap de loyers sur ces terrains tant que l'accord est actif (elle reste libre d'y construire ou de les fusionner en lot). Non-recours: à l'expiration, chaque porteur garde ce qu'il a reçu, sans obligation de ${seller.name}.`,
     [{label:`${seller.name} (émission ABS, capital levé)`, amount:totalRaised}].concat(seniorHolders.concat(juniorHoldersReal).map(h=>({label:`${h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(p=>p.id===h.holderId)||{}).name} (souscription ABS)`, amount:-h.amount}))));
@@ -13487,6 +13917,12 @@ function resolveRevenueSwapListing(listing){
 
 function creditAbsHolder(holder, amount, entries, deal, trancheLabel){
   if(amount<=1e-9) return;
+  
+  
+  
+  
+  
+  holder.receivedSoFar = (holder.receivedSoFar||0) + amount;
   if(holder.holderType==='company'){
     const co = companyById(holder.holderId);
     if(!co) return;
@@ -13519,6 +13955,39 @@ function distributeAbsCashflow(deal, cededAmount, entries){
     const juniorTarget = (deal.juniorHolders||[]).reduce((s,h)=>s+h.amount,0);
     if(juniorTarget>1e-9) (deal.juniorHolders||[]).forEach(h=>creditAbsHolder(h, remaining*(h.amount/juniorTarget), entries, deal, 'junior'));
   }
+}
+
+
+
+
+
+function myAbsHoldings(holderType, holderId){
+  const rows = [];
+  state.revenueSwaps.forEach(deal=>{
+    const seller = companyById(deal.sellerId);
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    const seniorReceivedTotal = deal.seniorPaidSoFar||0;
+    const seniorRemainingToReceive = Math.max(0, (deal.seniorCapTotal||0) - seniorReceivedTotal);
+    const juniorReceivedTotal = (deal.juniorHolders||[]).reduce((s,h)=>s+(h.receivedSoFar||0), 0);
+    (deal.seniorHolders||[]).forEach(h=>{
+      if(h.holderType===holderType && h.holderId===holderId) rows.push({deal, seller, tranche:'senior', trancheLabel:'Senior', cost:h.amount, receivedSoFar:h.receivedSoFar||0, yearsRemaining:deal.yearsRemaining, seniorReceivedTotal, seniorRemainingToReceive, juniorReceivedTotal});
+    });
+    (deal.juniorHolders||[]).forEach(h=>{
+      if(h.holderType===holderType && h.holderId===holderId) rows.push({deal, seller, tranche:'junior', trancheLabel:'Junior', cost:h.amount, receivedSoFar:h.receivedSoFar||0, yearsRemaining:deal.yearsRemaining, seniorReceivedTotal, seniorRemainingToReceive, juniorReceivedTotal});
+    });
+  });
+  return rows;
 }
 
 
@@ -14588,8 +15057,15 @@ function tvSlideCompanyShowcase(companyId){
   const typeLabel = typeInfo ? typeInfo.label : co.type;
   const ceo = state.players.find(p=>p.id===co.ceoId);
   const description = (co.description||'').trim();
+  
+  
+  
+  
+  
+  const logoHtml = co.logoDataUrl ? `<img src="${co.logoDataUrl}" alt="Logo" style="max-height:180px;max-width:360px;border-radius:12px;">` : '';
   return `
   <div style="text-align:center;padding:16px 0;">
+    ${logoHtml ? `<div style="margin-bottom:24px;">${logoHtml}</div>` : ''}
     <div style="font-family:inherit;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;font-size:52px;line-height:1.15;color:var(--ink);">${esc(co.name)}</div>
     <div style="font-size:22px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-top:12px;">${esc(typeLabel)}</div>
     <div style="max-width:720px;margin:36px auto 0;font-size:26px;line-height:1.55;color:var(--ink);">${description ? esc(description).replace(/\n/g,'<br>') : '<span style="opacity:0.6;">Aucune description.</span>'}</div>
@@ -14853,9 +15329,7 @@ function bindTabEvents(t){
     document.querySelectorAll('[data-takeover-subinsurance]').forEach(b=>b.addEventListener('click', ()=>takeOverSubInsurance(b.dataset.takeoverSubinsurance)));
     
     
-    document.querySelectorAll('[data-takeover-live-prop]').forEach(b=>b.addEventListener('click', ()=>takeOverInsuranceItemLive(b.dataset.takeoverLiveProp)));
-    document.querySelectorAll('[data-takeover-live-tax]').forEach(b=>b.addEventListener('click', ()=>takeOverTaxInsuranceLive(parseInt(b.dataset.takeoverLiveTax), b.dataset.takeoverLiveTaxCo)));
-    document.querySelectorAll('[data-takeover-live-sub]').forEach(b=>b.addEventListener('click', ()=>takeOverSubInsuranceLive(b.dataset.takeoverLiveSub)));
+    
     
     
     
@@ -14897,12 +15371,24 @@ function bindTabEvents(t){
     
     
     document.querySelectorAll('[data-swap-offer-details]').forEach(b=>b.addEventListener('click', ()=>modalSwapOfferDetails(b.dataset.swapOfferDetails)));
+    
+    
+    document.querySelectorAll('[data-comp-offer-details]').forEach(b=>b.addEventListener('click', ()=>modalCompOfferDetails(b.dataset.compOfferDetails)));
     document.querySelectorAll('[data-accept-swap-offer]').forEach(b=>b.addEventListener('click', ()=>acceptRentSwapOffer(b.dataset.acceptSwapOffer)));
     document.querySelectorAll('[data-refuse-swap-offer]').forEach(b=>b.addEventListener('click', ()=>refuseRentSwapOffer(b.dataset.refuseSwapOffer)));
     document.querySelectorAll('[data-accept-comp-offer]').forEach(b=>b.addEventListener('click', ()=>acceptRentCompensationOffer(b.dataset.acceptCompOffer)));
     document.querySelectorAll('[data-refuse-comp-offer]').forEach(b=>b.addEventListener('click', ()=>refuseRentCompensationOffer(b.dataset.refuseCompOffer)));
     document.querySelectorAll('[data-cancel-swap-offer]').forEach(b=>b.addEventListener('click', ()=>cancelRentSwapOffer(b.dataset.cancelSwapOffer)));
     document.querySelectorAll('[data-cancel-comp-offer]').forEach(b=>b.addEventListener('click', ()=>cancelRentCompensationOffer(b.dataset.cancelCompOffer)));
+    
+    
+    
+    document.querySelectorAll('[data-dismiss-pending]').forEach(b=>b.addEventListener('click', ()=>{
+      const myCo = myCompany();
+      if(!myCo) return;
+      dismissPending(myCo.id, b.dataset.dismissPending);
+      render();
+    }));
     
     
     
@@ -14924,6 +15410,13 @@ function bindTabEvents(t){
     document.querySelectorAll('details.entreprise-accordion[data-acc-key]').forEach(d=>{
       d.addEventListener('toggle', ()=>{ entrepriseAccordionState[d.dataset.accKey] = d.open; });
     });
+  }
+  
+  
+  if(t==='assureur'){
+    document.querySelectorAll('[data-takeover-live-prop]').forEach(b=>b.addEventListener('click', ()=>takeOverInsuranceItemLive(b.dataset.takeoverLiveProp)));
+    document.querySelectorAll('[data-takeover-live-tax]').forEach(b=>b.addEventListener('click', ()=>takeOverTaxInsuranceLive(parseInt(b.dataset.takeoverLiveTax), b.dataset.takeoverLiveTaxCo)));
+    document.querySelectorAll('[data-takeover-live-sub]').forEach(b=>b.addEventListener('click', ()=>takeOverSubInsuranceLive(b.dataset.takeoverLiveSub)));
   }
   if(t==='admin'){
     
@@ -15095,6 +15588,14 @@ function bindTabEvents(t){
     }
     
     
+    
+    
+    document.querySelectorAll('[data-dismiss-pending]').forEach(b=>b.addEventListener('click', ()=>{
+      dismissPending(myPlayerId, b.dataset.dismissPending);
+      render();
+    }));
+    
+    
     const pfReviewLastTurnBtn = document.getElementById('pfReviewLastTurnBtn');
     if(pfReviewLastTurnBtn) pfReviewLastTurnBtn.addEventListener('click', ()=>reviewLastTurnSummary());
     
@@ -15180,6 +15681,7 @@ function bindTabEvents(t){
     if(openOptionStrategyBtn) openOptionStrategyBtn.addEventListener('click', ()=>modalOptionStrategy());
     document.querySelectorAll('[data-close-option]').forEach(b=>b.addEventListener('click', ()=>closeOptionPositionFromUi(b.dataset.closeOption)));
     document.querySelectorAll('[data-close-option-strategy]').forEach(b=>b.addEventListener('click', ()=>closeOptionStrategyFromUi(b.dataset.closeOptionStrategy)));
+    document.querySelectorAll('[data-option-position-details]').forEach(b=>b.addEventListener('click', ()=>modalOptionPositionDetails(b.dataset.optionPositionDetails)));
     
     
     
@@ -17041,7 +17543,8 @@ function modalInsureBundle(claimMode, term, isRegenerate){
   openModal(`
     <style>.modal{max-width:720px;}</style>
     <h3>Assurer plusieurs cases pour ce tour</h3>
-    <div class="small" style="margin-bottom:8px;">Cochez les cases (terrains ou taxes) à assurer — toujours auprès de la banque à la signature (une autre entreprise peut ensuite reprendre ce contrat depuis l'onglet Mon Entreprise (section Marché des contrats)). Toutes les cases cochées forment un seul contrat groupé (une seule prime totale, toujours la prime bancaire — non négociable pour un contrat groupé). Le montant « à risque » est ce que vous devriez payer si l'événement se produit et que vous n'êtes pas assuré.</div>
+    <!-- Section 282 (voir RESUME_ET_REGLES.md): condensé, aucune information retirée. -->
+    <div class="small" style="margin-bottom:8px;">Cochez les cases à assurer, toujours auprès de la banque (prime bancaire non négociable) — une autre entreprise pourra ensuite reprendre le contrat depuis Mon Entreprise. Toutes les cases cochées forment un seul contrat groupé à prime totale unique. « À risque » = ce que vous paieriez si l'événement survient, non assuré.</div>
     <div class="row" style="gap:12px;flex-wrap:wrap;">
       <div style="flex:1;min-width:180px;">${claimModeFieldHtml}</div>
       <div style="flex:1;min-width:180px;">
@@ -17405,8 +17908,9 @@ function modalIssuePreferredShares(){
   const remaining = preferredCapRemaining(myCo.id);
   openModal(`
     <h3>Émettre des parts privilégiées — ${esc(myCo.name)}</h3>
-    <div class="small" style="margin-bottom:10px;">Vous choisissez librement le nombre de parts, le taux de dividende préférentiel ANNUEL, et le prix de rachat (callable). Prix payé par part = cours ACTUEL de l'action ordinaire. Un avis est envoyé à tous les joueurs, qui ont jusqu'au prochain lancer de dés pour accepter ou refuser — les parts offertes sont distribuées à part égale entre tous les joueurs ayant accepté (aucun preneur = aucune émission). Le CEO émetteur ne peut pas y souscrire lui-même.</div>
-    <div class="small" style="margin-bottom:8px;">Prix actuel: <b>${fmtPrice(myCo.stockPrice)}</b>/part &nbsp;|&nbsp; Marge cumulative restante: <b>${fmt(remaining)}</b> / ${fmt(state.settings.preferredMaxPrincipal||0)}</div>
+    <div class="small" style="margin-bottom:10px;">En tant que CEO, vous choisissez le nombre de parts, le taux de dividende préférentiel annuel et le prix de rachat. Le prix payé par part correspond au cours actuel de l'action.</div>
+    <div class="small" style="margin-bottom:10px;">Un avis est envoyé à tous les joueurs, qui ont jusqu'au prochain lancer de dés pour souscrire. Les parts sont distribuées à parts égales entre les participants (sans preneur, l'émission est annulée). Vous ne pouvez pas y souscrire vous-même.</div>
+    <div class="small" style="margin-bottom:8px;">Prix actuel : <b>${fmtPrice(myCo.stockPrice)}</b>/part &nbsp;|&nbsp; Marge restante : <b>${fmt(remaining)}</b> / ${fmt(state.settings.preferredMaxPrincipal||0)}</div>
     <label>Quantité de parts à offrir</label>
     <input type="number" step="1" min="0" id="mPrefQty" value="0">
     <label>Taux de dividende préférentiel (%/an)</label>
@@ -17462,7 +17966,8 @@ function modalPublicCeoStatement(){
   if(myCo.lastResortLoanUsed){ alert(`${myCo.name} a contracté un prêt de dernier recours — la sortie publique du CEO n'est plus disponible pour cette entreprise.`); return; }
   openModal(`
     <h3>Sortie publique du CEO — ${esc(myCo.name)}</h3>
-    <div class="small" style="margin-bottom:10px;">⚠️ Action gratuite mais irréversible, utilisable une seule fois par partie. Le CEO sort publiquement rassurer le marché sur la santé de l'entreprise, à son entière discrétion. C'est un jugement à risque : si le marché n'est pas réellement défavorable en ce moment, la sortie sonne creux et n'a aucun effet — l'occasion est perdue pour de bon. En cas de succès, le marché se calme sans s'inverser, puis l'apaisement s'estompe progressivement. N'affecte jamais l'endettement ni les fondamentaux réels de l'entreprise.</div>
+    <!-- Section 282 (voir RESUME_ET_REGLES.md): condensé, aucune information retirée. -->
+    <div class="small" style="margin-bottom:10px;">⚠️ Gratuit mais irréversible, une seule fois par partie: le CEO sort rassurer le marché. Pari risqué — si le marché n'était pas réellement défavorable, la sortie sonne creux (aucun effet, occasion perdue) ; en cas de succès, il se calme sans s'inverser, puis l'apaisement s'estompe. N'affecte jamais l'endettement ni les fondamentaux réels.</div>
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -17770,8 +18275,8 @@ function modalAnnounceCeoTrade(){
   
   
   
-  const ceoCapYear = currentGameYear();
-  const ceoCapAlreadySold = ceoSharesSoldInYear(myCo.id, ceoCapYear);
+  
+  
   const ceoCapTotal = myCo.totalShares * CEO_SELL_ANNUAL_CAP_PCT;
   
   
@@ -17786,8 +18291,7 @@ function modalAnnounceCeoTrade(){
   const ceoShares = ceoStakeEntry ? ceoStakeEntry.shares : 0;
   openModal(`
     <h3>Annoncer une transaction — ${esc(myCo.name)}</h3>
-    <div class="small" style="margin-bottom:10px;">En tant que CEO, vous ne pouvez pas trader directement les parts de votre propre entreprise (délit d'initié intégré au jeu). Vous pouvez toutefois ANNONCER publiquement une intention d'achat ou de vente — exécutée AUTOMATIQUEMENT dans 1 AN (6 lancers), au prix COURANT à ce moment-là (pas celui d'aujourd'hui). Visible par tous les joueurs dès sa création. <b>Irrévocable</b> : aucune option d'annulation une fois l'annonce faite.</div>
-    <div class="small" style="margin-bottom:10px;">⚖️ Plafond légal — à la VENTE seulement (jamais à l'achat) : le CEO ne peut vendre plus de ${(CEO_SELL_ANNUAL_CAP_PCT*100).toFixed(0)}% des parts totales de son entreprise (${fmtShares(myCo.totalShares)} parts) par année financière. ${fmtShares(ceoCapAlreadySold)} part(s) déjà vendue(s) cette année financière sur ${fmtShares(ceoCapTotal)} autorisées — le plafond réel de l'ANNÉE FINANCIÈRE SUIVANTE (celle où cette annonce s'exécutera) n'est vérifié qu'à l'exécution, une fois le prix connu ; une vente qui le dépasserait alors sera intégralement annulée.</div>
+    <div class="small" style="margin-bottom:10px;">En tant que CEO, tout trading direct est interdit. Vous pouvez uniquement publier une intention d'achat ou de vente irrévocable, visible de tous, qui s'exécutera automatiquement dans 1 an (6 lancers) au prix futur du marché. Seules les ventes sont plafonnées à ${(CEO_SELL_ANNUAL_CAP_PCT*100).toFixed(0)}% du total des parts par an (max ${fmtShares(ceoCapTotal)} parts).</div>
     <label>Direction</label>
     <select id="mCeoAnnounceDir"><option value="buy">Achat</option><option value="sell">Vente</option></select>
     <label>Unité</label>
@@ -18161,6 +18665,31 @@ async function closeOptionPositionFromUi(positionId){
   if(!res.ok){ if(res.error) alert(res.error); return; }
   render();
   if(popupEntries) showTransactionPopup(`Clôture d'option — ${popupLabel}`, popupEntries);
+}
+
+function modalOptionPositionDetails(positionId){
+  const me = state.players.find(p=>p.id===myPlayerId);
+  const pos = me ? (me.optionPositions||[]).find(p=>p.id===positionId) : null;
+  if(!pos){ alert('Cette position n’est plus disponible (peut-être déjà clôturée).'); closeModal(); return; }
+  const co = companyById(pos.companyId);
+  if(!co){ closeModal(); return; }
+  const greeks = greeksForDisplay(optionPositionGreeks(co, pos));
+  const strategyLabel = optionPositionStrategyLabel(me, co, pos);
+  const typeLabel = pos.type==='call' ? 'CALL' : 'PUT';
+  const sideLabel = pos.side==='long' ? 'Longue' : 'Écrite';
+  const rollsLeft = Math.max(0, pos.expiryRoll - state.gameClock.rollCount);
+  const greekCell = (v, decimals) => `<td class="money" style="color:${v>=0?'#047857':'var(--brick)'};">${v>=0?'+':''}${v.toFixed(v>=1000||v<=-1000?0:decimals)}</td>`;
+  openModal(`
+    <h3>Détail de la position — ${esc(co.name)}</h3>
+    <div class="small" style="margin-bottom:10px;"><b>${typeLabel} ${sideLabel}</b>, strike ${fmtPrice(pos.strike)}, ${pos.shares.toFixed(4)} contrat(s), ${rollsLeft} lancer(s) restant(s) avant échéance. Stratégie: <b>${esc(strategyLabel)}</b>.</div>
+    <table>
+      <tr><th title="Delta — exposition en $ à une variation de 1$ du cours">Δ Delta</th><th title="Gamma — variation du Delta pour 1$ de variation du cours">Γ Gamma</th><th title="Vega — exposition en $ à une variation de 1 point de volatilité annuelle">V Vega</th><th title="Theta — décroissance en $ par lancer de dé">Θ Theta</th></tr>
+      <tr>${greekCell(greeks.delta,2)}${greekCell(greeks.gamma,2)}${greekCell(greeks.vega,3)}${greekCell(greeks.theta,3)}</tr>
+    </table>
+    <div class="modal-actions"><button class="btn btn-primary" id="mOk">Fermer</button></div>
+  `);
+  const btn = document.getElementById('mOk');
+  if(btn) btn.addEventListener('click', closeModal);
 }
 
 function modalOptionStrategy(){
@@ -18575,7 +19104,8 @@ function modalIssueLoan(){
     <h3>Prêt — ${esc(myCo.name)}</h3>
     <div class="small" style="margin-bottom:8px;">${creditRatingBadgeHtml(myCo)}</div>
     ${activeLoansHtml}
-    <div class="small" style="margin-bottom:10px;">Publiez une demande d'emprunt: un avis est envoyé à tous les joueurs, qui peuvent proposer leurs conditions (% des loyers retenu, multiple de remboursement). Vous choisirez ensuite d'accepter une offre ou aucune. Une entreprise ne peut avoir qu'une seule demande d'emprunt OUVERTE à la fois (plusieurs prêts peuvent être actifs simultanément). Capacité d'emprunt restante: <b>${fmt(capLeft)}</b> (maximum cumulé: ${fmt(state.settings.loanMaxPrincipal)}).</div>
+    <div class="small" style="margin-bottom:10px;">Publiez une demande d'emprunt pour recevoir les offres des joueurs (taux de loyer, multiple) et choisissez la meilleure. Une seule demande OUVERTE est permise à la fois, mais plusieurs prêts peuvent être actifs en parallèle.</div>
+    <div class="small" style="margin-bottom:10px;">Capacité d'emprunt restante : <b>${fmt(capLeft)}</b> (max. cumulé : ${fmt(state.settings.loanMaxPrincipal)}).</div>
     <label>Emprunteur</label>
     <div class="small" style="margin-bottom:8px;"><b>${esc(myCo.name)}</b></div>
     <label>Capital demandé (en ${esc(state.unit)}, max ${fmt(capLeft)})</label>
@@ -18613,7 +19143,11 @@ function modalProposeSwap(){
   const noAssetsA = myTradableAssets.length===0;
   openModal(`
     <h3>Proposer un swap de loyers</h3>
-    <div class="small" style="margin-bottom:10px;">Deux entreprises échangent les revenus de deux terrains (ou lots regroupés — un lot compte comme un seul actif, peu importe lequel de ses terrains est visité) pour une durée déterminée. Quand un TIERS (ni le propriétaire, ni son partenaire de swap) visite le terrain, la part normalement due au propriétaire est redirigée vers son partenaire — jusqu'au plafond indiqué (par événement, pas cumulatif): si la part due est inférieure ou égale au plafond, elle part en entier chez le partenaire; si elle dépasse le plafond, seul le plafond est redirigé et le propriétaire garde la différence. Laissez vide pour rediriger la totalité sans plafond. Le swap n'a AUCUN effet si le visiteur est le propriétaire lui-même (aucun loyer ne se déclenche en visitant son propre terrain) ou s'il est le partenaire du swap (pour éviter qu'il se rembourse lui-même). Les deux côtés peuvent avoir des plafonds différents (échange asymétrique, ex. 500K contre 600K). Cochez « Swap général » pour appliquer l'échange à TOUS les terrains actuels ET futurs d'une entreprise plutôt qu'à un seul — le plafond reste par événement (une seule visite), quel que soit le terrain visité.</div>
+    <!-- Section 282 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: « regarde dans
+    l'application où tu as mis du texte pour mettre ça clair et concis [...] les gens ne lisent pas quand
+    trop long. » Les 2 paragraphes précédents (même contenu, aucune information retirée) sont fusionnés en
+    un seul, plus court. -->
+    <div class="small" style="margin-bottom:10px;">Deux entreprises échangent temporairement les loyers de deux terrains ou lots: quand un tiers visite un terrain ciblé, le loyer est redirigé vers le partenaire (jusqu'au plafond par événement s'il y en a un — laissez vide pour 100%, le propriétaire garde l'excédent). Nul si le visiteur est l'un des deux partis. « Swap général » applique l'accord à tous les terrains, actuels et futurs, de l'entreprise.</div>
     <div class="row" style="gap:10px;flex-wrap:wrap;">
       <div>
         <label><input type="checkbox" id="mSwapGeneralA" ${noAssetsA?'checked disabled':''}> Swap général (tous vos terrains, présents et futurs)</label>
@@ -18693,7 +19227,8 @@ function modalProposeBudgetSwap(){
   if(partnerCompanies.length===0){ alert('Aucune autre entreprise active pour proposer un swap de loyers.'); return; }
   openModal(`
     <h3>Proposer un swap de loyers à budget cumulatif</h3>
-    <div class="small" style="margin-bottom:10px;">Accord indépendant du swap ordinaire ci-dessus: aucun terrain à désigner et aucune durée — il porte sur TOUT le portefeuille des deux entreprises (présent ET futur) et fonctionne exactement comme un swap normal pour le calcul de chaque redirection (quand un TIERS visite un terrain de l'une des deux entreprises, la part due à son propriétaire est redirigée vers l'autre — jusqu'au plafond PAR ÉVÉNEMENT indiqué ci-dessous si vous en fixez un, comme pour un swap ordinaire). Au lieu d'une durée, chaque entreprise se voit fixer un plafond CUMULATIF total à recevoir (les deux plafonds peuvent être différents, ex. 3M$ contre 2M$). Dès qu'une entreprise a reçu la totalité de son plafond cumulatif, SA redirection s'arrête — l'autre continue de recevoir sa propre part normalement jusqu'à atteindre elle aussi son propre plafond. L'accord se clôt seulement quand les deux plafonds cumulatifs sont pleinement atteints. Le swap n'a AUCUN effet si le visiteur est le propriétaire lui-même ou son partenaire (même garde que le swap ordinaire).</div>
+    <div class="small" style="margin-bottom:10px;">Accord permanent couvrant l'ensemble du portefeuille présent et futur des deux entreprises. Lorsqu'un tiers visite un terrain, le loyer est redirigé vers le partenaire selon les mêmes règles qu'un swap ordinaire (plafond optionnel par événement, aucun effet si le visiteur est l'un des deux partenaires).</div>
+    <div class="small" style="margin-bottom:10px;">Au lieu d'une durée, l'accord est régi par un plafond cumulatif total à recevoir pour chaque entreprise (ex. 3 M$ contre 2 M$). Dès qu'un participant atteint son plafond cumulatif, sa redirection s'arrête ; l'autre continue de percevoir la sienne jusqu'à atteindre son propre plafond, moment où l'accord prend fin.</div>
     <div class="row" style="gap:10px;flex-wrap:wrap;">
       <div>
         <label>Entreprise partenaire</label>
@@ -18766,6 +19301,24 @@ function modalSwapOfferDetails(offerId){
   if(btn) btn.addEventListener('click', closeModal);
 }
 
+function modalCompOfferDetails(offerId){
+  const o = state.rentCompensationOffers.find(x=>x.id===offerId);
+  if(!o){ alert('Cette proposition n’est plus disponible (déjà acceptée, refusée ou retirée).'); return; }
+  const from = companyById(o.fromCompanyId), to = companyById(o.toCompanyId);
+  openModal(`
+    <h3>Détails de l'accord de compensation de loyer proposé</h3>
+    <div class="small" style="margin-bottom:10px;">Deux entreprises signent un accord bilatéral: tant qu'il est actif, quand l'une atterrit sur un terrain de l'autre, aucun argent ne change de main — le loyer dû est simplement inscrit comme dette au registre du contrat. Si l'autre retombe ensuite sur un terrain de la première, son loyer s'annule automatiquement contre la dette existante (netting — la balance se déplace dans l'autre sens, rien à faire manuellement). Après chaque fin d'année financière, la balance est réglée en cash entre les deux entreprises (celle qui doit de l'argent le verse à l'autre, majoré de l'intérêt ci-dessous) et le contrat se clôture automatiquement.</div>
+    <table>
+      <tr><th></th><th>${esc(from?from.name:'?')}</th><th>${esc(to?to.name:'?')}</th></tr>
+      <tr><td>Frais de signature (à l'acceptation)</td><td class="money">${fmt(state.settings.rentCompensationFee)}</td><td class="money">${fmt(state.settings.rentCompensationFee)}</td></tr>
+    </table>
+    <div class="small" style="margin-top:8px;">Intérêt appliqué au règlement de fin d'année: <b>${(o.interestRate*100).toFixed(0)}%</b> (sur le montant dû par l'entreprise en dette).</div>
+    <div class="modal-actions"><button class="btn btn-primary" id="mOk">Fermer</button></div>
+  `);
+  const btn = document.getElementById('mOk');
+  if(btn) btn.addEventListener('click', closeModal);
+}
+
 function modalProposeCompensation(){
   const myCo = myCompany();
   if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
@@ -18775,7 +19328,8 @@ function modalProposeCompensation(){
   if(activeCompanies().filter(c=>c.id!==myCo.id).length===0){ alert('Aucune autre entreprise active pour proposer un accord de compensation.'); return; }
   openModal(`
     <h3>Proposer un accord de compensation de loyer</h3>
-    <div class="small" style="margin-bottom:10px;">Deux entreprises signent un accord bilatéral: tant qu'il est actif, quand l'une atterrit sur un terrain de l'autre, aucun argent ne change de main — le loyer dû est simplement inscrit comme dette au registre du contrat. Si l'autre retombe ensuite sur un de vos terrains, son loyer s'annule automatiquement contre la dette existante (netting — la balance se déplace dans l'autre sens, rien à faire manuellement). Après chaque fin d'année financière, la balance est réglée en cash entre les deux entreprises (celle qui doit de l'argent le verse à l'autre, majoré de l'intérêt fixé à la signature) et <b>le contrat se clôture automatiquement</b> — il faut le signer à nouveau (et repayer les frais) pour continuer à en bénéficier l'année suivante. Frais de signature: ${fmt(state.settings.rentCompensationFee)} chacune, versés à la banque.</div>
+    <!-- Section 282 (voir RESUME_ET_REGLES.md): 2 paragraphes fusionnés en un, aucune information retirée. -->
+    <div class="small" style="margin-bottom:10px;">Deux entreprises annulent mutuellement leurs loyers l'une chez l'autre — chaque loyer évité s'accumule en dette, compensée automatiquement (netting) au prochain passage réciproque. En fin d'année financière, la balance nette est réglée en cash avec l'intérêt convenu à la signature, puis le contrat se termine (à signer à nouveau l'année suivante, frais de ${fmt(state.settings.rentCompensationFee)} par entreprise).</div>
     <label>Entreprise partenaire</label>
     <select id="mCompPartner">${activeCompanyOptions(null, myCo.id, true)}</select>
     <label>Intérêt au règlement (%)</label>
@@ -18822,7 +19376,8 @@ function modalProposeRevenueSwap(){
   }).join('');
   openModal(`
     <h3>Émission ABS — titriser le revenu de terrains</h3>
-    <div class="small" style="margin-bottom:10px;">Cochez un ou plusieurs terrains (ou lots regroupés — comptent pour un seul), choisissez la part de VOTRE part cédée (plafonnée pour ne jamais chevaucher votre capacité d'emprunt réservée), une durée en années et le montant total recherché, puis publiez: la répartition senior/junior et la prime senior sont calculées automatiquement par l'application à partir du risque du panier. L'émission se résout AUTOMATIQUEMENT au prochain lancer de dés (aucun report) — au moins un souscripteur senior est requis, sinon elle est annulée sans qu'aucun argent ne change de main. Tant qu'un accord résolu est actif: impossible de vendre, hypothéquer ou signer un nouveau swap de loyers sur ces terrains — construire des maisons et fusionner/défusionner un lot restent permis. La liste des terrains est figée à la publication.</div>
+    <!-- Section 282 (voir RESUME_ET_REGLES.md): 2 paragraphes fusionnés en un, aucune information retirée. -->
+    <div class="small" style="margin-bottom:10px;">Sélectionnez vos terrains ou lots, la part de loyer cédée (limite: votre capacité d'emprunt), la durée et le montant souhaité — la répartition et la prime des tranches senior/junior se calculent automatiquement. Résolue au prochain lancer de dés (annulée sans souscripteur senior); pendant la durée du contrat, ces terrains restent invendables et non hypothécables, sans nouveau swap de loyers (construction/lots toujours permis).</div>
     <div id="rswapRows">${rows}</div>
     <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:8px;">
       <div>
@@ -19208,9 +19763,9 @@ function renderSetup(){
       <div class="setup-subhead">Fonctionnalités activées pour cette partie</div>
       <div id="featureChecks" style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
         ${FEATURE_LIST.map(f=>`
-          <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-weight:400;color:var(--ink);margin:0;">
+          <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-weight:400;color:var(--ink);margin:0;" title="${esc(f.label)}">
             <input type="checkbox" id="feat_${f.key}" checked style="width:auto;">
-            ${esc(f.label)}
+            ${esc(f.short)}
           </label>`).join('')}
       </div>
       <div style="margin-top:16px;">

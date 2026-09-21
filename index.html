@@ -994,6 +994,12 @@ const DEFAULT_SETTINGS = {
   bankMinSellPct: 0, etfBankReservePct: 10,
   companyTotalShares: 200000, companyInitialInvestment: 20,
   mortgageLTV: 0.5, mortgageRate: 0.35, mortgageRentContinues: false, liquidationPenalty: 0,
+  
+  
+  
+  
+  
+  distressDebtThreshold: 0.5,
   maxOwners: 3, jailTurns: 3, jailBailCost: 0.5, bankCollectsRent: true, debtSpreadFactor: 0.5,
   rentCompensationFee: 0.25, linearRent: false, housesBeforeHotel: 4, housePayAsBid: false,
   loanOfferWithholdingPctMin: 0.05, loanOfferWithholdingPctMax: 0.40,
@@ -1069,6 +1075,7 @@ function migrateState(s){
   if(s.settings.mortgageRate===undefined) s.settings.mortgageRate = DEFAULT_SETTINGS.mortgageRate;   
   if(s.settings.mortgageRentContinues===undefined) s.settings.mortgageRentContinues = DEFAULT_SETTINGS.mortgageRentContinues; 
   if(s.settings.liquidationPenalty===undefined) s.settings.liquidationPenalty = DEFAULT_SETTINGS.liquidationPenalty; 
+  if(s.settings.distressDebtThreshold===undefined) s.settings.distressDebtThreshold = DEFAULT_SETTINGS.distressDebtThreshold; 
   if(s.settings.maxOwners===undefined) s.settings.maxOwners = DEFAULT_SETTINGS.maxOwners; 
   if(s.settings.jailTurns===undefined) s.settings.jailTurns = DEFAULT_SETTINGS.jailTurns; 
   if(s.settings.jailBailCost===undefined) s.settings.jailBailCost = DEFAULT_SETTINGS.jailBailCost; 
@@ -1423,6 +1430,10 @@ function migrateState(s){
     
     
     if(p.cumBondInterest===undefined) p.cumBondInterest = 0;
+    
+    
+    if(!p.pendingBids) p.pendingBids = [];
+    if(!p.pendingAsks) p.pendingAsks = [];
     
     
     
@@ -1864,6 +1875,11 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
   
   const players = names.map((n,i)=>({id:uid(), name:n, cash:startCash, color:PLAYER_COLORS[i%PLAYER_COLORS.length],
     stats:freshStats(), goAdvancesUsed:0, companyId:null, shortPositions:{}, bondBalance:0, optionPositions:[],
+    
+    
+    
+    
+    pendingBids:[], pendingAsks:[],
     startingCash:startCash, cumDividendsReceived:0, cumRealizedPnl:0, cumOptionNetPremium:0, cumInterestReceived:0, cumInterestPaid:0, cumBondInterest:0}));
   const s = {
     code, createdAt:Date.now(), unit: unit||'M$',
@@ -2681,6 +2697,15 @@ function renderPortefeuilleTopBar(me, company){
   
   
   
+  
+  
+  
+  const pfAskEligibleCompanies = activeCompanies().filter(c=>c.ceoId!==me.id && (c.shareholders.find(s=>s.playerId===me.id)||{}).shares>1e-9);
+  const openPlaceBidBtnHtml = (pfTradingWindowOpen && pfCashEligibleCompanies.length>0) ? `<button class="btn btn-ghost btn-sm" id="openPlaceBidBtn">🎯 Placer un bid</button>` : '';
+  const openPlaceAskBtnHtml = (pfTradingWindowOpen && pfAskEligibleCompanies.length>0) ? `<button class="btn btn-ghost btn-sm" id="openPlaceAskBtn">🎯 Placer un ask</button>` : '';
+  
+  
+  
   const openAnnounceCeoTradeBtnHtml = (isCeo && !pfGameEnded && companyPendingIpoShares(company)<=0) ? `<button class="btn btn-ghost btn-sm" id="openAnnounceCeoTradeBtn">📢 Annoncer un achat/une vente de mes propres parts</button>` : '';
   const openShortSharesBtnHtml = (pfTradingWindowOpen && !pfGameEnded && pfShortOpenEligible.length>0) ? `<button class="btn btn-ghost btn-sm" id="openShortSharesBtn">📉 Vendre à découvert</button>` : '';
   const openCoverShortSharesBtnHtml = (pfTradingWindowOpen && !pfGameEnded && pfShortCloseEligible) ? `<button class="btn btn-ghost btn-sm" id="openCoverShortSharesBtn">📈 Racheter pour clôturer</button>` : '';
@@ -2696,7 +2721,7 @@ function renderPortefeuilleTopBar(me, company){
   const pfActionsMenuHtml = `${pfActionsMenuStyle}
   <div class="ent-actions-menu" id="pfActionsMenu">
     <button type="button" class="btn btn-gold btn-sm ent-actions-toggle" id="pfActionsMenuBtn" aria-haspopup="true" aria-expanded="false" title="Actions de trading">☰ Actions</button>
-    <div class="ent-actions-panel" id="pfActionsPanel">${actionsMenuGroupTitle('Comptant', true)}${openBuySharesBtnHtml}${openSellSharesBtnHtml}${openAnnounceCeoTradeBtnHtml}${actionsMenuGroupTitle('Vente à découvert')}${openShortSharesBtnHtml}${openCoverShortSharesBtnHtml}${actionsMenuGroupTitle('Bons gouvernementaux')}${openInvestBondsBtnHtml}${openWithdrawBondsBtnHtml}${openBorrowBondsBtnHtml}${actionsMenuGroupTitle('Options')}${openOptionChainBtnHtml}${openOptionTradeBtnHtml}${openOptionStrategyBtnHtml}</div>
+    <div class="ent-actions-panel" id="pfActionsPanel">${actionsMenuGroupTitle('Comptant', true)}${openBuySharesBtnHtml}${openSellSharesBtnHtml}${openAnnounceCeoTradeBtnHtml}${actionsMenuGroupTitle('Ordres en attente')}${openPlaceBidBtnHtml}${openPlaceAskBtnHtml}${actionsMenuGroupTitle('Vente à découvert')}${openShortSharesBtnHtml}${openCoverShortSharesBtnHtml}${actionsMenuGroupTitle('Bons gouvernementaux')}${openInvestBondsBtnHtml}${openWithdrawBondsBtnHtml}${openBorrowBondsBtnHtml}${actionsMenuGroupTitle('Options')}${openOptionChainBtnHtml}${openOptionTradeBtnHtml}${openOptionStrategyBtnHtml}</div>
   </div>`;
   
   
@@ -2734,15 +2759,22 @@ function renderPortefeuilleTrading(me, company){
   
   
   const positionsBetaMarketSeries = marketAveragePriceSeries(activeCompanies());
+  
+  
+  
+  
+  
+  
   const positionsRows = myPositions.map(({co,stake,shares})=>{
     const pnl = (shares && stake.avgCost!==undefined) ? (co.stockPrice-stake.avgCost)*shares : 0;
     const posTypeLabel = (COMPANY_TYPES.find(t=>t.key===co.type)||{}).label || co.type;
     const betaVal = companyBetaVolatility(co, state.gameClock.rollCount, positionsBetaMarketSeries).beta;
     const beta = betaVal===null ? 1 : betaVal;
-    return `<tr><td>${esc(co.name)}</td><td>${esc(posTypeLabel)}</td><td>${fmtShares(shares)}</td><td class="money">${fmtPrice(stake.avgCost!==undefined?stake.avgCost:0)}</td><td class="money">${fmtPrice(co.stockPrice||0)}</td><td class="money">${fmt(shares*(co.stockPrice||0))}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td><td class="money">${beta.toFixed(2)}</td></tr>`;
+    const askBtnHtml = (tradingWindowOpen() && co.ceoId!==me.id) ? `<button class="btn btn-ghost btn-sm" data-place-ask-for="${co.id}">🎯 Ask</button>` : '';
+    return `<tr><td>${esc(co.name)}</td><td>${esc(posTypeLabel)}</td><td>${fmtShares(shares)}</td><td class="money">${fmtPrice(stake.avgCost!==undefined?stake.avgCost:0)}</td><td class="money">${fmtPrice(co.stockPrice||0)}</td><td class="money">${fmt(shares*(co.stockPrice||0))}</td><td class="money" style="color:${pnl>=0?'#047857':'var(--brick)'};">${pnl>=0?'+':''}${fmt(pnl)}</td><td class="money">${beta.toFixed(2)}</td><td>${askBtnHtml}</td></tr>`;
   }).join('');
   const positionsHtml = myPositions.length>0
-    ? `<table><tr><th>Entreprise</th><th>Type</th><th>Parts</th><th>Coût moyen</th><th>Prix/part</th><th>Valeur de marché</th><th>P&amp;L latent</th><th title="Sensibilité statistique au marché (covariance des rendements / variance du marché) — 1.00 par défaut si l'historique est trop court">Beta</th></tr>${positionsRows}</table>`
+    ? `<table><tr><th>Entreprise</th><th>Type</th><th>Parts</th><th>Coût moyen</th><th>Prix/part</th><th>Valeur de marché</th><th>P&amp;L latent</th><th title="Sensibilité statistique au marché (covariance des rendements / variance du marché) — 1.00 par défaut si l'historique est trop court">Beta</th><th></th></tr>${positionsRows}</table>`
     : '<div class="empty">Aucune position boursière pour le moment.</div>';
   
   
@@ -3272,8 +3304,32 @@ function renderPortefeuilleTrading(me, company){
     
     
     
+    
+    
+    const myPendingBids = (me.pendingBids||[]).filter(b=>b.qty>1e-9);
+    const myPendingAsks = (me.pendingAsks||[]).filter(a=>a.qty>1e-9);
+    const pendingBidsRows = myPendingBids.map(b=>{
+      const co = companyById(b.companyId);
+      return `<tr><td>${co?esc(co.name):'—'}</td><td class="money">${fmtPrice(b.price)}</td><td>${fmtShares(b.qty)}</td><td class="money">${fmt(b.qty*b.price)}</td><td><button class="btn btn-ghost btn-sm" data-cancel-bid="${b.id}">Annuler</button></td></tr>`;
+    }).join('');
+    const pendingAsksRows = myPendingAsks.map(a=>{
+      const co = companyById(a.companyId);
+      return `<tr><td>${co?esc(co.name):'—'}</td><td class="money">${fmtPrice(a.price)}</td><td>${fmtShares(a.qty)}</td><td class="money">${fmt(a.qty*a.price)}</td><td><button class="btn btn-ghost btn-sm" data-cancel-ask="${a.id}">Annuler</button></td></tr>`;
+    }).join('');
+    const showPendingOrders = myPendingBids.length>0 || myPendingAsks.length>0;
+    const pendingOrdersHtml = showPendingOrders ? `
+      ${myPendingBids.length>0?`<div class="small" style="font-weight:600;margin-bottom:6px;">🎯 Bids en attente</div><table><tr><th>Entreprise</th><th>Prix limite</th><th>Parts restantes</th><th>Montant</th><th></th></tr>${pendingBidsRows}</table>`:''}
+      ${myPendingAsks.length>0?`<div class="small" style="font-weight:600;margin-top:${myPendingBids.length>0?12:0}px;margin-bottom:6px;">🎯 Asks en attente</div><table><tr><th>Entreprise</th><th>Prix limite</th><th>Parts restantes</th><th>Montant</th><th></th></tr>${pendingAsksRows}</table>`:''}
+    ` : '';
+    
+    
+    
+    
+    
+    
     const positionGroups = [
       {icon:'📈', label:'Positions longues', html: showActions ? positionsHtml : ''},
+      {icon:'🎯', label:'Ordres en attente', html: showPendingOrders ? pendingOrdersHtml : ''},
       {icon:'📉', label:'Positions courtes', html: showShort ? shortsHtml : ''},
       {icon:'🏛️', label:'Obligations gouvernementales', html: showBons ? bondsHtml : ''},
       {icon:'🏦', label:"Obligations d'entreprise (Prêt)", html: showLoans ? myLoansHtml : ''},
@@ -3307,7 +3363,7 @@ function renderPortefeuilleTrading(me, company){
     
     
     
-    if(!showShort && !showBons && !showLoans && !showAbs && !showOptionsSimple && !showStrategies && !showPreferred && !showActions){
+    if(!showShort && !showBons && !showLoans && !showAbs && !showOptionsSimple && !showStrategies && !showPreferred && !showActions && !showPendingOrders){
       return '';
     }
     return `<div class="section-title" style="margin-top:16px;">MES POSITIONS</div>${positionGroupsHtml}`;
@@ -3687,6 +3743,7 @@ function renderPortefeuilleFinancials(){
   const multCell = v => v===null ? '<span class="small">–</span>' : `<span class="money" style="color:${finColor(v)};">${v.toFixed(2)}×</span>`;
   const pctRatioCell = v => v===null ? '<span class="small">–</span>' : `<span class="money" style="color:${finColor(v)};">${(v*100>=0?'+':'')}${(v*100).toFixed(1)}%</span>`;
   const betaCell = v => v===null ? '<span class="small">–</span>' : `<span class="money">${v.toFixed(2)}</span>`;
+  const volPctileCell = v => v===null ? '<span class="small">--</span>' : `<span class="money">${v.toFixed(0)}<sup>e</sup> percentile</span>`;
   bodyHtml += `
   <div class="section-title" style="margin-top:22px;">Analyse de ratios</div>
   <div style="overflow-x:auto;">
@@ -3701,9 +3758,10 @@ function renderPortefeuilleFinancials(){
     <tr><td>Dette/Équité</td>${ratioRows.map(r=>`<td>${multCell(r.debtEquity)}</td>`).join('')}</tr>
     <tr><td>BETA <span class="small">(vs le marché)</span></td>${ratioRows.map(r=>`<td>${betaCell(r.beta)}</td>`).join('')}</tr>
     <tr><td>Volatilité <span class="small">(écart-type des rendements)</span></td>${ratioRows.map(r=>`<td>${pctRatioCell(r.volatility)}</td>`).join('')}</tr>
+    <tr><td>Percentile de volatilité <span class="small">(vs historique propre de la compagnie)</span></td>${ratioRows.map(r=>`<td>${volPctileCell(r.volatilityPercentile)}</td>`).join('')}</tr>
   </table>
   </div>
-  <div class="small" style="margin-top:4px;">BETA et Volatilité sont calculés sur l'historique complet des rendements par lancer de la compagnie (depuis sa fondation), jusqu'à la fin de la période sélectionnée — « – » si l'historique est encore trop court pour un calcul fiable.</div>`;
+  <div class="small" style="margin-top:4px;">BETA et Volatilité sont calculés sur l'historique complet des rendements par lancer de la compagnie (depuis sa fondation), jusqu'à la fin de la période sélectionnée — « – » si l'historique est encore trop court pour un calcul fiable. Le percentile de volatilité situe ce niveau par rapport à l'historique DE CETTE COMPAGNIE elle-même (jamais comparé aux autres compagnies) — « -- » si l'historique est encore trop court.</div>`;
 
   return `${finTableCenterStyleBlock()}${financialsCardOpen}${selectorHtml}
   ${entrepriseAccordion('pf-etats-financiers', 'États financiers par entreprise', bodyHtml)}${financialsCardClose}`;
@@ -3918,6 +3976,7 @@ function renderEntrepriseFinancials(company){
   const multCell = v => v===null ? '<span class="small">–</span>' : `<span class="money" style="color:${finColor(v)};">${v.toFixed(2)}×</span>`;
   const pctRatioCell = v => v===null ? '<span class="small">–</span>' : `<span class="money" style="color:${finColor(v)};">${(v*100>=0?'+':'')}${(v*100).toFixed(1)}%</span>`;
   const betaCell = v => v===null ? '<span class="small">–</span>' : `<span class="money">${v.toFixed(2)}</span>`;
+  const volPctileCell = v => v===null ? '<span class="small">--</span>' : `<span class="money">${v.toFixed(0)}<sup>e</sup> percentile</span>`;
   bodyHtml += `
   <div class="section-title" style="margin-top:22px;">Analyse de ratios</div>
   <div style="overflow-x:auto;">
@@ -3932,9 +3991,10 @@ function renderEntrepriseFinancials(company){
     <tr><td>Dette/Équité</td>${ratioRows.map(r=>`<td>${multCell(r.debtEquity)}</td>`).join('')}</tr>
     <tr><td>BETA <span class="small">(vs le marché)</span></td>${ratioRows.map(r=>`<td>${betaCell(r.beta)}</td>`).join('')}</tr>
     <tr><td>Volatilité <span class="small">(écart-type des rendements)</span></td>${ratioRows.map(r=>`<td>${pctRatioCell(r.volatility)}</td>`).join('')}</tr>
+    <tr><td>Percentile de volatilité <span class="small">(vs historique propre de la compagnie)</span></td>${ratioRows.map(r=>`<td>${volPctileCell(r.volatilityPercentile)}</td>`).join('')}</tr>
   </table>
   </div>
-  <div class="small" style="margin-top:4px;">BETA et Volatilité sont calculés sur l'historique complet des rendements par lancer de la compagnie (depuis sa fondation), jusqu'à la fin de chaque période — « – » si l'historique est encore trop court pour un calcul fiable.</div>`;
+  <div class="small" style="margin-top:4px;">BETA et Volatilité sont calculés sur l'historique complet des rendements par lancer de la compagnie (depuis sa fondation), jusqu'à la fin de chaque période — « – » si l'historique est encore trop court pour un calcul fiable. Le percentile de volatilité situe ce niveau par rapport à l'historique DE CETTE COMPAGNIE elle-même (jamais comparé aux autres compagnies) — « -- » si l'historique est encore trop court.</div>`;
 
   
   
@@ -8745,6 +8805,60 @@ function advanceGameClock(){
       
       
       
+      const earliestSemForGrowth = Math.max(Math.floor((co.createdAtRoll||0)/3), Math.floor((state.finLedgerStartedAtRoll||0)/3));
+      if((semesterBefore-1) >= earliestSemForGrowth){
+        const isPrevForGrowth = incomeStatementFor(co.id, semesterBefore-1);
+        if(is.totalRevenue > isPrevForGrowth.totalRevenue) injectStockCube(co, 'green', STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN, STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MAX);
+        else if(is.totalRevenue < isPrevForGrowth.totalRevenue) injectStockCube(co, 'red', STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN, STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MAX);
+      }
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      const mortgageInterestExpense = is.expenses['mortgage_interest_expense']||0;
+      if(mortgageInterestExpense>1e-9){
+        const ebitEquivalent = is.netIncome + mortgageInterestExpense;
+        const interestCoverage = ebitEquivalent/mortgageInterestExpense;
+        if(interestCoverage > STOCK_INTEREST_COVERAGE_THRESHOLD) injectStockCube(co, 'green', STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN, STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MAX);
+        else if(interestCoverage < STOCK_INTEREST_COVERAGE_THRESHOLD) injectStockCube(co, 'red', STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN, STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MAX);
+      }
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
       
       
       
@@ -8892,7 +9006,7 @@ function advanceGameClock(){
       
       
       
-      if(companyDebtRatio(co) > STOCK_DISTRESS_DEBT_THRESHOLD && netMargin < 0){
+      if(companyDebtRatio(co) > state.settings.distressDebtThreshold && netMargin < 0){
         
         
         
@@ -8980,6 +9094,11 @@ function advanceGameClock(){
         state.gameEndedReason = {companyId: co.id, companyName: co.name, roll: state.gameClock.rollCount, reason:'stockFloor'};
         forfeitPendingDividendAnnouncementsAtGameEnd(); 
       }
+      
+      
+      
+      
+      if(!state.gameEndedReason) checkPendingOrders(co);
       
       
       
@@ -9207,6 +9326,16 @@ const FIN_CATEGORIES = {
   abs_proceeds:                {bucket:null, cf:'investing', label:'Émission ABS — capital levé'},
   abs_subscription_outflow:    {bucket:null, cf:'investing', label:'Souscription ABS — capital investi'},
   abs_income:                  {bucket:'revenue', cf:'operating', label:'Revenu ABS reçu'},
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  abs_interest_expense:        {bucket:'expense', cf:'operating', label:'Intérêts sur titrisation (ABS)'},
   loan_investment_outflow:     {bucket:null, cf:'investing', label:'Capital prêté à une autre compagnie'},
   loan_investment_recovery:    {bucket:null, cf:'investing', label:'Capital de prêt recouvré'},
   mortgage_investment_outflow: {bucket:null, cf:'investing', label:'Capital hypothécaire avancé à une autre compagnie'},
@@ -9579,6 +9708,35 @@ function companyBetaVolatility(company, uptoRoll, marketSeries){
 
 
 
+
+
+
+
+
+
+
+
+
+const STOCK_VOLATILITY_PERCENTILE_MIN_SAMPLES = 3;
+function companyVolatilityPercentile(company, targetVolatility, uptoRoll, marketSeries){
+  if(targetVolatility===null || targetVolatility===undefined) return null;
+  const startSem = Math.max(Math.floor((company.createdAtRoll||0)/3), Math.floor((state.finLedgerStartedAtRoll||0)/3));
+  const endSem = Math.floor(uptoRoll/3);
+  const samples = [];
+  for(let sem=startSem; sem<=endSem; sem++){
+    const closeRoll = Math.min((sem+1)*3-1, uptoRoll);
+    const {volatility} = companyBetaVolatility(company, closeRoll, marketSeries);
+    if(volatility!==null) samples.push(volatility);
+  }
+  if(samples.length<STOCK_VOLATILITY_PERCENTILE_MIN_SAMPLES) return null;
+  const countLE = samples.filter(v=>v<=targetVolatility).length;
+  return (countLE/samples.length)*100;
+}
+
+
+
+
+
 function companyPriceAtPeriodClose(company, period){
   if(period.isCurrent) return company.stockPrice;
   const closeRoll = (period.semesterIndex+1)*3 - 1;
@@ -9599,6 +9757,7 @@ function companyRatiosForPeriod(company, statementEntry, marketSeries){
   const marketCap = price!=null ? price*company.sharesIssued : null;
   const uptoRoll = s.period.isCurrent ? state.gameClock.rollCount : (s.period.semesterIndex+1)*3-1;
   const {beta, volatility} = companyBetaVolatility(company, uptoRoll, marketSeries);
+  const volatilityPercentile = companyVolatilityPercentile(company, volatility, uptoRoll, marketSeries);
   return {
     marketCap,
     pe: (marketCap!=null && s.inc.netIncome>1e-9) ? marketCap/s.inc.netIncome : null,
@@ -9607,7 +9766,7 @@ function companyRatiosForPeriod(company, statementEntry, marketSeries){
     roa: (s.bs && Math.abs(s.bs.totalAssets)>1e-9) ? s.inc.netIncome/s.bs.totalAssets : null,
     roe: (s.bs && Math.abs(s.bs.equity)>1e-9) ? s.inc.netIncome/s.bs.equity : null,
     debtEquity: (s.bs && Math.abs(s.bs.equity)>1e-9) ? s.bs.totalLiabilities/s.bs.equity : null,
-    beta, volatility,
+    beta, volatility, volatilityPercentile,
   };
 }
 
@@ -9896,7 +10055,18 @@ function expectedMovePct(type){
 
 
 
-const STOCK_DISTRESS_DEBT_THRESHOLD = 0.15;
+
+
+
+
+
+
+
+
+
+
+
+
 const STOCK_DISTRESS_INJECT_MIN = 3, STOCK_DISTRESS_INJECT_MAX = 5;
 
 
@@ -9941,6 +10111,22 @@ const STOCK_CROISSANCE_BIG_BEAT_MARGIN = 0.18, STOCK_CROISSANCE_BIG_MISS_MARGIN 
 
 
 const STOCK_TRIGGER_LEVEL_MIN = 1, STOCK_TRIGGER_LEVEL_MAX = 2; 
+
+
+
+
+
+
+
+
+
+
+const STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN = 0, STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MAX = 1;
+
+
+
+
+const STOCK_INTEREST_COVERAGE_THRESHOLD = 1.0;
 
 
 
@@ -10094,6 +10280,20 @@ const OPTION_CONTRACT_MULTIPLIER = 100;
 
 function optionNotional(contracts, premium){
   return contracts * premium * OPTION_CONTRACT_MULTIPLIER;
+}
+
+const OPTION_LONG_CALL_CAP_PCT = 0.15;
+
+function playerLongCallContracts(player, companyId){
+  return (player.optionPositions||[]).filter(p=>p.companyId===companyId && p.type==='call' && p.side==='long').reduce((sum,p)=>sum+p.shares, 0);
+}
+
+function optionLongCallCapContracts(company){
+  return Math.floor(OPTION_LONG_CALL_CAP_PCT * company.totalShares / OPTION_CONTRACT_MULTIPLIER + 1e-9);
+}
+
+function optionLongCallCapErrorMessage(company, capContracts, already){
+  return `Plafond de calls longs atteint sur ${company.name} — maximum ${capContracts} contrat(s) CALL long(s) par joueur (${OPTION_LONG_CALL_CAP_PCT*100}% de ${fmtShares(company.totalShares)} parts ÷ ${OPTION_CONTRACT_MULTIPLIER} parts/contrat), vous en détenez déjà ${already}. Cette limite protège contre une dilution disproportionnée de l'entreprise : à l'exercice physique d'un call, la banque livre les parts sans aucun plafond de son côté (contrairement à une émission d'actions normale, plafonnée à 10%).`;
 }
 
 
@@ -10281,7 +10481,7 @@ function checkBankOwnershipGraceExpiry(){
     }
   }
 }
-function executeShareTrade(company, player, direction, amount, _viaCeoAnnouncementChannel){
+function executeShareTrade(company, player, direction, amount, _viaCeoAnnouncementChannel, _priceOverride){
   
   
   
@@ -10299,7 +10499,15 @@ function executeShareTrade(company, player, direction, amount, _viaCeoAnnounceme
   if(player.id===company.ceoId && !_viaCeoAnnouncementChannel) return {ok:false, error:`Le CEO de ${company.name} ne peut pas trader directement ses propres parts — utilisez l'annonce publique à délai d'1 an.`};
   if(!(amount>0)) return {ok:false, error:'Le montant doit être positif.'};
   if(companyPendingIpoShares(company)>0) return {ok:false, error:`${company.name} n'a pas encore terminé son introduction en bourse (IPO) — pas encore tradable.`};
-  const price = company.stockPrice||0;
+  
+  
+  
+  
+  
+  
+  
+  
+  const price = _priceOverride!==undefined ? _priceOverride : (company.stockPrice||0);
   if(!(price>0)) return {ok:false, error:'Le prix de l’action est invalide pour le moment.'};
   const qty = amount/price;
   const entries = [];
@@ -10391,6 +10599,126 @@ function tradeCompanyShares(company, player, direction, amount){
   if(player.id===company.ceoId) return {ok:false, error:`Le CEO de ${company.name} ne peut pas trader directement ses propres parts — utilisez l'annonce publique à délai d'1 an.`};
   if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
   return executeShareTrade(company, player, direction, amount);
+}
+
+
+
+function placeBid(player, company, price, qty){
+  if(!tradingWindowOpen()) return {ok:false, error:`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`};
+  if(player.id===company.ceoId) return {ok:false, error:`Le CEO de ${company.name} ne peut pas trader directement ses propres parts — utilisez l'annonce publique à délai d'1 an.`};
+  if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
+  if(companyPendingIpoShares(company)>0) return {ok:false, error:`${company.name} n'a pas encore terminé son introduction en bourse (IPO) — pas encore tradable.`};
+  if(!(price>0)) return {ok:false, error:'Le prix limite doit être positif.'};
+  if(!(qty>0)) return {ok:false, error:'La quantité doit être positive.'};
+  if(!player.pendingBids) player.pendingBids = [];
+  player.pendingBids.push({id:uid(), companyId:company.id, price, qty, createdAt:nowLabel(), roll:state.gameClock.rollCount});
+  return {ok:true};
+}
+
+function placeAsk(player, company, price, qty){
+  if(!tradingWindowOpen()) return {ok:false, error:`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`};
+  if(player.id===company.ceoId) return {ok:false, error:`Le CEO de ${company.name} ne peut pas trader directement ses propres parts — utilisez l'annonce publique à délai d'1 an.`};
+  if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
+  if(!(price>0)) return {ok:false, error:'Le prix limite doit être positif.'};
+  if(!(qty>0)) return {ok:false, error:'La quantité doit être positive.'};
+  const myEntry = company.shareholders.find(s=>s.playerId===player.id);
+  const myShares = myEntry ? myEntry.shares : 0;
+  if(qty>myShares+1e-9) return {ok:false, error:'Vous ne détenez pas assez de parts pour cet ask.'};
+  if(!player.pendingAsks) player.pendingAsks = [];
+  player.pendingAsks.push({id:uid(), companyId:company.id, price, qty, createdAt:nowLabel(), roll:state.gameClock.rollCount});
+  return {ok:true};
+}
+
+function cancelBid(player, bidId){
+  if(!player.pendingBids) return {ok:false, error:'Aucun bid en attente.'};
+  const idx = player.pendingBids.findIndex(b=>b.id===bidId);
+  if(idx<0) return {ok:false, error:'Bid introuvable.'};
+  player.pendingBids.splice(idx,1);
+  return {ok:true};
+}
+function cancelAsk(player, askId){
+  if(!player.pendingAsks) return {ok:false, error:'Aucun ask en attente.'};
+  const idx = player.pendingAsks.findIndex(a=>a.id===askId);
+  if(idx<0) return {ok:false, error:'Ask introuvable.'};
+  player.pendingAsks.splice(idx,1);
+  return {ok:true};
+}
+
+function fillPendingBid(player, company, bid){
+  const price = bid.price;
+  if(!(price>0)) return {filled:0};
+  const cashAvail = Math.max(0, player.cash||0);
+  const bondsAvail = Math.max(0, player.bondBalance||0);
+  const totalAvail = cashAvail + bondsAvail;
+  if(totalAvail<=1e-9) return {filled:0};
+  const affordableQty = totalAvail/price;
+  const qtyToFill = Math.min(bid.qty, affordableQty);
+  if(qtyToFill<=1e-9) return {filled:0};
+  const amount = qtyToFill*price;
+  
+  
+  
+  
+  const bondsNeeded = Math.max(0, amount-cashAvail);
+  if(bondsNeeded>1e-9){
+    player.bondBalance -= bondsNeeded;
+    player.cash += bondsNeeded;
+    state.bank.cash -= bondsNeeded;
+  }
+  const r = executeShareTrade(company, player, 'buy', amount, false, price);
+  if(!r.ok){
+    
+    
+    if(bondsNeeded>1e-9){ player.bondBalance += bondsNeeded; player.cash -= bondsNeeded; state.bank.cash += bondsNeeded; }
+    return {filled:0};
+  }
+  bid.qty -= qtyToFill;
+  return {filled:qtyToFill, entries:r.entries, amount, qty:qtyToFill};
+}
+
+function fillPendingAsk(player, company, ask){
+  const price = ask.price;
+  if(!(price>0)) return {filled:0};
+  const myEntry = company.shareholders.find(s=>s.playerId===player.id);
+  const heldShares = myEntry ? myEntry.shares : 0;
+  if(heldShares<=1e-9) return {filled:0};
+  const qtyToFill = Math.min(ask.qty, heldShares);
+  if(qtyToFill<=1e-9) return {filled:0};
+  const amount = qtyToFill*price;
+  const r = executeShareTrade(company, player, 'sell', amount, false, price);
+  if(!r.ok) return {filled:0};
+  ask.qty -= qtyToFill;
+  return {filled:qtyToFill, entries:r.entries, amount, qty:qtyToFill};
+}
+
+function checkPendingOrders(company){
+  if(state.gameEndedReason) return;
+  const price = company.stockPrice||0;
+  if(!(price>0)) return;
+  state.players.forEach(pl=>{
+    if(pl.pendingBids && pl.pendingBids.length){
+      pl.pendingBids = pl.pendingBids.filter(b=>{
+        if(b.companyId!==company.id) return true;
+        if(price>b.price+1e-9) return true; 
+        const r = fillPendingBid(pl, company, b);
+        if(r.filled>1e-9){
+          log(`🎯 Bid déclenché — ${pl.name} achète ${r.qty.toFixed(4)} part(s) de ${company.name} à ${fmtPrice(b.price)}/part (${fmt(r.amount)}).`, r.entries);
+        }
+        return b.qty>1e-9; 
+      });
+    }
+    if(pl.pendingAsks && pl.pendingAsks.length){
+      pl.pendingAsks = pl.pendingAsks.filter(a=>{
+        if(a.companyId!==company.id) return true;
+        if(price<a.price-1e-9) return true; 
+        const r = fillPendingAsk(pl, company, a);
+        if(r.filled>1e-9){
+          log(`🎯 Ask déclenché — ${pl.name} vend ${r.qty.toFixed(4)} part(s) de ${company.name} à ${fmtPrice(a.price)}/part (${fmt(r.amount)}).`, r.entries);
+        }
+        return a.qty>1e-9;
+      });
+    }
+  });
 }
 
 
@@ -11415,6 +11743,15 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
   
   
   if(premium<=1e-9) return {ok:false, error:`Cette option a un delta arrondi à 0,00 (trop loin du cours et/ou trop proche de l'échéance) — elle n'a plus de valeur réelle négociable et ne peut pas être contractée.`};
+  
+  
+  if(type==='call' && side==='long'){
+    const capContracts = optionLongCallCapContracts(company);
+    const already = playerLongCallContracts(player, company.id);
+    if(already + shares > capContracts + 1e-9){
+      return {ok:false, error: optionLongCallCapErrorMessage(company, capContracts, already)};
+    }
+  }
   const notional = optionNotional(shares, premium);
   const typeLabel = type==='call' ? 'CALL' : 'PUT';
   const entries = [];
@@ -11552,6 +11889,17 @@ function openOptionStrategy(company, player, kind, direction, strikeLow, strikeH
   
   if(priced.some(l=>l.premium<=1e-9)){
     return {ok:false, error:`Au moins une jambe de cette stratégie a un delta arrondi à 0,00 (trop loin du cours et/ou trop proche de l'échéance) — elle n'a plus de valeur réelle négociable, la stratégie entière ne peut pas être contractée.`};
+  }
+  
+  
+  
+  
+  if(legs.some(l=>l.type==='call' && l.side==='long')){
+    const capContracts = optionLongCallCapContracts(company);
+    const already = playerLongCallContracts(player, company.id);
+    if(already + contracts > capContracts + 1e-9){
+      return {ok:false, error: optionLongCallCapErrorMessage(company, capContracts, already)};
+    }
   }
   
   
@@ -15649,6 +15997,41 @@ function bindTabEvents(t){
     if(openAnnounceCeoTradeBtn) openAnnounceCeoTradeBtn.addEventListener('click', ()=>modalAnnounceCeoTrade());
     
     
+    
+    
+    
+    
+    
+    const openPlaceBidBtn = document.getElementById('openPlaceBidBtn');
+    if(openPlaceBidBtn) openPlaceBidBtn.addEventListener('click', ()=>modalPlaceBidOrder());
+    const openPlaceAskBtn = document.getElementById('openPlaceAskBtn');
+    if(openPlaceAskBtn) openPlaceAskBtn.addEventListener('click', ()=>modalPlaceAskOrder());
+    document.querySelectorAll('[data-place-ask-for]').forEach(b=>b.addEventListener('click', ()=>modalPlaceAskOrder(b.dataset.placeAskFor)));
+    
+    
+    
+    document.querySelectorAll('[data-cancel-bid]').forEach(b=>b.addEventListener('click', async ()=>{
+      const bidId = b.dataset.cancelBid;
+      const res = await attemptActionWithRetry(async ()=>{
+        const pl = state.players.find(p=>p.id===myPlayerId);
+        if(!pl) return {ok:false};
+        return cancelBid(pl, bidId);
+      }, {label:'Annulation d\'un bid'});
+      if(!res.ok){ if(res.error) alert(res.error); return; }
+      render();
+    }));
+    document.querySelectorAll('[data-cancel-ask]').forEach(b=>b.addEventListener('click', async ()=>{
+      const askId = b.dataset.cancelAsk;
+      const res = await attemptActionWithRetry(async ()=>{
+        const pl = state.players.find(p=>p.id===myPlayerId);
+        if(!pl) return {ok:false};
+        return cancelAsk(pl, askId);
+      }, {label:'Annulation d\'un ask'});
+      if(!res.ok){ if(res.error) alert(res.error); return; }
+      render();
+    }));
+    
+    
     const openShortSharesBtn = document.getElementById('openShortSharesBtn');
     if(openShortSharesBtn) openShortSharesBtn.addEventListener('click', ()=>modalShortShares('open'));
     const openCoverShortSharesBtn = document.getElementById('openCoverShortSharesBtn');
@@ -16342,19 +16725,28 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
       
       
       
+      
+      
+      
+      
       const revenueSwap = state.revenueSwaps.find(s=>s.sellerId===c.companyId && s.propertyIds.some(pid=>samePropertyOrLot(pid, p.id)));
       if(revenueSwap){
         const full = c.amount;
         const normalResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, full, {onlyNormal:true}) : {net:full, totalWithheld:0, withholdings:[]};
         const cededAmount = full * revenueSwap.cededPctOfShare;
-        const retainedAmount = full - cededAmount;
         distributeAbsCashflow(revenueSwap, cededAmount, entries);
         const residualAfterCession = Math.max(0, normalResult.net - cededAmount);
         const lastResortResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, residualAfterCession, {onlyLastResort:true}) : {net:residualAfterCession, totalWithheld:0, withholdings:[]};
         const totalWithheld = normalResult.totalWithheld + lastResortResult.totalWithheld;
         const allWithholdings = normalResult.withholdings.concat(lastResortResult.withholdings);
-        if(retainedAmount>1e-9 || totalWithheld>1e-9){
-          splitCuts.push({companyId:c.companyId, amount:retainedAmount, viaSwap:false,
+        
+        
+        
+        
+        
+        
+        if(full>1e-9 || totalWithheld>1e-9){
+          splitCuts.push({companyId:c.companyId, amount:full, absCeded:cededAmount, viaSwap:false,
             net:lastResortResult.net, withheld:totalWithheld, withholdings:allWithholdings, _precomputedByAbs:true});
         }
         return;
@@ -16551,6 +16943,9 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
       
       
       
+      if(c.absCeded>0) logFin(owner.id, 'abs_interest_expense', -c.absCeded);
+      
+      
       
       
       
@@ -16685,14 +17080,16 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
       const full = c.amount;
       const normalResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, full, {onlyNormal:true}) : {net:full, totalWithheld:0, withholdings:[]};
       const cededAmount = full * revenueSwap.cededPctOfShare;
-      const retainedAmount = full - cededAmount;
       distributeAbsCashflow(revenueSwap, cededAmount, entries);
       const residualAfterCession = Math.max(0, normalResult.net - cededAmount);
       const lastResortResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, residualAfterCession, {onlyLastResort:true}) : {net:residualAfterCession, totalWithheld:0, withholdings:[]};
       const totalWithheld = normalResult.totalWithheld + lastResortResult.totalWithheld;
       const allWithholdings = normalResult.withholdings.concat(lastResortResult.withholdings);
-      if(retainedAmount>1e-9 || totalWithheld>1e-9){
-        splitCuts.push({companyId:c.companyId, amount:retainedAmount, viaSwap:false,
+      
+      
+      
+      if(full>1e-9 || totalWithheld>1e-9){
+        splitCuts.push({companyId:c.companyId, amount:full, absCeded:cededAmount, viaSwap:false,
           net:lastResortResult.net, withheld:totalWithheld, withholdings:allWithholdings, _precomputedByAbs:true});
       }
       return;
@@ -16721,10 +17118,12 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
     const ownerPl = state.players.find(x=>x.id===owner.ceoId);
     if(ownerPl) ownerPl.stats.rentReceived += c.amount;
     owner.cash += c.net;
-    logFin(owner.id, 'rent_revenue', c.amount);
+    logFin(owner.id, 'rent_revenue', c.amount); 
     addRealEstateRevenue(realEstateKeyFor(p), owner.id, c.amount);
     if(c.withheld>0) logFin(owner.id, 'loan_repayment_via_rent', -c.withheld);
     
+    
+    if(c.absCeded>0) logFin(owner.id, 'abs_interest_expense', -c.absCeded);
     
     
     const ownerLabel = c.viaSwap
@@ -18141,6 +18540,137 @@ function modalBuySellShares(direction){
       return {...r, coName:co.name};
     });
     if(res && res.ok && res.entries) showTransactionPopup(`${dirLabel} d'actions — ${res.coName}`, res.entries);
+  });
+}
+
+function modalPlaceBidOrder(){
+  const me = state.players.find(p=>p.id===myPlayerId);
+  if(!me) return;
+  if(!tradingWindowOpen()){ alert(`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`); return; }
+  const eligible = activeCompanies().filter(c=>companyPendingIpoShares(c)<=0 && c.ceoId!==me.id);
+  if(eligible.length===0){ alert('Aucune entreprise disponible pour un bid pour le moment (introduction en bourse non financée, ou vous êtes CEO de toutes les entreprises actives).'); return; }
+  const options = eligible.map(c=>`<option value="${c.id}">${companyOptionLabel(c)} — ${fmtPrice(c.stockPrice||0)}/part</option>`).join('');
+  openModal(`
+    <h3>Placer un bid (cours acheteur)</h3>
+    <label>Entreprise</label>
+    <select id="mBidCompany">${options}</select>
+    <div class="small" id="mBidInfo" style="margin-bottom:8px;"></div>
+    <label>Prix limite (en $/part) — achat déclenché quand le cours descend à ce niveau ou en dessous</label>
+    <input type="number" step="0.01" min="0" id="mBidPrice" value="0">
+    <label>Unité</label>
+    <select id="mBidUnit">
+      <option value="dollars">Montant (en ${esc(state.unit)})</option>
+      <option value="shares">Nombre de parts</option>
+    </select>
+    <label id="mBidQtyLabel">Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
+    <input type="number" step="0.01" min="0" id="mBidQty" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mOk">Placer le bid</button>
+    </div>`);
+  let lastBidUnit = 'dollars';
+  const updateQtyLabel = ()=>{
+    const unit = document.getElementById('mBidUnit').value;
+    document.getElementById('mBidQtyLabel').innerHTML = unit==='shares' ? 'Nombre de parts' : `Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)`;
+  };
+  const refreshInfo = ()=>{
+    const co = companyById(document.getElementById('mBidCompany').value);
+    document.getElementById('mBidInfo').textContent = co ? `Prix courant: ${fmtPrice(co.stockPrice||0)}/part.` : '';
+  };
+  refreshInfo();
+  document.getElementById('mBidCompany').addEventListener('change', refreshInfo);
+  document.getElementById('mBidUnit').addEventListener('change', ()=>{
+    
+    
+    
+    
+    const newUnit = document.getElementById('mBidUnit').value;
+    const limitPriceRaw = parseFloat(document.getElementById('mBidPrice').value)||0;
+    const limitPrice = limitPriceRaw/1e6;
+    const raw = parseFloat(document.getElementById('mBidQty').value)||0;
+    if(limitPrice>0){
+      const qty = lastBidUnit==='shares' ? raw : raw/limitPrice;
+      const amt = lastBidUnit==='shares' ? raw*limitPrice : raw;
+      document.getElementById('mBidQty').value = (newUnit==='shares' ? qty : amt).toFixed(newUnit==='shares'?4:2);
+    }
+    lastBidUnit = newUnit;
+    updateQtyLabel();
+  });
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const companyId = document.getElementById('mBidCompany').value;
+    
+    
+    
+    
+    const priceRaw = parseFloat(document.getElementById('mBidPrice').value)||0;
+    const price = priceRaw/1e6;
+    const unit = document.getElementById('mBidUnit').value;
+    const raw = parseFloat(document.getElementById('mBidQty').value)||0;
+    const res = await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      const pl = state.players.find(p=>p.id===myPlayerId);
+      if(!co || !pl) return {ok:false, error:'Entreprise introuvable.'};
+      
+      
+      const qty = unit==='shares' ? raw : (price>0 ? raw/price : 0);
+      const r = placeBid(pl, co, price, qty);
+      if(!r.ok) return r;
+      log(`${pl.name} place un bid sur ${co.name}: ${fmtShares(qty)} part(s) à ${fmtPrice(price)}/part ou moins.`);
+      return {ok:true};
+    });
+    if(res && res.ok){ closeModal(); render(); }
+  });
+}
+
+function modalPlaceAskOrder(preselectCompanyId){
+  const me = state.players.find(p=>p.id===myPlayerId);
+  if(!me) return;
+  if(!tradingWindowOpen()){ alert(`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`); return; }
+  const eligible = activeCompanies().filter(c=>c.ceoId!==me.id && (c.shareholders.find(s=>s.playerId===me.id)||{}).shares>1e-9);
+  if(eligible.length===0){ alert('Vous ne détenez actuellement aucune position sur laquelle placer un ask.'); return; }
+  const options = eligible.map(c=>`<option value="${c.id}" ${preselectCompanyId===c.id?'selected':''}>${companyOptionLabel(c)} — ${fmtPrice(c.stockPrice||0)}/part</option>`).join('');
+  openModal(`
+    <h3>Placer un ask (cours vendeur)</h3>
+    <label>Entreprise</label>
+    <select id="mAskCompany">${options}</select>
+    <div class="small" id="mAskInfo" style="margin-bottom:8px;"></div>
+    <label>Prix limite (en $/part) — vente déclenchée quand le cours monte à ce niveau ou au-dessus</label>
+    <input type="number" step="0.01" min="0" id="mAskPrice" value="0">
+    <label>Nombre de parts</label>
+    <input type="number" step="0.0001" min="0" id="mAskQty" value="0">
+    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mOk">Placer l'ask</button>
+    </div>`);
+  const refreshInfo = ()=>{
+    const co = companyById(document.getElementById('mAskCompany').value);
+    if(!co){ document.getElementById('mAskInfo').textContent = ''; return; }
+    const held = (co.shareholders.find(s=>s.playerId===me.id)||{}).shares||0;
+    document.getElementById('mAskInfo').textContent = `Prix courant: ${fmtPrice(co.stockPrice||0)}/part — vous détenez ${fmtShares(held)} part(s).`;
+  };
+  refreshInfo();
+  document.getElementById('mAskCompany').addEventListener('change', refreshInfo);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const companyId = document.getElementById('mAskCompany').value;
+    
+    
+    const priceRaw = parseFloat(document.getElementById('mAskPrice').value)||0;
+    const price = priceRaw/1e6;
+    const qty = parseFloat(document.getElementById('mAskQty').value)||0;
+    const res = await runModalActionWithRetry(()=>{
+      const co = companyById(companyId);
+      const pl = state.players.find(p=>p.id===myPlayerId);
+      if(!co || !pl) return {ok:false, error:'Entreprise introuvable.'};
+      const r = placeAsk(pl, co, price, qty);
+      if(!r.ok) return r;
+      log(`${pl.name} place un ask sur ${co.name}: ${fmtShares(qty)} part(s) à ${fmtPrice(price)}/part ou plus.`);
+      return {ok:true};
+    });
+    if(res && res.ok){ closeModal(); render(); }
   });
 }
 
@@ -19648,6 +20178,8 @@ function renderSetup(){
       </label>
       <label>Prime de risque max selon l'endettement (ajoutée au taux hypothécaire ET au taux des subventions d'avance si 100% endetté)</label>
       <input type="number" step="1" id="setupDebtSpread" value="50"> %
+      <label>Seuil d'endettement (dette/actif brut) déclenchant la spirale de détresse boursière (combiné à une marge nette négative le même semestre)</label>
+      <input type="number" step="1" id="setupDistressThreshold" value="50"> %
 
       <!-- section « Bourse » du formulaire de configuration (encaisse boursière de départ, nombre
       d'actions, actif sans risque, multiple d'appel de marge) retirée à l'étape 5/8, Bloc 6 avec le
@@ -19826,6 +20358,7 @@ function renderSetup(){
       mortgageRentContinues: document.getElementById('setupMortgageRentContinues').checked,
       bankCollectsRent: document.getElementById('setupBankCollectsRent').checked,
       debtSpreadFactor: (parseFloat(document.getElementById('setupDebtSpread').value)||0)/100,
+      distressDebtThreshold: (parseFloat(document.getElementById('setupDistressThreshold').value)||0)/100,
       rentCompensationFee: parseFloat(document.getElementById('setupRentCompFee').value)||0,
       subInsuranceMarkup: (parseFloat(document.getElementById('setupSubInsuranceMarkup').value)||0)/100,
       linearRent: document.getElementById('setupLinearRent').checked,

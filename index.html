@@ -680,7 +680,14 @@ function firebaseAuthReady(){
   }
   firebaseAuthPromise = new Promise(resolve=>{
     let auth;
-    try{ auth = firebase.auth(); }catch(e){ resolve(false); return; }
+    try{
+      // Autonome : initialise l'app Firebase si firebaseDb() n'a pas encore été appelé (sinon firebase.auth() lance « no-app »).
+      if(!firebase.apps || firebase.apps.length===0){
+        if(!window.__FIREBASE_CONFIG__){ resolve(false); return; }
+        firebase.initializeApp(window.__FIREBASE_CONFIG__);
+      }
+      auth = firebase.auth();
+    }catch(e){ console.error('Initialisation de l’authentification Firebase impossible :', e); resolve(false); return; }
     const done = (ok)=>{ toggleFirebaseAuthWarning(!ok); resolve(ok); };
     if(auth.currentUser){ done(true); return; }
     let settled = false;

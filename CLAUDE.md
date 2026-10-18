@@ -13,6 +13,9 @@ assurances, ventes à découvert, ABS, enchères…). Interface en français.
   au 2026-10-18 : section 305).
 - Les sections 21–226 sont dans `RESUME_ET_REGLES_ARCHIVE.md` (pas encore dans le dépôt).
 - **`DEPLOY.md`** : architecture de déploiement et historique des règles de sécurité Firebase.
+- **`docs/cahiers/`** : neuf cahiers de formation PDF pour les joueurs (règles, puis un cahier par produit
+  financier), index dans `docs/cahiers/README.md`. Utiles pour comprendre une mécanique du point de vue
+  du joueur. Si une livraison modifie une mécanique décrite dans un cahier, le signaler à Julien.
 
 ## Infrastructure
 

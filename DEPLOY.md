@@ -9,7 +9,8 @@ Firebase dans une session — je ne veux pas inventer des détails que je n'ai p
 
 - **Code source** : app web mono-fichier HTML/CSS/JS (pas de framework, pas de build step côté navigateur).
 - **Dépôt GitHub** : `JulienDupere/monopoly-bourse`.
-- **Hébergement** : Vercel, en ligne à <https://monopoly-finance.vercel.app>.
+- **Hébergement** : Vercel, en ligne à <https://monopoly-bourse.vercel.app> (alias :
+  <https://monopoly-finance.vercel.app>, même déploiement). Redéploiement automatique à chaque push sur `main`.
 - **État de partie partagé** : Firebase Realtime Database — remplace, en production, l'API `window.storage`
   utilisée pendant le développement dans l'environnement Claude. Synchronisation en temps réel confirmée
   fonctionnelle entre les appareils des joueurs.
@@ -33,10 +34,13 @@ Avant toute livraison : `node -c script_extracted.js` (vérification de syntaxe)
 smoke tests (plus de 200 fichiers `smoke_test_*.js`) relancée **3 fois consécutives sans aucun échec**, puis
 `python3 sync_script.py`, puis vérification que les paires de fichiers sont bien identiques (md5sum).
 
-**À confirmer avec toi** : comment les fichiers livrés (`index.html`/`index_leger.html`) se rendent
-concrètement jusqu'à ton dépôt GitHub aujourd'hui — upload manuel via l'interface web de GitHub, un autre
-outil, ou autre chose? Dis-le-moi et je complète cette section avec les étapes exactes (et, si tu passes à
-Claude Code, ce serait justement l'étape que ça automatiserait).
+**Mise à jour 2026-10-18 — passage à Claude Code.** Le pipeline ci-dessus est historique. Désormais :
+le dépôt est cloné localement dans `Desktop/Application CLAUDE/Monopoly Finance`, `index.html` (variante
+« légère », sans les gros commentaires) est l'**unique fichier source**, les modifications sont commitées
+et poussées directement sur `main` depuis Claude Code, et Vercel redéploie automatiquement. Avant chaque
+push : `node --check` sur le script extrait d'`index.html`, et tests Node avec SDK simulé quand la logique
+s'y prête (voir CLAUDE.md). Les anciens uploads manuels via l'interface GitHub (« Add files via upload »)
+ne sont plus nécessaires.
 
 ## 3. Règles de sécurité — Firebase Realtime Database
 
@@ -60,17 +64,17 @@ Historique de ce qu'on vient de régler ensemble :
    authentifié » a accès à tout — normal et attendu pour une app sans distinction de permissions entre
    joueurs (ils doivent tous pouvoir lire/écrire le même état de partie).
 
-**Action en suspens — à vérifier/compléter** : pour que la règle `auth != null` fonctionne SANS casser
-l'app (sans ça, plus personne ne peut lire/écrire), il faut :
-- Activer l'authentification anonyme dans Firebase Console → Authentication → Sign-in method → Anonyme.
-- Ajouter un appel `firebase.auth().signInAnonymously()` avant toute lecture/écriture, dans le fichier qui
-  initialise Firebase pour l'app (probablement un petit fichier séparé de `script_extracted.js`, celui qui
-  remplace `window.storage` en production).
+**Résolution (2026-10-18, section 305 de RESUME_ET_REGLES.md).** Vérification faite : l'app ne
+s'authentifiait pas (aucun SDK Auth chargé), et une lecture REST anonyme renvoyait `401 Permission denied` —
+la sauvegarde et la synchro étaient donc cassées en production depuis la publication de la règle.
+Correctif côté code livré : `firebase-auth-compat.js` chargé dans le `<head>`, et `firebaseAuthReady()`
+(connexion anonyme, session persistée réutilisée) attendue avant chaque accès à la base. Un bandeau
+« Connexion à Firebase refusée » s'affiche si la connexion échoue.
 
-Je n'ai pas encore vu ce fichier, donc je ne sais pas s'il contient déjà cet appel ou non. Si l'app
-fonctionne toujours normalement en ligne depuis que tu as publié la règle `auth != null`, c'est probablement
-déjà en place (ou Firebase l'ajoute par défaut dans ton SDK) ; si la synchronisation a cessé de fonctionner,
-c'est très probablement ça qui manque — partage-moi ce fichier (ou le lien du dépôt) et je l'ajoute.
+**Reste à faire côté console, par Julien** : Firebase Console → Authentication → Sign-in method →
+activer **Anonyme**. Sans cela, le bandeau reste affiché et l'app ne peut toujours pas lire/écrire.
+Pour vérifier après activation : ouvrir l'app en ligne, le bandeau ne doit pas apparaître, et une partie
+test doit se charger sur un second appareil.
 
 ## 4. Précaution permanente — tests et démos
 

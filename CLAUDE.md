@@ -10,7 +10,7 @@ assurances, ventes à découvert, ABS, enchères…). Interface en français.
   règles de base, erreurs de raisonnement à éviter. Sections 227+ = historique chronologique de chaque
   demande et correctif (une section par livraison, avec la demande verbatim de Julien, la mécanique
   retenue et les tests). **Toute nouvelle livraison ajoute une section numérotée à la suite** (dernière
-  au 2026-10-18 : section 304).
+  au 2026-10-18 : section 305).
 - Les sections 21–226 sont dans `RESUME_ET_REGLES_ARCHIVE.md` (pas encore dans le dépôt).
 - **`DEPLOY.md`** : architecture de déploiement et historique des règles de sécurité Firebase.
 
@@ -23,13 +23,12 @@ assurances, ventes à découvert, ABS, enchères…). Interface en français.
 | Base de données | Firebase **Realtime Database**, projet `monopolybourse`, données sous `data/<clé>` |
 | Build | Aucun. Site statique, un seul fichier. |
 
-### ⚠️ État des règles Firebase (vérifié le 2026-10-18)
+### Authentification Firebase
 
-Les règles RTDB exigent `auth != null` (voir DEPLOY.md §3), mais `index.html` ne charge pas le SDK Auth
-et n'appelle jamais `signInAnonymously()`. Une lecture REST anonyme renvoie `Permission denied` (401).
-Conséquence probable : la sauvegarde et la synchro sont cassées en production. Correctif attendu :
-activer l'auth anonyme dans la console Firebase + ajouter `firebase-auth-compat.js` et une connexion
-anonyme avant le premier accès à la base dans `firebaseDb()`.
+Les règles RTDB exigent `auth != null` (DEPLOY.md §3). Depuis la section 305 (2026-10-18), l'app se
+connecte anonymement via `firebaseAuthReady()` et **tout accès à la base doit l'attendre**
+(`await firebaseAuthReady()` avant un appel SDK). L'authentification anonyme doit être activée dans la
+console Firebase par Julien ; sinon le bandeau `#firebaseAuthWarning` s'affiche.
 
 ## Structure du code
 
@@ -47,7 +46,10 @@ Repères dans le JS :
 - constantes de jeu en tête : `GROUPS`, `PROPERTY_DEFS`, `SPECIAL_SQUARES`, `FEATURE_LIST`, `DEFAULT_SETTINGS`
 - persistance : `storageGet` / `storageSet` / `storageDelete`. Trois backends dans cet ordre :
   `window.storage` s'il existe (ancien environnement Claude), sinon `localStorage` pour les clés non
-  partagées, sinon Firebase pour l'état partagé de la partie (clé `game:CODE`).
+  partagées, sinon Firebase pour l'état partagé de la partie (clé `game:CODE`), après `firebaseAuthReady()`.
+- vérification avant push : extraire le script principal (`sed -n` entre le dernier `<script>` et le
+  `</script>` final) et lancer `node --check` ; pour la logique testable, un script Node qui charge le bloc
+  concerné dans un `vm` avec des dépendances simulées (exemple : section 305).
 - partie : `createGame`, `loadGame`, `saveGame` (écriture atomique via `ref.transaction()`),
   `migrateState` (migration de l'état sauvegardé)
 - synchro multi-appareils : `startPolling`, `applyRemoteStateIfNewer`, champ `state.version`

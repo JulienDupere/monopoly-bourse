@@ -11,6 +11,9 @@
      (inoffensif si inutilisé) mais jamais initialisé si window.storage est disponible. -->
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+<!-- Section 305 (voir RESUME_ET_REGLES.md) — SDK Auth : les règles de la Realtime Database exigent
+     « auth != null », l'app se connecte donc anonymement avant tout accès à la base (firebaseAuthReady). -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script>
 // Configuration Firebase — REMPLACE ces valeurs par celles de TON propre projet Firebase
 // (Console Firebase > ⚙️ Paramètres du projet > Général > "Vos applications" > app Web > config SDK).
@@ -416,6 +419,14 @@ tr:last-child td{border-bottom:none;}
     serveur (réseau coupé, ou écriture refusée). Vérifie ta connexion; si ça persiste, préviens le
     créateur de la partie (règles Firebase à vérifier).
   </div>
+  <!-- Section 305 — s'affiche quand la connexion anonyme à Firebase a été refusée (auth anonyme non
+       activée dans la console, ou réseau coupé) : la base refusera alors toute lecture/écriture. -->
+  <div id="firebaseAuthWarning" class="config-warning" style="display:none;">
+    ⚠️ <b>Connexion à Firebase refusée</b> — l'application n'a pas pu s'authentifier anonymement, la partie
+    ne pourra ni se charger ni se sauvegarder. Vérifie ta connexion et recharge la page; si ça persiste,
+    le créateur doit activer l'authentification <b>Anonyme</b> dans la console Firebase
+    (Authentication → Sign-in method). Voir DEPLOY.md, section 3.
+  </div>
   <div id="app"></div>
   <div class="footer-note">Plateau électronique et dés simulés — 100% dans l'application • cet écran remplace le fichier Excel de banque</div>
   <!-- Section 156 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: les pop-up (modales,
@@ -645,14 +656,55 @@ const COMPANY_TYPE_GUIDELINE_UNIVERSAL = `Peu importe le type choisi : accumuler
 
 
 let firebaseDbInstance = null;
+let firebaseAuthPromise = null;
 function firebaseDb(){
   if(firebaseDbInstance) return firebaseDbInstance;
   if(typeof firebase==='undefined' || !window.__FIREBASE_CONFIG__) return null;
   try{
     if(!firebase.apps || firebase.apps.length===0) firebase.initializeApp(window.__FIREBASE_CONFIG__);
     firebaseDbInstance = firebase.database();
+    firebaseAuthReady(); // Section 305 — lance la connexion anonyme dès l'initialisation, sans attendre.
     return firebaseDbInstance;
   }catch(e){ return null; }
+}
+// Section 305 — les règles RTDB exigent « auth != null » : toute lecture/écriture doit attendre cette
+// promesse. Elle se résout à true une fois connecté (session anonyme persistée par le SDK d'une visite à
+// l'autre, donc normalement instantané), à false si la connexion est refusée (auth anonyme non activée,
+// réseau) — l'appelant continue alors comme avant et la base répondra « permission denied », ce que les
+// bandeaux saveFailedWarning/firebaseAuthWarning rendent visible au lieu d'un échec silencieux.
+function firebaseAuthReady(){
+  if(firebaseAuthPromise) return firebaseAuthPromise;
+  if(typeof firebase==='undefined' || typeof firebase.auth!=='function'){
+    firebaseAuthPromise = Promise.resolve(false);
+    return firebaseAuthPromise;
+  }
+  firebaseAuthPromise = new Promise(resolve=>{
+    let auth;
+    try{ auth = firebase.auth(); }catch(e){ resolve(false); return; }
+    const done = (ok)=>{ toggleFirebaseAuthWarning(!ok); resolve(ok); };
+    if(auth.currentUser){ done(true); return; }
+    let settled = false;
+    const unsub = auth.onAuthStateChanged(user=>{
+      if(settled) return;
+      settled = true;
+      if(typeof unsub==='function') unsub();
+      if(user){ done(true); return; }
+      auth.signInAnonymously().then(()=>done(true)).catch(e=>{
+        console.error('Connexion anonyme Firebase refusée :', e && e.code, e && e.message);
+        done(false);
+      });
+    }, (e)=>{
+      if(settled) return;
+      settled = true;
+      console.error('Erreur d’état d’authentification Firebase :', e);
+      done(false);
+    });
+  });
+  return firebaseAuthPromise;
+}
+function toggleFirebaseAuthWarning(show){
+  const warn = document.getElementById('firebaseAuthWarning');
+  if(warn) warn.style.display = show ? 'block' : 'none';
 }
 function firebaseConfigured(){
   const c = window.__FIREBASE_CONFIG__;
@@ -666,6 +718,7 @@ async function storageGet(key, shared){
     if(!shared) return localStorage.getItem('mb:'+key);
     const db = firebaseDb();
     if(!db) return null;
+    await firebaseAuthReady();
     const snap = await db.ref('data/'+firebaseSafeKey(key)).once('value');
     return snap.exists() ? snap.val() : null;
   }catch(e){ return null; }
@@ -676,6 +729,7 @@ async function storageSet(key, value, shared){
     if(!shared){ localStorage.setItem('mb:'+key, value); return true; }
     const db = firebaseDb();
     if(!db) return null;
+    await firebaseAuthReady();
     await db.ref('data/'+firebaseSafeKey(key)).set(value);
     return true;
   }catch(e){ return null; }
@@ -690,6 +744,7 @@ async function storageDelete(key, shared){
     if(!shared){ localStorage.removeItem('mb:'+key); return true; }
     const db = firebaseDb();
     if(!db) return null;
+    await firebaseAuthReady();
     await db.ref('data/'+firebaseSafeKey(key)).remove();
     return true;
   }catch(e){ return null; }
@@ -738,6 +793,7 @@ let seenCeoAnnouncementExecutionIds = new Set();
 let firebaseListenerHandle = null;
 let lastReceivedRaw = null;
 let syncRetryTimer = null;
+let syncGeneration = 0; // Section 305 — invalide un abonnement Firebase en attente d'authentification si stopSync() est appelé entre-temps.
 
 
 
@@ -2097,6 +2153,7 @@ async function saveGame(opts){
   
   const fbDb = firebaseDb();
   if(gameCode && fbDb){
+    await firebaseAuthReady(); // Section 305
     if(state.version===undefined) state.version = 0;
     const nextVersion = state.version + 1;
     
@@ -6250,14 +6307,22 @@ function startPolling(){
     }, 3000);
     return;
   }
-  const ref = db.ref('data/'+firebaseSafeKey('game:'+gameCode));
-  const callback = (snap)=>{
-    lastReceivedRaw = snap.exists() ? snap.val() : null;
-    if(isLocalInputActive()) return; 
-    applyRemoteStateIfNewer(lastReceivedRaw);
-  };
-  ref.on('value', callback);
-  firebaseListenerHandle = {ref, callback};
+  const generation = ++syncGeneration;
+  firebaseAuthReady().then(()=>{
+    if(generation!==syncGeneration || !gameCode) return; // Section 305 — stopSync()/startPolling() rappelé entre-temps.
+    const ref = db.ref('data/'+firebaseSafeKey('game:'+gameCode));
+    const callback = (snap)=>{
+      lastReceivedRaw = snap.exists() ? snap.val() : null;
+      if(isLocalInputActive()) return;
+      applyRemoteStateIfNewer(lastReceivedRaw);
+    };
+    const onCancel = (err)=>{
+      console.error('Abonnement Firebase annulé :', err && (err.code||err.message||err));
+      if(err && /permission[_ ]denied/i.test(String(err.code||err.message||''))) toggleFirebaseAuthWarning(true);
+    };
+    ref.on('value', callback, onCancel);
+    firebaseListenerHandle = {ref, callback};
+  });
   syncRetryTimer = setInterval(()=>{
     if(!gameCode || isLocalInputActive()) return;
     applyRemoteStateIfNewer(lastReceivedRaw);
@@ -6265,6 +6330,7 @@ function startPolling(){
 }
 
 function stopSync(){
+  syncGeneration++; // Section 305
   if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
   if(syncRetryTimer){ clearInterval(syncRetryTimer); syncRetryTimer = null; }
   if(firebaseListenerHandle){ firebaseListenerHandle.ref.off('value', firebaseListenerHandle.callback); firebaseListenerHandle = null; }

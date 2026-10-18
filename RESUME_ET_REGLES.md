@@ -7839,3 +7839,67 @@ trésorerie/déblocage/expiration de l'ABS, section 275) rejoué sans modificati
 passent toujours, confirmant que la refonte comptable ne touche à aucun mouvement d'argent réel. `node -c
 script_extracted.js` : SYNTAX OK. Suite complète (207 scripts, +1 nouveau) relancée à 3 reprises
 consécutives : **0 échec**.
+
+
+## 305. Connexion anonyme Firebase — l'app s'authentifie avant tout accès à la base (règles `auth != null`) — 2026-10-18
+
+Première livraison faite dans **Claude Code** (dépôt cloné localement, commits et push directs vers
+`JulienDupere/monopoly-bourse`, déploiement Vercel automatique). Le pipeline `script_extracted.js` /
+`sync_script.py` / variantes « légère » n'existe plus : `index.html` est désormais l'unique fichier source.
+
+**Contexte.** DEPLOY.md §3 consignait une « action en suspens » : les règles de la Realtime Database avaient
+été durcies à `".read": "auth != null", ".write": "auth != null"`, mais personne n'avait vérifié que l'app
+s'authentifiait. Vérification du 2026-10-18 : `index.html` ne chargeait que `firebase-app-compat` et
+`firebase-database-compat` (pas de SDK Auth, aucun `signInAnonymously()`), et une lecture REST anonyme de
+`/data.json` renvoyait `401 Permission denied`. Conséquence : en production, `storageGet()` renvoyait `null`
+(exception avalée), `saveGame()` échouait (bandeau « dernière sauvegarde a échoué ») et l'abonnement
+temps réel était annulé silencieusement — plus aucune partie ne pouvait se charger ni se sauvegarder.
+
+Demande explicite de l'utilisateur, verbatim : « Oui, ajoute la connexion anonyme Firebase dans index.html.
+Je m'occupe d'activer l'auth anonyme dans la console Firebase. »
+
+**Changement.**
+
+- `<head>` : ajout de `https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js` (même version
+  que les deux autres SDK compat).
+- Nouvelle fonction `firebaseAuthReady()` (à côté de `firebaseDb()`), qui renvoie une promesse mémorisée
+  (`firebaseAuthPromise`) résolue à `true` une fois connecté, `false` si la connexion est refusée :
+  1. si `firebase.auth().currentUser` existe déjà → `true` immédiatement ;
+  2. sinon, un seul `onAuthStateChanged` : si le SDK restaure une session anonyme persistée (cas normal
+     d'une visite suivante) → `true` sans nouvelle connexion ; sinon `signInAnonymously()` → `true`, ou
+     `false` + `console.error` si refusé (`auth/admin-restricted-operation` quand l'auth anonyme n'est pas
+     activée dans la console, ou réseau coupé) ;
+  3. dans tous les cas, `toggleFirebaseAuthWarning(!ok)` pilote un **nouveau bandeau**
+     `#firebaseAuthWarning` (même classe `.config-warning` que les deux bandeaux existants) qui explique à
+     l'utilisateur quoi faire (recharger ; sinon le créateur active l'auth Anonyme dans la console).
+  La promesse est **mémorisée** : des centaines d'accès concurrents ne déclenchent qu'une seule connexion.
+  Un échec est lui aussi mémorisé (pas de tentative toutes les 3 s par le sondage) ; rechargement requis.
+- `firebaseDb()` appelle `firebaseAuthReady()` dès l'initialisation (sans attendre) pour que la connexion
+  parte le plus tôt possible.
+- Les **trois chemins d'accès à la base** attendent désormais `await firebaseAuthReady()` juste avant
+  l'appel SDK : `storageGet` / `storageSet` / `storageDelete` (branche Firebase seulement — les branches
+  `window.storage` et `localStorage` sont inchangées), `saveGame()` avant `ref.transaction()`, et
+  `startPolling()` avant `ref.on('value')`.
+- `startPolling()` : comme l'abonnement est maintenant posé de façon asynchrone, un compteur
+  `syncGeneration` (incrémenté par `startPolling()` et `stopSync()`) empêche un abonnement « fantôme » si
+  `stopSync()` ou un second `startPolling()` survient avant la fin de l'authentification. L'abonnement
+  reçoit aussi un callback d'annulation : une annulation `PERMISSION_DENIED` affiche le bandeau auth au
+  lieu de rester silencieuse.
+- Si le SDK Auth n'est pas chargé (`firebase.auth` absent), `firebaseAuthReady()` renvoie `false` sans
+  erreur et le comportement antérieur est conservé intégralement.
+
+**Côté console Firebase (à faire par Julien, hors code)** : Authentication → Sign-in method → activer
+**Anonyme**. Tant que ce n'est pas fait, l'app affiche le bandeau « Connexion à Firebase refusée ».
+
+**Tests.** Pas de test contre la vraie base (règle DEPLOY.md §4). Script Node `test_auth.js` (hors dépôt,
+dans le bac à sable de la session) qui charge les blocs `firebaseDb`…`storageDelete` et
+`startPolling`…`stopSync` extraits d'`index.html` dans un `vm` avec un SDK Firebase simulé ; 10 scénarios :
+(1) `once()` n'est appelé qu'après `signInAnonymously()` résolu, bandeau masqué ; (2) 3 accès concurrents
+= 1 seule connexion ; (3) connexion refusée → `storageGet`/`storageSet` renvoient `null` proprement,
+bandeau visible, erreur loguée ; (4) `currentUser` déjà présent → ni `onAuthStateChanged` ni
+`signInAnonymously` ; (5) session persistée restaurée → pas de nouvelle connexion, désabonnement fait ;
+(6) SDK Auth absent → `false`, accès effectué comme avant ; (7) `startPolling` pose `on()` seulement
+après l'auth et applique bien les données reçues ; (8) `startPolling` puis `stopSync` avant la fin de
+l'auth → aucun `on()`, handle `null` ; (9) deux `startPolling` rapprochés → un seul `on()` ; (10)
+annulation `PERMISSION_DENIED` → bandeau auth visible. Relancé 3 fois : **0 échec**. Syntaxe du script
+principal extrait d'`index.html` vérifiée avec `node --check` : OK.

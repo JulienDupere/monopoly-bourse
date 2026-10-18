@@ -71,10 +71,12 @@ Correctif côté code livré : `firebase-auth-compat.js` chargé dans le `<head>
 (connexion anonyme, session persistée réutilisée) attendue avant chaque accès à la base. Un bandeau
 « Connexion à Firebase refusée » s'affiche si la connexion échoue.
 
-**Reste à faire côté console, par Julien** : Firebase Console → Authentication → Sign-in method →
-activer **Anonyme**. Sans cela, le bandeau reste affiché et l'app ne peut toujours pas lire/écrire.
-Pour vérifier après activation : ouvrir l'app en ligne, le bandeau ne doit pas apparaître, et une partie
-test doit se charger sur un second appareil.
+**Côté console (fait par Julien le 2026-10-18)** : Authentication → Sign-in method → fournisseur
+**Anonyme** activé, avec le nettoyage automatique des comptes anonymes de plus de 30 jours (sans
+conséquence : rien n'est rattaché à l'UID, l'app recrée une session au besoin). Vérifié en ligne le même
+jour : connexion anonyme OK, lecture de la base OK, aucun bandeau d'erreur, et la session est bien réutilisée
+d'un rechargement à l'autre. Si l'erreur `auth/admin-restricted-operation` réapparaît un jour, vérifier ce
+fournisseur et, dans Authentication → Settings → User actions, que « Enable create (sign-up) » est coché.
 
 ## 4. Précaution permanente — tests et démos
 

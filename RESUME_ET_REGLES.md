@@ -7903,3 +7903,48 @@ après l'auth et applique bien les données reçues ; (8) `startPolling` puis `s
 l'auth → aucun `on()`, handle `null` ; (9) deux `startPolling` rapprochés → un seul `on()` ; (10)
 annulation `PERMISSION_DENIED` → bandeau auth visible. Relancé 3 fois : **0 échec**. Syntaxe du script
 principal extrait d'`index.html` vérifiée avec `node --check` : OK.
+
+
+## 306. Emprunt sans cube rouge, baisse du dividende récurrent = sac type à 20 rouges, et règle du ratio de distribution > 1 (Dividendes) — 2026-10-19
+
+Demande explicite de l'utilisateur, verbatim : « Demande d'emprunt = aucun cubes rouges · Dividende une réduction
+du dividende pour les compagnies à dividendes = le sac passe à 20 cubes rouges dans le sac type · Aussi dans le sac
+type de dividendes si le ratio de distribution [Dividendes versées/Profit] > 1 changé 5 cubes en rouge (Blanc=>Rouge
+priorité suivi de Vert => Rouge) ».
+
+**1. Demande d'emprunt.** `issueLoan()` n'injecte plus aucun cube rouge à l'emprunteuse (avant : 0 à 1, constante
+`STOCK_TRIGGER_LOAN_RED_MIN/MAX`, supprimée). Les autres financements sont inchangés (hypothèque 1–2, subvention
+d'avance 1–2, émission d'actions 1–2 + taille, prêt de dernier recours 6–10). La matrice des produits affichait déjà
+« sans cubes » pour l'obligation d'entreprise : elle est désormais exacte. Le prêt continue de compter dans la dette
+(cote de crédit, spirale de détresse) comme avant.
+
+**2. Baisse du dividende récurrent (type Dividendes).** `dividendGaugeTierFor()` : les paliers 1 (≤ 50 % de la
+référence) et 2 (sous 90 %) ne déplacent plus le sac de −6 / −3 ; ils renvoient `wipe:true` et
+`applyDividendGaugeTier()` appelle `wipeTypeReserveToRed()` → sac type = 20 rouges, 0 vert, 0 blanc. La référence
+est abaissée au nouveau niveau comme avant. **Hypothèse retenue** : la tolérance de ±10 % (palier 3, « inchangé »)
+reste neutre — une baisse de moins de 10 % n'est pas considérée comme une réduction. Les hausses (paliers 4 à 7 :
++3, +6, +9, +12) sont inchangées. La fenêtre « Dividende récurrent » affiche un avertissement rouge dès qu'un palier
+de baisse est sélectionné, et un rappel de la règle du ratio de distribution.
+
+**3. Ratio de distribution > 1 (type Dividendes).** À la clôture de chaque semestre, dans le bloc dividendes
+d'`advanceGameClock()` (après la logique de série existante) : si l'entreprise est de type Dividendes, a versé des
+dividendes ce semestre (`dividendPaidInSemester` > 0) et que ce versement dépasse son bénéfice net du semestre
+(`incomeStatementFor(...).netIncome`), 5 cubes du sac type passent au rouge via la nouvelle fonction
+`redenTypeReserveWhiteFirst()` : les **blancs d'abord**, puis les **verts** (ordre inverse de `shiftTypeReserve`,
+qui puise d'abord dans la couleur opposée). Constante `DIVIDEND_OVERPAYOUT_RED_CUBES = 5`. S'il reste moins de 5
+blancs + verts, seuls ceux-là rougissent. **Hypothèses retenues** : un ratio exactement égal à 1 ne déclenche rien
+(« > 1 » strict) ; un semestre à bénéfice nul ou négatif avec un versement compte comme un ratio > 1 (on distribue
+plus que ce qu'on a gagné). Les autres types ne sont pas concernés. Un message au journal indique le ratio et le
+nombre de cubes rougis. Le texte d'aide du type Dividendes (`COMPANY_TYPE_GUIDELINES.dividende`) mentionne les
+deux règles.
+
+**Tests.** Nouveau fichier `tests/section306.test.js` (premier test versionné dans le dépôt) : charge tout le moteur
+d'`index.html` dans un `vm` Node avec un faux DOM et un `window.storage` en mémoire (aucun accès Firebase), crée une
+partie locale à deux joueurs (une Dividendes, une GARP), puis vérifie 15 points : prêt accepté sans aucune injection
+rouge ; paliers 1 et 2 → 20 rouges et référence abaissée ; baisse de 11 % → 20 rouges ; baisse de 5 % → rien ;
+hausses inchangées ; ratio 120 % → 6V/1R/3B devient 4V/6R/0B ; GARP non touchée ; ratio 80 % et 100 % → rien ;
+bénéfice négatif → règle appliquée ; moins de 5 cubes disponibles → plafonné ; aucun versement → règle existante
+(20 rouges). Les tirages de cubes, aléatoires et postérieurs aux contrôles, sont neutralisés pendant le test. Lancé
+3 fois : **0 échec**. `node --check` du script : OK.
+
+**Documentation joueurs mise à jour** : cahiers 2, 4, 6 et 7 (PDF corrigés en place) et l'aide-mémoire.

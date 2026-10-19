@@ -10,7 +10,7 @@ assurances, ventes à découvert, ABS, enchères…). Interface en français.
   règles de base, erreurs de raisonnement à éviter. Sections 227+ = historique chronologique de chaque
   demande et correctif (une section par livraison, avec la demande verbatim de Julien, la mécanique
   retenue et les tests). **Toute nouvelle livraison ajoute une section numérotée à la suite** (dernière
-  au 2026-10-18 : section 305).
+  au 2026-10-19 : section 306).
 - Les sections 21–226 sont dans `RESUME_ET_REGLES_ARCHIVE.md` (pas encore dans le dépôt).
 - **`DEPLOY.md`** : architecture de déploiement et historique des règles de sécurité Firebase.
 - **`docs/cahiers/`** : neuf cahiers de formation PDF pour les joueurs (règles, puis un cahier par produit
@@ -50,6 +50,9 @@ Repères dans le JS :
 - persistance : `storageGet` / `storageSet` / `storageDelete`. Trois backends dans cet ordre :
   `window.storage` s'il existe (ancien environnement Claude), sinon `localStorage` pour les clés non
   partagées, sinon Firebase pour l'état partagé de la partie (clé `game:CODE`), après `firebaseAuthReady()`.
+- tests : `tests/*.test.js`, à lancer avec `node tests/<fichier>` depuis la racine. `tests/section306.test.js`
+  sert de modèle : il charge tout le moteur d'`index.html` dans un `vm` (faux DOM, `window.storage` en mémoire,
+  aucun Firebase), crée une partie locale, et permet de remplacer une fonction du moteur par un espion.
 - vérification avant push : extraire le script principal (`sed -n` entre le dernier `<script>` et le
   `</script>` final) et lancer `node --check` ; pour la logique testable, un script Node qui charge le bloc
   concerné dans un `vm` avec des dépendances simulées (exemple : section 305).

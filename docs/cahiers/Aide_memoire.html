@@ -247,7 +247,7 @@ td.k small{display:block; font-weight:500; color:var(--muted); white-space:norma
       <div class="tbl"><table>
         <thead><tr><th>Type</th><th>Le marché récompense</th><th>Le marché punit</th><th>Pour vous si…</th></tr></thead>
         <tbody>
-          <tr><td class="k">Dividendes<small>les aristocrates du dividende</small></td><td>Un dividende récurrent qui monte, semestre après semestre. Seul type dont le sac garde la mémoire de ses hausses.</td><td>Une baisse du versement. Verser <b>zéro</b> remplit le sac de 20 rouges d'un coup.</td><td>« Je peux tenir un engagement dix semestres. »</td></tr>
+          <tr><td class="k">Dividendes<small>les aristocrates du dividende</small></td><td>Un dividende récurrent qui monte, semestre après semestre. Seul type dont le sac garde la mémoire de ses hausses.</td><td><b>Toute baisse</b> du versement, ou un versement nul : sac à 20 rouges d'un coup. Verser plus que le bénéfice : 5 cubes rougis.</td><td>« Je peux tenir un engagement dix semestres. »</td></tr>
           <tr><td class="k">Croissance<small>le pari sur demain</small></td><td>Une marge nette dans le haut de la table, et battre l'attente des analystes.</td><td>Être sous la médiane des autres. Aucun plancher comptable : le cours n'est pas rappelé vers le bilan.</td><td>« Je veux gagner, quitte à perdre franchement. »</td></tr>
           <tr><td class="k">GARP<small>croissance à prix raisonnable</small></td><td>Un cours sous la valeur comptable par action : le sac pousse vers le haut.</td><td>Un cours au-dessus : le sac rappelle vers le bilan. À moins de <span class="num">2 %</span> d'écart, rien ne bouge.</td><td>« Je veux une entreprise sans surprise. »</td></tr>
           <tr><td class="k">Momentum<small>le prix qui se regarde</small></td><td>Des séries courtes de 2 ou 3 semestres dans un sens, puis l'autre.</td><td>Les longues séries : le sac blanchit, et le choc de retournement grimpe jusqu'à <span class="num">12 %</span>.</td><td>« Ce qui m'amuse, c'est le marché plus que la gestion. »</td></tr>
@@ -376,7 +376,7 @@ td.k small{display:block; font-weight:500; color:var(--muted); white-space:norma
           <li>Un cours au-dessus de l'équité par action.</li>
           <li>Une équité qui recule.</li>
           <li>Un dividende annoncé sur un semestre déficitaire.</li>
-          <li>Un emprunt, une hypothèque, une enquête de l'AMF.</li>
+          <li>Une hypothèque, une enquête de l'AMF.</li>
           <li>Des joueurs qui vendent ou shortent, une émission d'actions.</li>
         </ul>
       </div>
@@ -406,7 +406,7 @@ td.k small{display:block; font-weight:500; color:var(--muted); white-space:norma
 <section class="sheet" aria-labelledby="t4">
   <header class="deed rouge"><div><div class="eyebrow">Fiche 4</div><h2 id="t4">Le financement, pour et contre</h2></div><div class="src">Cahiers 2, 7 et 8</div></header>
   <div class="body">
-    <p class="lead">Neuf portes, de la moins chère à la plus destructrice. <b>On n'emprunte que pour acheter un actif qui rapporte plus que ce qu'il coûte.</b> Chaque dette se voit au journal, et la plupart ajoutent des cubes rouges à votre cours.</p>
+    <p class="lead">Neuf portes, de la moins chère à la plus destructrice. <b>On n'emprunte que pour acheter un actif qui rapporte plus que ce qu'il coûte.</b> Chaque dette se voit au journal, et quatre des neuf portes ajoutent des cubes rouges à votre cours.</p>
 
     <div class="tbl"><table>
       <thead><tr><th style="width:3%">#</th><th style="width:17%">Source</th><th style="width:31%" class="pro">Pour</th><th style="width:36%" class="con">Contre</th><th>Cubes rouges</th></tr></thead>
@@ -414,7 +414,7 @@ td.k small{display:block; font-weight:500; color:var(--muted); white-space:norma
         <tr><td class="num">1</td><td class="k">Swap de loyers<small>spécifique, général ou à budget</small></td><td>Échange un flux de loyers contre un autre. Aucun capital, aucune dette. Lisse des revenus rares.</td><td>N'apporte pas de comptant. Le plafond vaut par visite, pas au total. Seule une entreprise tierce le déclenche.</td><td><span class="cubes" aria-label="aucun cube"></span><span class="cubes-lbl">aucun</span></td></tr>
         <tr><td class="num">2</td><td class="k">Accord de compensation</td><td>Les loyers entre vous deux s'inscrivent au registre. Seul le solde net se paie, en fin d'année.</td><td><span class="num">250 K$</span> de frais chacun. Aucune sortie avant la fin d'année. L'intérêt frappe le débiteur, quel qu'il soit.</td><td><span class="cubes-lbl">aucun</span></td></tr>
         <tr><td class="num">3</td><td class="k">Vendre une part ou des maisons</td><td>Comptant immédiat, sans dette ni intérêt. Améliore les ratios. Les maisons en réserve ne rapportent rien.</td><td>L'actif part pour de bon, avec son loyer. Si vous voulez le récupérer, hypothéquez plutôt.</td><td><span class="cubes-lbl">aucun</span></td></tr>
-        <tr><td class="num">4</td><td class="k">Demande d'emprunt<small>obligation, prêteurs joueurs</small></td><td>Jusqu'à <span class="num">5 M$</span> cumulés, prix fixé par le marché. La dette la mieux vue du jeu.</td><td>Retenue de <span class="num">5 à 40 %</span> des loyers jusqu'à <span class="num">1 à 2,5×</span>. Valable un seul lancer. Une offre garantie se déduit de la valeur nette du CEO.</td><td><span class="cubes" aria-hidden="true"><i class="maybe"></i></span><span class="cubes-lbl">0 à 1</span></td></tr>
+        <tr><td class="num">4</td><td class="k">Demande d'emprunt<small>obligation, prêteurs joueurs</small></td><td>Jusqu'à <span class="num">5 M$</span> cumulés, prix fixé par le marché. Aucun cube rouge : la dette la mieux vue du jeu.</td><td>Retenue de <span class="num">5 à 40 %</span> des loyers jusqu'à <span class="num">1 à 2,5×</span>. Valable un seul lancer. Une offre garantie se déduit de la valeur nette du CEO.</td><td><span class="cubes-lbl">aucun</span></td></tr>
         <tr><td class="num">5</td><td class="k">Émission d'actions</td><td>Cours × quantité. Aucune dette, aucun intérêt, cote intacte. À faire quand le cours est haut.</td><td>Plafond de <span class="num">10 %</span> des parts, net des rachats. Du rouge à chaque fois, même pour une petite quantité.</td><td><span class="cubes" aria-hidden="true"><i class="on"></i><i class="maybe"></i></span><span class="cubes-lbl">1 à 2, plus la taille</span></td></tr>
         <tr><td class="num">6</td><td class="k">Parts privilégiées</td><td>Jusqu'à <span class="num">5 M$</span> cumulés, hors dette : ratios et cote s'améliorent. Un an de répit pour payer.</td><td>Dividende annuel prioritaire. Impayé un an de plus : arriérage, cubes rouges et dividende ordinaire bloqué.</td><td><span class="cubes-lbl">aucun à l'émission</span></td></tr>
         <tr><td class="num">7</td><td class="k">Subvention d'avance</td><td>Un salaire de Départ vendu d'avance : <span class="num">1,82 M$</span> pour la première. Aucun intérêt courant.</td><td>Décote croissante, jusqu'à <span class="num">38 %</span> à la cinquième. Le prochain passage au Départ ne rapporte rien.</td><td><span class="cubes" aria-hidden="true"><i class="on"></i><i class="maybe"></i></span><span class="cubes-lbl">1 à 2</span></td></tr>
@@ -444,7 +444,7 @@ td.k small{display:block; font-weight:500; color:var(--muted); white-space:norma
     <div class="box warn">
       <h3>Il vous faut 10 M$ : deux chemins</h3>
       <div class="grid2">
-        <p><b>Par le marché.</b> <span class="num">5 M$</span> de prêt à 2×, deux hypothèques sur des terrains qui dorment et une avance. Environ <span class="num">15 M$</span> à rendre, 4 à 7 cubes rouges étalés dans le temps, cours intact.</p>
+        <p><b>Par le marché.</b> <span class="num">5 M$</span> de prêt à 2×, deux hypothèques sur des terrains qui dorment et une avance. Environ <span class="num">15 M$</span> à rendre, 3 à 6 cubes rouges étalés dans le temps, cours intact.</p>
         <p><b>Par le dernier recours.</b> <span class="num">20 M$</span> à rendre, 6 à 10 cubes d'un bloc, <span class="num">−20 %</span> de cours et une amplification que rien n'efface. Vous payez <span class="num">5 M$</span> de plus pour un seul clic.</p>
       </div>
     </div>

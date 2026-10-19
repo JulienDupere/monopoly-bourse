@@ -641,7 +641,7 @@ const NET_WORTH_INDEX_DEFS = [
 
 
 const COMPANY_TYPE_GUIDELINES = {
-  dividende: `Le CEO d'une compagnie Dividendes gagne la confiance du marché par la RÉGULARITÉ de ses versements, plus que par leur ampleur. Un dividende stable ou en légère hausse, maintenu semestre après semestre, est récompensé avec le temps. À l'inverse, couper un dividende déjà annoncé est un signal brutal, pris très au sérieux par le marché — mieux vaut annoncer un montant modeste mais tenable qu'un gros versement qu'il faudra réduire plus tard.`,
+  dividende: `Le CEO d'une compagnie Dividendes gagne la confiance du marché par la RÉGULARITÉ de ses versements, plus que par leur ampleur. Un dividende stable ou en légère hausse, maintenu semestre après semestre, est récompensé avec le temps. À l'inverse, toute baisse du dividende récurrent est un signal brutal : votre sac type passe d'un coup à 20 cubes rouges. Et verser plus que le bénéfice du semestre fait rougir 5 cubes de ce même sac — mieux vaut un montant modeste mais tenable qu'un gros versement qu'il faudra réduire plus tard.`,
   croissance: `Le CEO d'une compagnie Croissance est jugé sur sa capacité à faire croître ses revenus plus vite que le reste du marché. Un semestre où l'entreprise dépasse largement les attentes est récompensé généreusement — mais un échec marqué est puni plus durement encore. C'est le type le plus polarisé des quatre : fort potentiel de gain, mais aussi le risque le plus sévère en cas de contre-performance.`,
   garp: `Le CEO d'une compagnie GARP gère une valeur « sans histoire » : aucun mécanisme dominant, aucun bonus ni pénalité spéciale — seulement une progression régulière et modérée sur les fondamentaux de base. C'est le choix le plus prévisible des quatre, pour un CEO qui préfère éviter de parier sur un scénario précis.`,
   momentum: `Le CEO d'une compagnie Momentum gère une valeur qui suit sa PROPRE tendance de prix récente, plus que ses résultats financiers. Une série de semestres dans la même direction a tendance à se renforcer d'elle-même — à la hausse comme à la baisse. Mais une tendance qui s'étire trop longtemps finit par s'essouffler et peut se retourner brusquement : c'est le type le plus extrême des quatre, où un vrai coup de chance (ou de malchance) compte davantage qu'ailleurs.`,
@@ -9066,11 +9066,21 @@ function advanceGameClock(){
       } else {
         
         
-        co.dividendLossStreak = 0; 
+        co.dividendLossStreak = 0;
         co.dividendStreak = (co.dividendStreak||0) + 1;
         injectDividendReward(co.dividendStreak);
       }
-      
+      // Section 306 — sac type des compagnies Dividendes : ratio de distribution (dividendes versés ÷ bénéfice net du
+      // semestre) > 1 → 5 cubes rougis, blancs d'abord puis verts. Un semestre sans bénéfice (≤ 0) avec un versement
+      // compte comme un ratio > 1 : on distribue plus que ce qu'on a gagné.
+      if(co.type==='dividende' && thisSem>1e-9 && (is.netIncome<=1e-9 || (thisSem/is.netIncome) > 1)){
+        const reddened = redenTypeReserveWhiteFirst(co, DIVIDEND_OVERPAYOUT_RED_CUBES);
+        if(reddened>0){
+          const ratioTxt = is.netIncome>1e-9 ? `${Math.round(thisSem/is.netIncome*100)} %` : 'bénéfice nul ou négatif';
+          log(`${co.name}: dividendes versés supérieurs au bénéfice du semestre (ratio de distribution : ${ratioTxt}) — ${reddened} cube(s) du sac type passent au rouge.`);
+        }
+      }
+
       
       
       
@@ -10205,7 +10215,7 @@ const STOCK_INTEREST_COVERAGE_THRESHOLD = 1.0;
 
 
 
-const STOCK_TRIGGER_LOAN_RED_MIN = 0, STOCK_TRIGGER_LOAN_RED_MAX = 1; 
+// Section 306 — une demande d'emprunt acceptée (issueLoan) n'injecte plus AUCUN cube rouge (avant : 0 à 1).
 const STOCK_TRIGGER_MORTGAGE_RED_MIN = 1, STOCK_TRIGGER_MORTGAGE_RED_MAX = 2; 
 const STOCK_TRIGGER_AMF_RED_MIN = 2, STOCK_TRIGGER_AMF_RED_MAX = 3; 
 const STOCK_TRIGGER_GO_SALARY_GREEN_MIN = 1, STOCK_TRIGGER_GO_SALARY_GREEN_MAX = 2; 
@@ -10411,6 +10421,20 @@ function wipeTypeReserveToRed(company){
   company.typeReserve = {green:0, red:20, white:0};
 }
 
+// Section 306 — rougit n cubes du sac type, les BLANCS d'abord, puis les VERTS (ordre inverse de shiftTypeReserve,
+// qui puise d'abord dans la couleur opposée). Utilisé par la règle du ratio de distribution > 1 (Dividendes).
+function redenTypeReserveWhiteFirst(company, n){
+  if(!company.typeReserve) company.typeReserve = {green:0, red:0, white:20};
+  const tp = company.typeReserve;
+  let remaining = Math.max(0, Math.round(n));
+  const fromWhite = Math.min(remaining, tp.white);
+  tp.white -= fromWhite; tp.red += fromWhite; remaining -= fromWhite;
+  const fromGreen = Math.min(remaining, tp.green);
+  tp.green -= fromGreen; tp.red += fromGreen; remaining -= fromGreen;
+  return fromWhite + fromGreen;
+}
+const DIVIDEND_OVERPAYOUT_RED_CUBES = 5; // Section 306 — cubes rougis quand dividendes versés > bénéfice net du semestre.
+
 
 
 
@@ -10428,10 +10452,12 @@ const GARP_VALUE_TOLERANCE_PCT = 0.02;
 
 const DIVIDEND_BENCHMARK_TOLERANCE_PCT = 0.10;
 
+// Section 306 — toute baisse au-delà de la tolérance (paliers 1 et 2) remet le sac type à 20 rouges (wipe),
+// au lieu de −6 / −3. La tolérance de ±10 % (palier 3, « inchangé ») reste neutre.
 function dividendGaugeTierFor(ratio){
   const tol = DIVIDEND_BENCHMARK_TOLERANCE_PCT;
-  if(ratio <= 0.5) return {tier:1, delta:-6};
-  if(ratio < 1-tol) return {tier:2, delta:-3};
+  if(ratio <= 0.5) return {tier:1, delta:0, wipe:true};
+  if(ratio < 1-tol) return {tier:2, delta:0, wipe:true};
   if(ratio <= 1+tol) return {tier:3, delta:0};
   if(ratio <= 1.30) return {tier:4, delta:3};
   if(ratio <= 1.50) return {tier:5, delta:6};
@@ -10443,9 +10469,10 @@ function applyDividendGaugeTier(co, totalAmount){
   if(!(co.dividendBenchmarkPerShare>0) || !(co.sharesIssued>0)) return null;
   const perShare = totalAmount / co.sharesIssued;
   const ratio = perShare / co.dividendBenchmarkPerShare;
-  const {tier, delta} = dividendGaugeTierFor(ratio);
+  const {tier, delta, wipe} = dividendGaugeTierFor(ratio);
   if(tier!==3){
-    if(delta>0) shiftTypeReserve(co, 'green', delta);
+    if(wipe) wipeTypeReserveToRed(co);
+    else if(delta>0) shiftTypeReserve(co, 'green', delta);
     else if(delta<0) shiftTypeReserve(co, 'red', -delta);
     co.dividendBenchmarkPerShare = perShare;
   }
@@ -14751,7 +14778,7 @@ async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multip
   logFin(borrower.id, 'loan_proceeds', principal);
   
   
-  injectStockCube(borrower, 'red', STOCK_TRIGGER_LOAN_RED_MIN, STOCK_TRIGGER_LOAN_RED_MAX);
+  // Section 306 — plus d'injection de cube rouge à l'emprunt.
   const totalDue = principal * multiple;
   
   
@@ -18252,6 +18279,8 @@ function modalDividendRecurrentSettings(){
     ? `<div class="small" style="margin-bottom:10px;color:var(--brick,#C0392B);">⚠️ Le dividende récurrent a été suspendu (rien versé au dernier semestre) — le réactiver repart du niveau de fondation (${fmtPrice(myCo.dividendBenchmarkFounding)}/part), pas d'où il était avant la coupure. Les cubes, eux, restent intacts tant qu'ils ne sont pas piochés (ils doivent être tirés pour redevenir blancs).</div>`
     : '';
   const tierLabel = t=> ['1 — forte baisse','2 — baisse','3 — inchangé','4 — hausse','5 — forte hausse','6 — très forte hausse','7 — hausse maximale'][t-1];
+  // Section 306 — avertissement affiché dans l'aperçu dès qu'un palier de baisse est sélectionné.
+  const cutWarningHtml = `⚠️ Une baisse du dividende récurrent remet votre sac type à <b>20 cubes rouges</b>, d'un seul coup, dès la confirmation.`;
   openModal(`
     <h3>Dividende récurrent — ${esc(myCo.name)}</h3>
     <div class="small" style="margin-bottom:10px;">Versé AUTOMATIQUEMENT chaque semestre, sans action du CEO, tant que la case ci-dessous reste cochée. Déplacez le curseur pour prévisualiser un autre niveau — rien ne change (cubes, benchmark, versement) avant d'appuyer sur Confirmer.</div>
@@ -18264,6 +18293,8 @@ function modalDividendRecurrentSettings(){
       Dividende par part: <b id="mDivPerShare">${fmtPrice(baseBenchmark)}</b>/part<br>
       Coût total par semestre: <b id="mDivTotalCost">${fmt(baseBenchmark*myCo.sharesIssued)}</b>
     </div>
+    <div class="small" id="mDivCutWarning" style="display:none;margin-top:8px;color:var(--brick,#C0392B);">${cutWarningHtml}</div>
+    <div class="small" style="margin-top:8px;color:var(--muted);">Rappel : si les dividendes versés dans un semestre dépassent le bénéfice net de ce semestre, ${DIVIDEND_OVERPAYOUT_RED_CUBES} cubes de votre sac type passent au rouge à la clôture (les blancs d'abord, puis les verts).</div>
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -18279,6 +18310,8 @@ function modalDividendRecurrentSettings(){
     document.getElementById('mDivTierLabel').textContent = tierLabel(tier);
     document.getElementById('mDivPerShare').textContent = fmtPrice(perShare);
     document.getElementById('mDivTotalCost').textContent = fmt(perShare*myCo.sharesIssued);
+    const cutWarn = document.getElementById('mDivCutWarning');
+    if(cutWarn) cutWarn.style.display = tier<3 ? 'block' : 'none';
   };
   tierInput.addEventListener('input', updatePreview);
   document.getElementById('mOk').addEventListener('click', async ()=>{

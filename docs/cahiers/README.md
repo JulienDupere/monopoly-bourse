@@ -31,6 +31,15 @@ interface :
 
 Vérifier ensuite que le PDF fait exactement 5 pages.
 
+## Corrections apportées aux PDF
+
+| Date | Section | Cahiers | Changement |
+|---|---|---|---|
+| 2026-10-19 | 306 | 2, 4, 6, 7 et aide-mémoire | L'emprunt n'ajoute plus aucun cube rouge. Toute baisse du dividende récurrent remet le sac type à 20 rouges. Nouvel encadré (cahier 6, p. 6) : verser plus que le bénéfice du semestre rougit 5 cubes du sac type. |
+
+Les corrections sont faites en place avec PyMuPDF : le texte d'origine est retiré, puis réécrit au même endroit en
+Arial (métriques identiques à la Liberation Sans d'origine), sans toucher aux images ni aux encadrés.
+
 ## Pour le développement
 
 Quand une mécanique change dans `index.html`, le cahier correspondant et l'aide-mémoire peuvent devenir inexacts. Le signaler à

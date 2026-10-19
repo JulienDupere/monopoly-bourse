@@ -2193,12 +2193,25 @@ async function saveGame(opts){
     
     
     
-    const remoteRaw = txResult.snapshot ? txResult.snapshot.val() : null;
-    if(remoteRaw){
-      state = JSON.parse(remoteRaw);
-      migrateState(state);
-      lastSerialized = remoteRaw;
+    let remoteRaw = txResult.snapshot ? txResult.snapshot.val() : null;
+    // Section 307 — instantané vide : le SDK exécute la 1re passe de la transaction sur son cache LOCAL, qui vaut
+    // null tant que l'écouteur temps réel n'a pas reçu sa première valeur (juste après un rechargement / loadGame,
+    // dont le once() ne laisse aucun cache) ou si la partie a disparu ; il abandonne alors sans aller au serveur.
+    // Renvoyer 'conflict' sans avoir rafraîchi state faisait rejouer applyFn sur l'état DÉJÀ modifié, jusqu'à
+    // 5 fois. On relit donc la valeur faisant foi sur le serveur ; absente ou illisible : échec (false), state non
+    // touché, donc aucun rejeu (contrat à trois valeurs de la section 250).
+    if(!remoteRaw){
+      try{
+        await firebaseAuthReady();
+        const snap = await fbDb.ref('data/'+firebaseSafeKey('game:'+gameCode)).once('value');
+        remoteRaw = (snap && snap.exists()) ? snap.val() : null;
+      }catch(e){ remoteRaw = null; }
+      if(!remoteRaw){ toggleSaveFailedWarning(true); return false; }
     }
+    // Section 307 — state est désormais TOUJOURS rafraîchi avant de renvoyer 'conflict'.
+    state = JSON.parse(remoteRaw);
+    migrateState(state);
+    lastSerialized = remoteRaw;
     if(!(opts && opts.silent)){
       alert('Un autre appareil vient de sauvegarder la partie avant toi — ton action n’a pas été enregistrée pour éviter d’effacer la sienne. La partie a été mise à jour avec les dernières données; tu peux refaire ton action.');
       render();

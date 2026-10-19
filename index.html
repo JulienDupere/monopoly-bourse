@@ -8533,6 +8533,19 @@ function processYearEnd(year){
   log(`L'année financière ${year} commence (2 semestres de 3 lancers de dés complétés) — intérêts hypothécaires, dividendes REIT, accords de compensation de loyer (réglés puis clôturés) et contrats d'assurance normale (expirés) traités.`);
 }
 
+// Section 307 — base de répartition d'un dividende ORDINAIRE (annoncé ou auto-versé) : les parts réellement détenues.
+// La banque peut vendre au-delà de son flottant (achats, assignation de puts écrits, exercice de calls) : sa position
+// devient alors négative (voulu, section 298) et les joueurs détiennent ensemble plus que sharesIssued. Répartir sur
+// sharesIssued versait alors plus que le montant débité à l'entreprise (argent créé à chaque dividende). La base est
+// max(sharesIssued, somme des positions positives — une position négative de la banque compte pour 0) : elle vaut
+// sharesIssued dans tous les autres cas (banque positive ou nulle, découverts seuls), donc rien n'y change ; en
+// surdétention, le total versé vaut exactement le montant débité.
+function dividendDistributionBasis(co){
+  const issued = co.sharesIssued || 0;
+  const heldPositively = (co.shareholders || []).reduce((s, h)=>s + Math.max(0, h.shares || 0), 0);
+  return Math.max(issued, heldPositively);
+}
+
 function forfeitPendingDividendAnnouncementsAtGameEnd(){
   if(!state.dividendAnnouncements || state.dividendAnnouncements.length===0) return;
   state.dividendAnnouncements.forEach(ann=>{
@@ -8625,7 +8638,9 @@ function advanceGameClock(){
       
       
       
-      const totalSharesBasis = ann.totalSharesAtAnnouncement || totalRecordShares;
+      // Section 307 — la base ne descend jamais sous les parts des détenteurs enregistrés : une annonce enregistrée par
+      // l'ancien code (base = sharesIssued) pendant que la banque était négative ne peut plus verser plus que son montant.
+      const totalSharesBasis = Math.max(ann.totalSharesAtAnnouncement || 0, totalRecordShares);
       const entries = [];
       let paidTotal = 0;
       ann.recordHolders.forEach(rec=>{
@@ -8660,7 +8675,7 @@ function advanceGameClock(){
           entries.push({label:`${pl.name} (paiement compensatoire — position à découvert sur ${co.name})`, amount:-owed});
         }
       });
-      log(`${co.name} verse son dividende annoncé de ${fmt(ann.amount)} (annoncé au lancer #${ann.announcedAtRoll}) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non réclamé (actionnaire(s) ayant vendu depuis l'annonce)`:''}.`, entries);
+      log(`${co.name} verse son dividende annoncé de ${fmt(ann.amount)} (annoncé au lancer #${ann.announcedAtRoll}) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non réclamé (actionnaire(s) ayant vendu depuis l'annonce)`:''}${totalSharesBasis>co.sharesIssued+1e-9?` (réparti sur ${fmtShares(totalSharesBasis)} parts détenues — position de la banque négative)`:''}.`, entries); // Section 307 — mention de la base élargie
     });
     state.dividendAnnouncements = state.dividendAnnouncements.filter(a=>a.payAtRoll>state.gameClock.rollCount);
     
@@ -8691,10 +8706,13 @@ function advanceGameClock(){
           
           logFin(co.id, 'dividend_payout', -autoAmount, state.gameClock.rollCount-1);
           const realHolders = co.shareholders.filter(s=>s.playerId!=='BANK' && s.shares>1e-9);
+          // Section 307 — répartition sur les parts réellement détenues (voir dividendDistributionBasis) : jamais plus
+          // qu'autoAmount n'est versé, même quand la banque a une position négative.
+          const distributionBasis = dividendDistributionBasis(co);
           const entries = [{label:`${co.name} (auto-versement de dividende)`, amount:-autoAmount}];
           let paidTotal = 0;
           realHolders.forEach(h=>{
-            const cut = autoAmount * (h.shares/co.sharesIssued);
+            const cut = autoAmount * (h.shares/distributionBasis); // Section 307 — base = parts réellement détenues
             const pl = state.players.find(x=>x.id===h.playerId);
             if(pl && cut>1e-9){ pl.cash += cut; pl.cumDividendsReceived = (pl.cumDividendsReceived||0)+cut; paidTotal += cut; entries.push({label:`${pl.name} (dividende auto-versé — ${co.name})`, amount:cut}); }
           });
@@ -8713,7 +8731,7 @@ function advanceGameClock(){
             logFin(co.id, 'dividend_forfeited_return', unclaimed, state.gameClock.rollCount-1);
             entries.push({label:`${co.name} (portion de dividende non versée — part de la banque, retour trésorerie)`, amount:unclaimed});
           }
-          const perShare = autoAmount/co.sharesIssued;
+          const perShare = autoAmount/distributionBasis; // Section 307 — les découverts paient au même taux par part que les porteurs
           state.players.forEach(pl=>{
             const shortPos = pl.shortPositions && pl.shortPositions[co.id];
             if(shortPos && shortPos.shares>1e-9){
@@ -8722,7 +8740,7 @@ function advanceGameClock(){
               entries.push({label:`${pl.name} (paiement compensatoire — position à découvert sur ${co.name})`, amount:-owed});
             }
           });
-          log(`${co.name} verse automatiquement son dividende de ${fmt(autoAmount)} (auto-versement activé, benchmark ${fmtPrice(co.dividendBenchmarkPerShare)}/part) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non versé (part de la banque, retourné en trésorerie)`:''}.`, entries);
+          log(`${co.name} verse automatiquement son dividende de ${fmt(autoAmount)} (auto-versement activé, benchmark ${fmtPrice(co.dividendBenchmarkPerShare)}/part) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non versé (part de la banque, retourné en trésorerie)`:''}${distributionBasis>co.sharesIssued+1e-9?` (réparti sur ${fmtShares(distributionBasis)} parts détenues — position de la banque négative)`:''}.`, entries); // Section 307 — mention de la base élargie
           co.dividendAutoPaySemesterIdx = semesterAfter;
         }
       }
@@ -18312,7 +18330,7 @@ function modalAnnounceDividend(){
         id: uid(), companyId: co.id, amount,
         announcedAtRoll: state.gameClock.rollCount, payAtRoll,
         recordHolders: realHolders.map(h=>({playerId:h.playerId, shares:h.shares})),
-        totalSharesAtAnnouncement: co.sharesIssued,
+        totalSharesAtAnnouncement: dividendDistributionBasis(co), // Section 307 — parts réellement détenues (banque négative = 0)
       });
       const entries = [{label:`${co.name} (dividende annoncé — immobilisé)`, amount:-amount}];
       log(`${co.name} annonce un dividende total de ${fmt(amount)}, immobilisé et versé au prochain semestre (dans ${rollsUntilSemesterEnd()} lancer(s)) aux actionnaires actuels, au prorata de LEUR participation À CE MOMENT.`, entries);

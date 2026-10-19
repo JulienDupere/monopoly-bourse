@@ -1730,6 +1730,8 @@ function migrateState(s){
   
   
   if(s.preferredMarketListings===undefined) s.preferredMarketListings = [];
+  // Section 307 — partie sauvegardée avant le correctif : annonces ramenées à la détention réelle des vendeurs.
+  reconcilePreferredListings(s);
   if(!s.balanceSheetSnapshots) s.balanceSheetSnapshots = [];
   
   
@@ -11053,8 +11055,11 @@ async function callPreferredShares(companyId, issuanceId, qty, opts){
   });
   issuance.holders = issuance.holders.filter(h=>h.qty>1e-9);
   issuance.qtyOutstanding = Math.max(0, issuance.qtyOutstanding-qty);
+  // Section 307 — les annonces du marché secondaire sur cette émission sont ramenées à la nouvelle détention de
+  // chaque vendeur (retirées si elle tombe à 0) : jamais de vente de parts déjà rachetées.
+  const listingsAdjusted = reconcilePreferredListings(state, issuance.id);
   const cubesInjected = injectStockCube(co, 'green', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
-  log(`${co.name} rachète (call) ${fmtShares(qty)} part(s) privilégiée(s) à ${fmtPrice(issuance.callPrice)}/part pour ${fmt(amount)}.`, entries);
+  log(`${co.name} rachète (call) ${fmtShares(qty)} part(s) privilégiée(s) à ${fmtPrice(issuance.callPrice)}/part pour ${fmt(amount)}.${listingsAdjusted?` ${listingsAdjusted} annonce(s) du marché secondaire ajustée(s) à la nouvelle détention des vendeurs.`:''}`, entries);
   if(!opts.silent){ await saveGame(); render(); }
   return {ok:true, entries, cubesInjected};
 }
@@ -11159,6 +11164,37 @@ function resolvePreferredDividendsYearEnd(year){
   });
 }
 
+// Section 307 — une annonce de parts privilégiées ne peut jamais porter plus de parts que son vendeur n'en
+// détient réellement. Pour chaque (émission, vendeur), ramène le total annoncé à la détention actuelle : les
+// annonces les plus anciennes sont servies d'abord, les suivantes sont réduites, puis retirées si elles tombent
+// à 0 (détention nulle, émission introuvable ou non résolue). Appelée après tout mouvement qui réduit une
+// détention (rachat/call, vente sur le marché secondaire) et au chargement (migrateState, pour les parties
+// sauvegardées avant ce correctif). `st` = l'état à réconcilier ; `issuanceId` (facultatif) limite à une
+// émission. Renvoie le nombre d'annonces réduites ou retirées. Aucun mouvement d'argent.
+function reconcilePreferredListings(st, issuanceId){
+  if(!st || !Array.isArray(st.preferredMarketListings)) return 0;
+  const left = new Map();
+  let changed = 0;
+  const kept = st.preferredMarketListings.filter(l=>{
+    if(issuanceId && l.issuanceId!==issuanceId) return true;
+    const key = l.issuanceId+'|'+l.sellerId;
+    if(!left.has(key)){
+      const co = (st.companies||[]).find(c=>c.id===l.companyId);
+      const iss = co && (co.preferredIssuances||[]).find(i=>i.id===l.issuanceId);
+      const h = (iss && iss.status==='resolved') ? (iss.holders||[]).find(x=>x.playerId===l.sellerId) : null;
+      left.set(key, h ? Math.max(0, h.qty||0) : 0);
+    }
+    const avail = left.get(key);
+    const keep = Math.min(l.qty, avail);
+    if(!(keep>1e-9)){ changed++; return false; }
+    left.set(key, avail-keep);
+    if(keep<l.qty-1e-9){ l.qty = keep; changed++; }
+    return true;
+  });
+  if(changed) st.preferredMarketListings = kept;
+  return changed;
+}
+
 async function listPreferredSharesForSale(companyId, issuanceId, seller, qty, opts){
   
   
@@ -11167,7 +11203,13 @@ async function listPreferredSharesForSale(companyId, issuanceId, seller, qty, op
   const issuance = co && (co.preferredIssuances||[]).find(i=>i.id===issuanceId);
   if(!issuance) return {ok:false, error:'Émission introuvable.'};
   const holder = issuance.holders.find(h=>h.playerId===seller.id);
-  if(!(qty>0) || !holder || qty>holder.qty+1e-9) return {ok:false, error:'Vous ne détenez pas assez de parts sur cette émission.'};
+  // Section 307 — les parts déjà en vente par ce porteur sur cette émission ne sont plus disponibles : le total
+  // de ses annonces (déjà ouvertes + nouvelle) ne peut jamais dépasser sa détention.
+  const alreadyListed = state.preferredMarketListings.filter(l=>l.issuanceId===issuanceId && l.sellerId===seller.id).reduce((s,l)=>s+(l.qty||0), 0);
+  const available = holder ? Math.max(0, holder.qty-alreadyListed) : 0;
+  if(!(qty>0) || !holder || qty>available+1e-9) return {ok:false, error:(holder && alreadyListed>1e-9)
+    ? `Vous détenez ${fmtShares(holder.qty)} part(s) sur cette émission, dont ${fmtShares(alreadyListed)} déjà en vente : vous ne pouvez en annoncer que ${fmtShares(available)} de plus.`
+    : 'Vous ne détenez pas assez de parts sur cette émission.'};
   state.preferredMarketListings.push({id:uid(), companyId, issuanceId, sellerId:seller.id, qty, createdAt:nowLabel()});
   log(`${seller.name} met en vente ${fmtShares(qty)} part(s) privilégiée(s) de ${co.name} sur le marché secondaire.`);
   if(!opts.silent){ await saveGame(); render(); }
@@ -11212,19 +11254,32 @@ async function buyPreferredSharesFromListing(listingId, buyerId, qty, opts){
   
   
   if(co.ceoId===buyer.id) return {ok:false, error:'Le CEO d’une entreprise ne peut pas détenir ses propres parts privilégiées, neuves ou d’occasion — délit d’initié intégré au jeu.'};
+  // Section 307 — l'annonce n'engage que les parts que le vendeur détient ENCORE à cet instant (un rachat ou
+  // une autre vente a pu les réduire). S'il n'en détient plus aucune, l'annonce est retirée et l'achat refusé,
+  // sans aucun mouvement d'argent.
+  const seller = state.players.find(p=>p.id===listing.sellerId);
+  const sellerHolder = issuance.holders.find(h=>h.playerId===listing.sellerId);
+  const sellerQty = (seller && sellerHolder) ? Math.max(0, sellerHolder.qty) : 0;
+  if(!(sellerQty>1e-9)){
+    state.preferredMarketListings = state.preferredMarketListings.filter(l=>l.id!==listingId);
+    return {ok:false, error:`${seller?seller.name:'Le vendeur'} ne détient plus aucune part de cette émission (rachetées ou déjà vendues) — l'annonce est retirée, aucun achat n'a eu lieu.`};
+  }
   if(!(qty>0) || qty>listing.qty+1e-9) return {ok:false, error:'Quantité invalide.'};
+  // Section 307 — quantité transférée plafonnée à la détention réelle du vendeur ; l'acheteur ne paie que
+  // les parts réellement transférées.
+  qty = Math.min(qty, sellerQty);
   const price = Math.min(co.stockPrice||0, issuance.callPrice);
   const amount = qty*price;
   if(buyer.cash<amount-1e-9) return {ok:false, error:'Encaisse personnelle insuffisante.'};
-  const seller = state.players.find(p=>p.id===listing.sellerId);
   buyer.cash -= amount;
-  if(seller) seller.cash += amount;
-  const sellerHolder = issuance.holders.find(h=>h.playerId===listing.sellerId);
-  if(sellerHolder){ sellerHolder.qty -= qty; if(sellerHolder.qty<=1e-9) issuance.holders = issuance.holders.filter(h=>h!==sellerHolder); }
+  seller.cash += amount;
+  sellerHolder.qty -= qty; if(sellerHolder.qty<=1e-9) issuance.holders = issuance.holders.filter(h=>h!==sellerHolder);
   let buyerHolder = issuance.holders.find(h=>h.playerId===buyer.id);
   if(buyerHolder) buyerHolder.qty += qty; else issuance.holders.push({playerId:buyer.id, qty});
   listing.qty -= qty;
   if(listing.qty<=1e-9) state.preferredMarketListings = state.preferredMarketListings.filter(l=>l.id!==listingId);
+  // Section 307 — les autres annonces du vendeur sur cette émission suivent sa nouvelle détention.
+  reconcilePreferredListings(state, issuance.id);
   const entries = [{label:`${buyer.name} (achat de parts privilégiées — ${co.name})`, amount:-amount}, {label:`${seller?seller.name:'?'} (vente de parts privilégiées — ${co.name})`, amount}];
   log(`${buyer.name} achète ${fmtShares(qty)} part(s) privilégiée(s) de ${co.name} à ${seller?seller.name:'?'} pour ${fmt(amount)} (${fmtPrice(price)}/part).`, entries);
   if(!opts.silent){ await saveGame(); render(); }
@@ -19478,12 +19533,15 @@ function modalSellPreferredShares(companyId, issuanceId){
   const holder = issuance && me ? issuance.holders.find(h=>h.playerId===me.id) : null;
   if(!co || !issuance || !holder){ alert('Position introuvable.'); return; }
   const price = Math.min(co.stockPrice||0, issuance.callPrice);
+  // Section 307 — seules les parts pas encore en vente peuvent être annoncées (même règle que listPreferredSharesForSale).
+  const alreadyListed = state.preferredMarketListings.filter(l=>l.issuanceId===issuanceId && l.sellerId===me.id).reduce((s,l)=>s+(l.qty||0), 0);
+  const available = Math.max(0, holder.qty-alreadyListed);
   openModal(`
     <h3>Vendre des parts privilégiées — ${esc(co.name)}</h3>
     <div class="small" style="margin-bottom:10px;">Met des parts en vente sur le marché secondaire, au prix courant min(cours de l'action, prix de rachat) — jamais négocié. N'importe quel autre joueur peut ensuite les acheter, en tout ou en partie, au prix en vigueur AU MOMENT de l'achat (pas nécessairement celui-ci).</div>
-    <div class="small" style="margin-bottom:8px;">Vous détenez: <b>${fmtShares(holder.qty)}</b> part(s) &nbsp;|&nbsp; Prix courant: <b>${fmtPrice(price)}</b>/part</div>
+    <div class="small" style="margin-bottom:8px;">Vous détenez: <b>${fmtShares(holder.qty)}</b> part(s)${alreadyListed>1e-9?`, dont <b>${fmtShares(alreadyListed)}</b> déjà en vente — encore disponibles: <b>${fmtShares(available)}</b>`:''} &nbsp;|&nbsp; Prix courant: <b>${fmtPrice(price)}</b>/part</div>
     <label>Quantité à mettre en vente</label>
-    <input type="number" step="1" min="0" max="${holder.qty}" id="mPrefSellQty" value="0">
+    <input type="number" step="1" min="0" max="${available}" id="mPrefSellQty" value="0">
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>

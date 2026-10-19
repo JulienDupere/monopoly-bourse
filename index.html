@@ -7906,7 +7906,7 @@ function taxSquareCost(pos, companyId){
     
     
     const companyVal = co ? companyValue(co)*0.10 : 0;
-    return Math.min(companyVal, 2);
+    return Math.max(0, Math.min(companyVal, 2)); // Section 307 — plancher à 0 : l'impôt « prélève » 10 % de la valeur, au plus 2 M$, jamais un versement ; une entreprise à valeur négative ne paie ni ne reçoit rien (payTax, cotations et affichage en profitent)
   }
   if(pos===38) return 1; 
   return 0;

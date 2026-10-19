@@ -15,7 +15,23 @@ démonstration à quatre joueurs. Ils décrivent le comportement de l'applicatio
 | [7](Cahier_7.pdf) | Le financement et les accords | 37 | Escalier du financement, swaps de loyers, compensation, émissions, parts privilégiées, hypothèque, prêt de dernier recours, assurance |
 | [8](Cahier_8.pdf) | Titrisation (ABS) | 10 | Émission, tranches senior/junior, souscription, versement à chaque loyer. À lire après le cahier 7. |
 
+## Aide-mémoire du joueur
+
+[Aide_memoire.pdf](Aide_memoire.pdf) résume les neuf cahiers en cinq pages imprimables (format Lettre) :
+une page de garde, puis une fiche par thème — fonder son entreprise, les actions du joueur, les actions des
+entreprises, le financement pour et contre. Les chiffres cités sont les valeurs par défaut des réglages,
+vérifiées contre `index.html` le 2026-10-19.
+
+Source modifiable : [Aide_memoire.html](Aide_memoire.html) (contenu de page sans squelette `<html>`, publié
+aussi comme artefact claude.ai). Pour régénérer le PDF, envelopper le fichier dans
+`<!doctype html><html lang="fr"><head><meta charset="utf-8"></head>…</html>` puis imprimer avec Chrome sans
+interface :
+
+    chrome --headless=new --no-pdf-header-footer --print-to-pdf=Aide_memoire.pdf <fichier enveloppé>
+
+Vérifier ensuite que le PDF fait exactement 5 pages.
+
 ## Pour le développement
 
-Quand une mécanique change dans `index.html`, le cahier correspondant peut devenir inexact. Le signaler à
+Quand une mécanique change dans `index.html`, le cahier correspondant et l'aide-mémoire peuvent devenir inexacts. Le signaler à
 Julien dans le récapitulatif de la livraison (les PDF ne sont pas régénérés automatiquement).

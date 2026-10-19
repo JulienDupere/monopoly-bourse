@@ -1,0 +1,455 @@
+<title>Aide-mémoire Monopoly Bourse</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Mise en page : cinq fiches au format Lettre, comme des titres de propriété — une bande de couleur de groupe
+   en tête de chaque fiche. Palette reprise de l'application (index.html, :root). */
+:root{
+  --desk:#E9ECF1;          /* fond derrière les fiches */
+  --sheet:#FFFFFF;         /* la fiche */
+  --ink:#111827;
+  --muted:#4B5563;
+  --line:#D9DDE3;
+  --tint:#F3F4F6;          /* fond des encadrés */
+  --accent:#1D4ED8;        /* bleu de l'app */
+  --gold:#B45309;
+  --red:#B91C1C;
+  --green:#047857;
+  --g-brun:#8B5A2B; --g-bleupale:#7EC8E3; --g-rose:#D6409F; --g-orange:#E8821E;
+  --g-rouge:#C0392B; --g-jaune:#F2C230; --g-vert:#2E8B57; --g-bleufonce:#1B3A6B;
+  --font-body:"Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-num:"IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --desk:#0B1020; --sheet:#151B2B; --ink:#E5E7EB; --muted:#A3AAB8; --line:#2A3247; --tint:#1C2336;
+    --accent:#7AA2FF; --gold:#F0A64A; --red:#F87171; --green:#34D399; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --desk:#0B1020; --sheet:#151B2B; --ink:#E5E7EB; --muted:#A3AAB8; --line:#2A3247; --tint:#1C2336;
+  --accent:#7AA2FF; --gold:#F0A64A; --red:#F87171; --green:#34D399; color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--desk); color:var(--ink); font-family:var(--font-body);
+  font-size:13.5px; line-height:1.45;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px));
+  padding-block:24px 40px;
+}
+.stack{display:flex; flex-direction:column; align-items:center; gap:28px}
+.sheet{
+  width:100%; max-width:8.5in; background:var(--sheet);
+  border-radius:6px; box-shadow:0 1px 2px rgba(17,24,39,.06), 0 8px 28px -8px rgba(17,24,39,.18);
+  padding:0 0 22px; display:flex; flex-direction:column; overflow:hidden;
+}
+.sheet > .body{padding:18px 30px 0; display:flex; flex-direction:column; gap:14px; flex:1; min-width:0}
+
+/* Bande « titre de propriété » */
+.deed{padding:14px 30px 13px; color:#fff; display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap}
+.deed .eyebrow{font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; font-weight:600; opacity:.9}
+.deed h2{margin:2px 0 0; font-size:24px; font-weight:800; letter-spacing:-.01em; line-height:1.1; text-wrap:balance}
+.deed .src{font-size:11px; font-weight:500; opacity:.9; text-align:right}
+.deed.vert{background:var(--g-vert)}
+.deed.bleufonce{background:var(--g-bleufonce)}
+.deed.orange{background:var(--g-orange); color:#1F1300}
+.deed.rouge{background:var(--g-rouge)}
+
+.lead{font-size:14px; color:var(--muted); margin:0; max-width:68ch}
+.lead b{color:var(--ink)}
+h3{font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin:0 0 6px; font-weight:700}
+p{margin:0}
+.num{font-family:var(--font-num); font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap}
+.grid2{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+.grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:12px}
+.grid2 > *, .grid3 > *{min-width:0}
+.box{background:var(--tint); border-radius:8px; padding:10px 12px}
+.box p + p{margin-top:5px}
+.box.warn{background:color-mix(in srgb, var(--red) 9%, var(--sheet)); }
+.box.warn h3{color:var(--red)}
+.box.good h3{color:var(--green)}
+ul.tight{margin:0; padding-left:16px}
+ul.tight li + li{margin-top:3px}
+
+/* Tableaux */
+.tbl{overflow-x:auto}
+table{width:100%; border-collapse:collapse; font-size:12px; line-height:1.35}
+th{font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); text-align:left; font-weight:700; padding:0 8px 5px 0; border-bottom:1.5px solid var(--ink)}
+td{padding:6px 8px 6px 0; border-bottom:1px solid var(--line); vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.k{font-weight:700; white-space:nowrap}
+td.k small{display:block; font-weight:500; color:var(--muted); white-space:normal}
+.pro{color:var(--green)} .con{color:var(--red)}
+
+/* Rail de cubes rouges */
+.cubes{display:inline-flex; gap:2px; vertical-align:middle}
+.cubes i{width:8px; height:8px; border-radius:1.5px; display:inline-block}
+.cubes i.on{background:var(--red)}
+.cubes i.maybe{border:1.5px solid var(--red); opacity:.75}
+.cubes-lbl{display:block; font-family:var(--font-num); font-size:10.5px; color:var(--muted); margin-top:2px}
+
+/* Couverture */
+.cover .strip{display:grid; grid-template-columns:repeat(8,1fr); height:16px}
+.cover .strip span:nth-child(1){background:var(--g-brun)} .cover .strip span:nth-child(2){background:var(--g-bleupale)}
+.cover .strip span:nth-child(3){background:var(--g-rose)} .cover .strip span:nth-child(4){background:var(--g-orange)}
+.cover .strip span:nth-child(5){background:var(--g-rouge)} .cover .strip span:nth-child(6){background:var(--g-jaune)}
+.cover .strip span:nth-child(7){background:var(--g-vert)} .cover .strip span:nth-child(8){background:var(--g-bleufonce)}
+.cover .title{padding:30px 30px 6px}
+.cover .kicker{font-size:11px; letter-spacing:.18em; text-transform:uppercase; font-weight:700; color:var(--accent)}
+.cover h1{font-size:46px; font-weight:800; letter-spacing:-.025em; line-height:1.02; margin:8px 0 10px; text-wrap:balance}
+.cover .sub{font-size:16px; color:var(--muted); max-width:52ch}
+.pocket{border:1.5px solid var(--line); border-radius:8px; padding:10px 12px}
+.pocket .who{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; font-weight:700}
+.pocket.co .who{color:var(--gold)} .pocket.me .who{color:var(--accent)}
+.pocket strong{display:block; font-size:15px; margin:2px 0 4px}
+.toc{display:grid; grid-template-columns:repeat(4,1fr); gap:10px}
+.toc > div{border-top:5px solid; padding-top:6px; min-width:0}
+.toc .n{font-family:var(--font-num); font-size:11px; color:var(--muted)}
+.toc b{display:block; font-size:13.5px; line-height:1.2; margin:1px 0 2px}
+.toc span{font-size:11px; color:var(--muted)}
+.toc .t1{border-color:var(--g-vert)} .toc .t2{border-color:var(--g-bleufonce)}
+.toc .t3{border-color:var(--g-orange)} .toc .t4{border-color:var(--g-rouge)}
+
+.foot{margin-top:auto; padding:12px 30px 0; display:flex; justify-content:space-between; gap:12px; font-size:10.5px; color:var(--muted); border-top:1px solid var(--line); margin-inline:30px; padding-inline:0}
+
+/* Écran étroit */
+@media (max-width:640px){
+  body{font-size:14px}
+  .grid2,.grid3,.toc{grid-template-columns:1fr}
+  .sheet > .body{padding:16px 16px 0}
+  .deed{padding:12px 16px}
+  .cover .title{padding:22px 16px 4px}
+  .cover h1{font-size:34px}
+  .foot{margin-inline:16px}
+  .deed .src{text-align:left}
+}
+
+/* Impression : une fiche = une page Lettre, toujours en clair */
+@page{size:letter; margin:0}
+@media print{
+  :root, :root:not([data-theme="light"]), :root[data-theme="dark"]{
+    --desk:#FFFFFF; --sheet:#FFFFFF; --ink:#111827; --muted:#4B5563; --line:#D9DDE3; --tint:#F3F4F6;
+    --accent:#1D4ED8; --gold:#B45309; --red:#B91C1C; --green:#047857; color-scheme:light;
+  }
+  body{padding:0; font-size:8.9pt; line-height:1.38; -webkit-print-color-adjust:exact; print-color-adjust:exact}
+  .stack{gap:0}
+  .sheet{width:8.5in; max-width:none; height:10.98in; border-radius:0; box-shadow:none; break-after:page; padding-bottom:.3in}
+  .sheet:last-child{break-after:auto}
+  .sheet > .body{padding:.16in .45in 0; gap:.1in}
+  .deed{padding:.17in .45in .13in}
+  .deed h2{font-size:19pt}
+  .foot{margin-inline:.45in; padding-top:.08in; font-size:7.4pt}
+  table{font-size:7.9pt; line-height:1.3}
+  th{font-size:6.5pt}
+  td{padding:4px 7px 4px 0}
+  .box{padding:7px 10px}
+  h3{font-size:7.2pt; margin-bottom:4px}
+  .lead{font-size:9.2pt}
+  .cover .title{padding:.45in .45in .08in}
+  .cover h1{font-size:38pt}
+  .cover .sub{font-size:12pt}
+  .pocket{padding:7px 10px}
+  .pocket strong{font-size:10.5pt}
+}
+@media (prefers-reduced-motion: reduce){*{transition:none!important; animation:none!important}}
+</style>
+
+<div class="stack">
+
+<!-- ================================================================ COUVERTURE -->
+<section class="sheet cover" aria-labelledby="t0">
+  <div class="strip" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="title">
+    <div class="kicker">Monopoly Bourse · Cahiers de formation 0 à 8</div>
+    <h1 id="t0">Aide-mémoire du joueur</h1>
+    <p class="sub">Les neuf cahiers résumés en quatre fiches : fonder son entreprise, investir, diriger, se financer.</p>
+  </div>
+  <div class="body">
+    <p class="lead">Vous êtes le <b>CEO d'une entreprise cotée</b>. Les terrains appartiennent à votre société et les loyers entrent dans sa trésorerie. Votre fortune personnelle dépend surtout du cours de son action, que les autres joueurs achètent et vendent.</p>
+
+    <div class="grid2">
+      <div class="pocket co">
+        <div class="who">Mon Entreprise</div>
+        <strong>La trésorerie de la société</strong>
+        <p>Paie les terrains, les maisons, les loyers, les assurances et les dividendes. Elle ne compte <b>pas</b> dans votre valeur nette, sauf à travers le cours.</p>
+      </div>
+      <div class="pocket me">
+        <div class="who">Portefeuille</div>
+        <strong>Votre encaisse personnelle</strong>
+        <p>Achète des actions, des obligations et des options. C'est elle, avec vos placements, qui désigne le vainqueur.</p>
+      </div>
+    </div>
+    <p style="font-size:.92em;color:var(--muted);margin-top:-6px">L'argent ne passe d'une poche à l'autre que par trois chemins : les dividendes, la vente de vos propres parts et les prêts que vous accordez.</p>
+
+    <div>
+      <h3>L'horloge de la partie</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Unité</th><th>Durée</th><th>Ce qui s'y passe</th></tr></thead>
+        <tbody>
+          <tr><td class="k">Lancer</td><td><span class="num">1 tour</span></td><td>Chacun agit, puis appuie sur ✅ Tour Terminé. Quand tous ont validé, l'application lance les dés pour toutes les entreprises : loyers, Départ, taxes, enquêtes de l'AMF, résolution du marché.</td></tr>
+          <tr><td class="k">Semestre</td><td><span class="num">3 lancers</span></td><td>Clôture comptable et dividendes. <b>La bourse ouvre</b> : actions, découverts, options, ordres bid/ask, bons, demandes d'emprunt, émissions.</td></tr>
+          <tr><td class="k">Année</td><td><span class="num">6 lancers</span></td><td>Tout ce qui précède, plus la <b>construction</b>, les enchères de maisons, de REIT et de lot commercial, et le dividende privilégié.</td></tr>
+          <tr><td class="k">En tout temps</td><td>—</td><td>Hypothéquer, proposer un swap, vendre une part de terrain, assurance sous-standard, ordres bid/ask déjà placés.</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="grid2">
+      <div class="box">
+        <h3>Le vainqueur</h3>
+        <p>La plus grande <b>valeur nette personnelle</b>. On additionne l'encaisse, les actions au cours du moment, les bons, les options, les parts privilégiées et les prêts <b>garantis</b> qu'on vous doit. On soustrait les découverts, les options écrites et vos emprunts.</p>
+        <p>Un prêt non garanti compte pour <b>zéro</b> tant qu'il n'est pas remboursé.</p>
+      </div>
+      <div class="box warn">
+        <h3>La fin arrive sans prévenir</h3>
+        <ul class="tight">
+          <li>Un cours tombe sous <span class="num">5 %</span> de son prix de fondation.</li>
+          <li>La banque détient <span class="num">100 %</span> d'une entreprise pendant <span class="num">2 ans</span> de grâce.</li>
+          <li>La durée maximale tirée au sort en secret est atteinte.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="toc" aria-label="Sommaire">
+      <div class="t1"><div class="n">Fiche 1</div><b>Fonder son entreprise</b><span>Cahiers 0, 4 et 6</span></div>
+      <div class="t2"><div class="n">Fiche 2</div><b>Les actions du joueur</b><span>Cahiers 1, 2, 3 et 8</span></div>
+      <div class="t3"><div class="n">Fiche 3</div><b>Les actions des entreprises</b><span>Cahiers 0, 4, 5 et 7</span></div>
+      <div class="t4"><div class="n">Fiche 4</div><b>Le financement, pour et contre</b><span>Cahiers 2, 7 et 8</span></div>
+    </div>
+  </div>
+  <div class="foot"><span>Cahiers complets : monopoly-bourse.vercel.app/docs/cahiers/</span><span>Valeurs par défaut des réglages de partie</span></div>
+</section>
+
+<!-- ================================================================ FICHE 1 -->
+<section class="sheet" aria-labelledby="t1">
+  <header class="deed vert"><div><div class="eyebrow">Fiche 1</div><h2 id="t1">Fonder son entreprise</h2></div><div class="src">Cahiers 0, 4 et 6</div></header>
+  <div class="body">
+    <p class="lead">Toutes les entreprises naissent égales, quel que soit l'ordre d'arrivée. <b>Trois décisions, dont deux définitives</b> : ni vous ni l'administrateur ne pourrez les changer.</p>
+
+    <div class="grid3">
+      <div class="box"><h3>Valorisation</h3><p><span class="num">20 M$</span> pour tous, <span class="num">200 000</span> parts.</p></div>
+      <div class="box"><h3>Votre mise</h3><p><span class="num">30 %</span> pour <span class="num">6 M$</span>, payés de votre poche.</p></div>
+      <div class="box"><h3>L'IPO</h3><p>La banque finance les <span class="num">70 %</span> restants, soit <span class="num">14 M$</span>. Trésorerie de départ : <span class="num">20 M$</span>.</p></div>
+    </div>
+
+    <div class="grid3">
+      <div><h3>1 · Le nom</h3><p>Cosmétique. Choisissez-le court, il apparaît partout.</p></div>
+      <div><h3>2 · Le type — définitif</h3><p>Décide de la façon dont votre cours réagit à ce que vous faites. Il ne change ni vos terrains ni vos boutons.</p></div>
+      <div><h3>3 · Le réglage — définitif</h3><p><b>Croissance</b> : profil Élevé ou Très élevé. <b>Dividendes</b> : rendement promis, au moins le taux sans risque.</p></div>
+    </div>
+
+    <div>
+      <h3>Les quatre types</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Type</th><th>Le marché récompense</th><th>Le marché punit</th><th>Pour vous si…</th></tr></thead>
+        <tbody>
+          <tr><td class="k">Dividendes<small>les aristocrates du dividende</small></td><td>Un dividende récurrent qui monte, semestre après semestre. Seul type dont le sac garde la mémoire de ses hausses.</td><td>Une baisse du versement. Verser <b>zéro</b> remplit le sac de 20 rouges d'un coup.</td><td>« Je peux tenir un engagement dix semestres. »</td></tr>
+          <tr><td class="k">Croissance<small>le pari sur demain</small></td><td>Une marge nette dans le haut de la table, et battre l'attente des analystes.</td><td>Être sous la médiane des autres. Aucun plancher comptable : le cours n'est pas rappelé vers le bilan.</td><td>« Je veux gagner, quitte à perdre franchement. »</td></tr>
+          <tr><td class="k">GARP<small>croissance à prix raisonnable</small></td><td>Un cours sous la valeur comptable par action : le sac pousse vers le haut.</td><td>Un cours au-dessus : le sac rappelle vers le bilan. À moins de <span class="num">2 %</span> d'écart, rien ne bouge.</td><td>« Je veux une entreprise sans surprise. »</td></tr>
+          <tr><td class="k">Momentum<small>le prix qui se regarde</small></td><td>Des séries courtes de 2 ou 3 semestres dans un sens, puis l'autre.</td><td>Les longues séries : le sac blanchit, et le choc de retournement grimpe jusqu'à <span class="num">12 %</span>.</td><td>« Ce qui m'amuse, c'est le marché plus que la gestion. »</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="grid2">
+      <div class="box">
+        <h3>Trois sacs de cubes font le cours</h3>
+        <p>Fondamental <span class="num">65 %</span> · Trading <span class="num">15 %</span> · Type <span class="num">20 %</span>. Momentum : <span class="num">45 / 25 / 30</span>.</p>
+        <p>Les joueurs pèsent au plus <span class="num">15 %</span> de chaque tirage. Ce sont vos résultats qui font le cours. Les événements ne bougent pas le prix : ils remplissent les sacs.</p>
+      </div>
+      <div class="box">
+        <h3>Le bénéfice attendu, commun aux quatre</h3>
+        <p>Chaque semestre, votre bénéfice net est comparé à la moyenne de vos trois derniers semestres. Au-dessus : du vert. En dessous : du rouge, jusqu'au choc majeur.</p>
+        <p>C'est un tapis roulant : visez une progression régulière plutôt qu'un semestre record.</p>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div>
+        <h3>L'enchère d'ouverture</h3>
+        <ul class="tight">
+          <li>Les <span class="num">28</span> terrains se vendent au premier tour, à la criée : 22 de couleur, 4 aéroports, 2 services.</li>
+          <li>Mise à prix au prix de base. L'entreprise paie, jamais votre poche.</li>
+          <li>Copropriété jusqu'à <span class="num">3</span> entreprises. La part suit l'argent : <span class="num">1,80 M$ + 1,20 M$</span> donne <span class="num">60 / 40 %</span>.</li>
+          <li>Prendre <span class="num">30 %</span> de trois bons terrains vaut souvent mieux que <span class="num">100 %</span> d'un seul.</li>
+        </ul>
+      </div>
+      <div class="box warn">
+        <h3>Les deux pièges du début</h3>
+        <p><b>Tout dépenser à l'enchère.</b> La construction fait les gros loyers et n'arrive qu'en fin d'année. Gardez au moins la moitié de votre trésorerie.</p>
+        <p><b>La spirale de détresse.</b> Dette au-dessus du seuil (<span class="num">50 %</span> par défaut) et marge négative au même semestre : chaque tirage rouge frappe plus fort, jusqu'à l'effondrement. On en sort en redevenant rentable un semestre ou en réduisant la dette.</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Monopoly Bourse · Aide-mémoire</span><span>Fiche 1 · Fonder son entreprise</span></div>
+</section>
+
+<!-- ================================================================ FICHE 2 -->
+<section class="sheet" aria-labelledby="t2">
+  <header class="deed bleufonce"><div><div class="eyebrow">Fiche 2</div><h2 id="t2">Les actions du joueur</h2></div><div class="src">Cahiers 1, 2, 3 et 8</div></header>
+  <div class="body">
+    <p class="lead">Tout part de <b>Portefeuille → ☰ Actions</b>, avec votre encaisse personnelle, et seulement <b>aux semestres</b>, un lancer sur trois. Interdit : votre propre entreprise, et toute entreprise dont l'IPO n'est pas terminée.</p>
+
+    <div class="tbl"><table>
+      <thead><tr><th style="width:17%">Produit</th><th style="width:20%">Je gagne si</th><th style="width:28%">Ce que ça coûte, ce que je risque</th><th>À retenir</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Acheter des actions</td><td>Le cours monte. Je touche aussi les dividendes.</td><td>Perte maximale : ma mise. Aucun coût de portage.</td><td>Le dividende se paie sur le plus petit de deux nombres : mes parts à l'annonce et mes parts au versement. Ne vendez pas entre les deux.</td></tr>
+        <tr><td class="k">Vendre à découvert</td><td>Le cours baisse.</td><td>Perte illimitée. Frais d'emprunt à chaque lancer : taux annuel ÷ <span class="num">6</span>. Je paie aussi les dividendes versés.</td><td>L'argent encaissé est déjà dû : ne le dépensez jamais. Le taux monte quand tout le monde shorte la même action.</td></tr>
+        <tr><td class="k">Ordre bid ou ask</td><td>Le cours touche mon prix limite.</td><td>Rien n'est réservé. S'exécute à n'importe quel lancer, à mon prix limite, même marché fermé.</td><td>Aucune expiration. Un bid puise dans l'encaisse puis dans les bons. Relisez vos ordres chaque semestre.</td></tr>
+        <tr><td class="k">Bons gouvernementaux</td><td>Toujours : <span class="num">3 %</span> par an, <span class="num">0,5 %</span> par lancer.</td><td>Aucun risque. Retrait libre au semestre, sans pénalité.</td><td>Ils comptent dans la marge et couvrent un put écrit. On peut emprunter jusqu'à <span class="num">5 M$</span> net au même taux.</td></tr>
+        <tr><td class="k">Prêter à une entreprise</td><td>L'emprunteuse encaisse des loyers.</td><td>Remboursé par une retenue de <span class="num">5 à 40 %</span> de ses loyers, jusqu'à <span class="num">1 à 2,5×</span> le capital. Aucune échéance.</td><td><b>Cochez « garantie »</b> : sinon la créance compte zéro dans votre valeur nette. Regardez la cote de crédit avant d'offrir.</td></tr>
+        <tr><td class="k">Acheter une option</td><td>Un mouvement franc avant l'échéance : hausse pour un call, baisse pour un put.</td><td>Perte maximale : la prime. Elle fond à chaque lancer.</td><td><span class="num">100</span> parts par contrat. Calls achetés limités à <span class="num">15 %</span> des parts. Achetez pour une raison datée, jamais « au cas où ».</td></tr>
+        <tr><td class="k">Écrire une option</td><td>Le cours reste du bon côté du strike.</td><td>Nue : marge de <span class="num">30 %</span>, livraison forcée à l'échéance, découvert possible.</td><td>Covered call : <span class="num">100</span> parts par contrat. Cash-secured put : strike × <span class="num">100</span> en encaisse ou en bons. Les deux n'exigent aucune marge.</td></tr>
+        <tr><td class="k">Souscrire des privilégiées</td><td>L'entreprise sert son dividende annuel fixe.</td><td>Valeur plafonnée à min(cours ; prix de rachat). Le CEO peut racheter à tout semestre.</td><td>Si vous êtes seul à accepter, vous prenez toute l'émission. Vérifiez votre encaisse.</td></tr>
+        <tr><td class="k">Souscrire une titrisation</td><td>Les terrains du panier sont visités.</td><td>Sans recours : si les loyers ne viennent pas, vous perdez tout et personne ne vous doit rien.</td><td>Senior : capital plus prime, servie en premier. Junior : tout le reste, ou rien. Déclarez un plafond que vous assumez seul.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="grid2">
+      <div class="box warn">
+        <h3>L'appel de marge</h3>
+        <p>À chaque lancer : votre valeur nette, sans vos parts de CEO, doit dépasser <span class="num">30 %</span> du notionnel de vos découverts et options écrites nues.</p>
+        <p>Sinon l'application ferme votre plus grosse position, sans prévenir, puis la suivante. Gardez une réserve égale à la moitié de vos passifs.</p>
+      </div>
+      <div class="box">
+        <h3>Le CEO et ses propres parts</h3>
+        <p>Un seul chemin : <b>📢 Annoncer un achat ou une vente</b>. L'ordre s'exécute <span class="num">6</span> lancers plus tard, au cours du jour.</p>
+        <p>Pour les autres joueurs, une annonce d'achat est le signal le plus crédible du jeu, et vous avez le temps d'agir avant lui.</p>
+      </div>
+    </div>
+
+    <div class="box">
+      <h3>Lire une entreprise en trente secondes · Portefeuille → Analyse de ratios</h3>
+      <p><b>Prix/Équité</b> sous 1× : vous payez moins que le bilan. <b>ROE</b> élevé : la gestion crée de la valeur. <b>Dette/Équité</b> élevée : risque de spirale. Sur la fiche, une <b>attente des analystes</b> basse rend une bonne surprise probable. Acheter après trois semestres records, c'est acheter la barre la plus haute.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Monopoly Bourse · Aide-mémoire</span><span>Fiche 2 · Les actions du joueur</span></div>
+</section>
+
+<!-- ================================================================ FICHE 3 -->
+<section class="sheet" aria-labelledby="t3">
+  <header class="deed orange"><div><div class="eyebrow">Fiche 3</div><h2 id="t3">Les actions des entreprises</h2></div><div class="src">Cahiers 0, 4, 5 et 7</div></header>
+  <div class="body">
+    <p class="lead">Le CEO agit depuis <b>Mon Entreprise → ☰ Actions</b>, avec la trésorerie de la société. Le menu n'affiche que ce qui est possible maintenant : <b>si un bouton manque, ce n'est pas le moment.</b></p>
+
+    <div class="grid3">
+      <div class="box"><h3>Le tour</h3><p>Agissez, puis ✅ Tour Terminé. On agit avant de savoir où l'on tombe.</p></div>
+      <div class="box"><h3>Enquête de l'AMF</h3><p><span class="num">3</span> tours sans jouer ni toucher de loyer, ou une caution de <span class="num">500 K$</span>.</p></div>
+      <div class="box"><h3>Encaisse négative</h3><p>Au semestre, impossible de valider avant de revenir à zéro : vendez, empruntez ou hypothéquez.</p></div>
+    </div>
+
+    <div>
+      <h3>Ce que rapportent les terrains</h3>
+      <div class="tbl"><table>
+        <thead><tr><th style="width:18%">Famille</th><th style="width:38%">Le loyer</th><th>Le conseil</th></tr></thead>
+        <tbody>
+          <tr><td class="k">Couleur · 22</td><td>Selon les maisons. Coût par maison selon le groupe : <span class="num">500 K$</span> Brun et Bleu pâle, <span class="num">1 M$</span> Rose et Orange, <span class="num">1,5 M$</span> Rouge et Jaune, <span class="num">2 M$</span> Vert et Bleu foncé.</td><td>Construction en <b>fin d'année</b> seulement, sur un lot regroupé par l'administrateur : plus aucune part à la banque, aucune hypothèque. Quatre maisons, puis l'hôtel, au même prix. Étalez : tout bâtir d'un coup écrase la marge du semestre.</td></tr>
+          <tr><td class="k">Aéroports · 4</td><td><span class="num">250 K$</span>, <span class="num">500 K$</span>, <span class="num">1 M$</span> puis <span class="num">2 M$</span> par visite selon le nombre détenu.</td><td>Par collection ou pas du tout : le quatrième vaut huit fois le premier.</td></tr>
+          <tr><td class="k">Services · 2</td><td>La somme des dés × <span class="num">40 K$</span>, ou × <span class="num">100 K$</span> avec les deux.</td><td>La collection la moins chère du plateau : le second multiplie le loyer par <span class="num">2,5</span>.</td></tr>
+          <tr><td class="k">REIT</td><td>La banque garde <span class="num">10 %</span> de chaque terrain de couleur. Les loyers vont au fonds, distribués en fin d'année.</td><td>Enchère scellée annuelle du lot entier, mise minimale <span class="num">100 K$</span>. Le plus offrant rachète les autres détenteurs.</td></tr>
+          <tr><td class="k">Lot commercial</td><td>De <span class="num">1 à 7</span> cases neutres facturent <span class="num">100 K$ à 1 M$</span> pendant un an.</td><td>Pari à somme nulle contre la table. Comptez environ <span class="num">0,6</span> visite par case et par an avec quatre entreprises.</td></tr>
+        </tbody>
+      </table></div>
+      <p style="font-size:.9em;color:var(--muted);margin-top:5px">Cases spéciales : Départ verse <span class="num">2 M$</span>. Impôt sur le revenu : <span class="num">10 %</span> de la valeur, au plus <span class="num">2 M$</span>. TPS/TVQ : <span class="num">1 M$</span>. Les deux taxes s'assurent d'avance.</p>
+    </div>
+
+    <div class="grid2">
+      <div>
+        <h3>Ce qui fait monter le cours</h3>
+        <ul class="tight">
+          <li>Un semestre plus rentable qu'attendu.</li>
+          <li>Un cours encore sous l'équité par action.</li>
+          <li>Une équité qui progresse d'un semestre à l'autre.</li>
+          <li>Un dividende versé au-dessus du seuil de distribution.</li>
+          <li>Un passage sur la case Départ.</li>
+          <li>Des joueurs qui achètent, un rachat d'actions.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Ce qui le fait baisser</h3>
+        <ul class="tight">
+          <li>Un semestre moins rentable qu'attendu.</li>
+          <li>Un cours au-dessus de l'équité par action.</li>
+          <li>Une équité qui recule.</li>
+          <li>Un dividende annoncé sur un semestre déficitaire.</li>
+          <li>Un emprunt, une hypothèque, une enquête de l'AMF.</li>
+          <li>Des joueurs qui vendent ou shortent, une émission d'actions.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="grid3">
+      <div class="box">
+        <h3>Le dividende</h3>
+        <p>Il sort de la trésorerie à l'annonce et n'est versé que quelques lancers plus tard. La portion non versée revient à l'entreprise. Une entreprise Dividendes règle un <b>dividende récurrent</b> sur une jauge à sept paliers.</p>
+      </div>
+      <div class="box">
+        <h3>L'assurance</h3>
+        <p>Contrat d'un an en fin d'année, d'un semestre au semestre. Entre les deux, seulement la sous-standard : un lancer, terrains seulement, très majorée. N'assurez que ce que la trésorerie ne peut pas absorber.</p>
+      </div>
+      <div class="box">
+        <h3>La sortie publique</h3>
+        <p>Gratuite, une seule fois par partie. Elle calme une baisse excessive mais n'inverse rien. Gardez-la pour un vrai creux : un prêt de dernier recours la supprime.</p>
+      </div>
+    </div>
+
+    <p style="font-size:.92em;color:var(--muted)"><b style="color:var(--ink)">Répondre à une proposition.</b> Swaps, accords et offres arrivent en haut de Mon Entreprise avec trois boutons : Détails, Accepter, Refuser. Refuser ne coûte rien. Rouvrez les détails juste avant d'accepter : les montants vieillissent.</p>
+  </div>
+  <div class="foot"><span>Monopoly Bourse · Aide-mémoire</span><span>Fiche 3 · Les actions des entreprises</span></div>
+</section>
+
+<!-- ================================================================ FICHE 4 -->
+<section class="sheet" aria-labelledby="t4">
+  <header class="deed rouge"><div><div class="eyebrow">Fiche 4</div><h2 id="t4">Le financement, pour et contre</h2></div><div class="src">Cahiers 2, 7 et 8</div></header>
+  <div class="body">
+    <p class="lead">Neuf portes, de la moins chère à la plus destructrice. <b>On n'emprunte que pour acheter un actif qui rapporte plus que ce qu'il coûte.</b> Chaque dette se voit au journal, et la plupart ajoutent des cubes rouges à votre cours.</p>
+
+    <div class="tbl"><table>
+      <thead><tr><th style="width:3%">#</th><th style="width:17%">Source</th><th style="width:31%" class="pro">Pour</th><th style="width:36%" class="con">Contre</th><th>Cubes rouges</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td class="k">Swap de loyers<small>spécifique, général ou à budget</small></td><td>Échange un flux de loyers contre un autre. Aucun capital, aucune dette. Lisse des revenus rares.</td><td>N'apporte pas de comptant. Le plafond vaut par visite, pas au total. Seule une entreprise tierce le déclenche.</td><td><span class="cubes" aria-label="aucun cube"></span><span class="cubes-lbl">aucun</span></td></tr>
+        <tr><td class="num">2</td><td class="k">Accord de compensation</td><td>Les loyers entre vous deux s'inscrivent au registre. Seul le solde net se paie, en fin d'année.</td><td><span class="num">250 K$</span> de frais chacun. Aucune sortie avant la fin d'année. L'intérêt frappe le débiteur, quel qu'il soit.</td><td><span class="cubes-lbl">aucun</span></td></tr>
+        <tr><td class="num">3</td><td class="k">Vendre une part ou des maisons</td><td>Comptant immédiat, sans dette ni intérêt. Améliore les ratios. Les maisons en réserve ne rapportent rien.</td><td>L'actif part pour de bon, avec son loyer. Si vous voulez le récupérer, hypothéquez plutôt.</td><td><span class="cubes-lbl">aucun</span></td></tr>
+        <tr><td class="num">4</td><td class="k">Demande d'emprunt<small>obligation, prêteurs joueurs</small></td><td>Jusqu'à <span class="num">5 M$</span> cumulés, prix fixé par le marché. La dette la mieux vue du jeu.</td><td>Retenue de <span class="num">5 à 40 %</span> des loyers jusqu'à <span class="num">1 à 2,5×</span>. Valable un seul lancer. Une offre garantie se déduit de la valeur nette du CEO.</td><td><span class="cubes" aria-hidden="true"><i class="maybe"></i></span><span class="cubes-lbl">0 à 1</span></td></tr>
+        <tr><td class="num">5</td><td class="k">Émission d'actions</td><td>Cours × quantité. Aucune dette, aucun intérêt, cote intacte. À faire quand le cours est haut.</td><td>Plafond de <span class="num">10 %</span> des parts, net des rachats. Du rouge à chaque fois, même pour une petite quantité.</td><td><span class="cubes" aria-hidden="true"><i class="on"></i><i class="maybe"></i></span><span class="cubes-lbl">1 à 2, plus la taille</span></td></tr>
+        <tr><td class="num">6</td><td class="k">Parts privilégiées</td><td>Jusqu'à <span class="num">5 M$</span> cumulés, hors dette : ratios et cote s'améliorent. Un an de répit pour payer.</td><td>Dividende annuel prioritaire. Impayé un an de plus : arriérage, cubes rouges et dividende ordinaire bloqué.</td><td><span class="cubes-lbl">aucun à l'émission</span></td></tr>
+        <tr><td class="num">7</td><td class="k">Subvention d'avance</td><td>Un salaire de Départ vendu d'avance : <span class="num">1,82 M$</span> pour la première. Aucun intérêt courant.</td><td>Décote croissante, jusqu'à <span class="num">38 %</span> à la cinquième. Le prochain passage au Départ ne rapporte rien.</td><td><span class="cubes" aria-hidden="true"><i class="on"></i><i class="maybe"></i></span><span class="cubes-lbl">1 à 2</span></td></tr>
+        <tr><td class="num">8</td><td class="k">Hypothèque</td><td><span class="num">50 %</span> du prix de base, en tout temps. Idéale pour un terrain isolé qui dort.</td><td><span class="num">35 %</span> par an, plus une prime selon votre endettement. La part ne touche plus aucun loyer. Intérêt impayé : saisie.</td><td><span class="cubes" aria-hidden="true"><i class="on"></i><i class="maybe"></i></span><span class="cubes-lbl">1 à 2</span></td></tr>
+        <tr><td class="num">9</td><td class="k" style="color:var(--red)">Prêt de dernier recours<small>trésorerie négative seulement</small></td><td><span class="num">10 M$</span> d'un clic, cumulables.</td><td><span class="num">20 M$</span> à rendre sur <span class="num">50 %</span> des loyers. Cours <span class="num">−20 %</span> immédiat. Baisses amplifiées pour toujours. Plus de nouveaux découverts sur votre titre, plus de sortie publique.</td><td><span class="cubes" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="maybe"></i><i class="maybe"></i><i class="maybe"></i><i class="maybe"></i></span><span class="cubes-lbl">6 à 10</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="grid3">
+      <div class="box">
+        <h3>Hors escalier · Titrisation (ABS)</h3>
+        <p><span class="pro"><b>Pour :</b></span> jusqu'à <span class="num">60 %</span> de votre part des loyers futurs vendus contre du capital. Ni dette, ni intérêt, ni cube. Construire reste permis.</p>
+        <p><span class="con"><b>Contre :</b></span> les terrains du panier sont verrouillés : ni vente, ni hypothèque, ni swap. Sans souscripteur senior, rien ne se fait.</p>
+      </div>
+      <div class="box">
+        <h3>Les trois questions</h3>
+        <p><b>1.</b> Puis-je échanger plutôt qu'emprunter ? <b>2.</b> Puis-je vendre un actif qui dort ? <b>3.</b> L'argent achètera-t-il quelque chose qui rapporte ?</p>
+        <p>Un « non » aux trois mène au bas de l'escalier. Il faut alors vendre, pas emprunter.</p>
+      </div>
+      <div class="box">
+        <h3>La cote de crédit</h3>
+        <p>De AAA à CCC−, en direct : endettement <span class="num">50 %</span>, couverture <span class="num">30 %</span>, défauts <span class="num">20 %</span>. Spéculatif dès BB+. D dès que la dette atteint les actifs.</p>
+        <p>Elle ne change aucun taux. C'est le filtre public des prêteurs.</p>
+      </div>
+    </div>
+
+    <div class="box warn">
+      <h3>Il vous faut 10 M$ : deux chemins</h3>
+      <div class="grid2">
+        <p><b>Par le marché.</b> <span class="num">5 M$</span> de prêt à 2×, deux hypothèques sur des terrains qui dorment et une avance. Environ <span class="num">15 M$</span> à rendre, 4 à 7 cubes rouges étalés dans le temps, cours intact.</p>
+        <p><b>Par le dernier recours.</b> <span class="num">20 M$</span> à rendre, 6 à 10 cubes d'un bloc, <span class="num">−20 %</span> de cours et une amplification que rien n'efface. Vous payez <span class="num">5 M$</span> de plus pour un seul clic.</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Monopoly Bourse · Aide-mémoire</span><span>Fiche 4 · Le financement, pour et contre</span></div>
+</section>
+
+</div>

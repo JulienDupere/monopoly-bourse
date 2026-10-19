@@ -11364,8 +11364,20 @@ function closeShortPosition(company, player, amount, _bypassTradingWindow){
   const price = company.stockPrice||0;
   if(!(price>0)) return {ok:false, error:'Le prix de l’action est invalide pour le moment.'};
   let qty = amount/price;
-  if(qty>pos.shares) qty = pos.shares; 
+  if(qty>pos.shares) qty = pos.shares;
   const effectiveAmount = qty*price;
+  // Section 307 — rachat VOLONTAIRE (appel sans _bypassTradingWindow, depuis l'interface) : comme tout achat volontaire
+  // (executeShareTrade, buyBonds, achat d'option…), l'encaisse personnelle doit couvrir le montant payé. Sans cette garde,
+  // « vendre à découvert -> placer en bons -> racheter » laissait une encaisse négative illimitée et gratuite, qui
+  // contournait le plafond de dette des bons. Les fermetures FORCÉES (appel de marge : _bypassTradingWindow=true) ne
+  // passent pas ici : elles peuvent toujours rendre l'encaisse négative (mécanisme existant).
+  if(!_bypassTradingWindow && effectiveAmount>(player.cash||0)+1e-9){
+    const cashNow = player.cash||0;
+    const maxAmount = Math.max(0, cashNow);
+    const maxShown = maxAmount>=1 ? Math.floor(maxAmount*100)/100 : Math.floor(maxAmount*1000)/1000; // arrondi vers le bas : le montant affiché est réellement rachetable
+    const maxQty = Math.floor((maxShown/price)*1e4)/1e4;
+    return {ok:false, error:`Encaisse personnelle insuffisante pour ce rachat : il coûte ${fmt(effectiveAmount)} (${fmtShares(qty)} part(s) à ${fmtPrice(price)}/part) et votre encaisse est de ${fmt(cashNow)}. Montant maximal rachetable avec l'encaisse actuelle : ${fmt(maxShown)} (${fmtShares(maxQty)} part(s)). Retirez des bons gouvernementaux ou vendez des actifs pour racheter davantage.`};
+  }
   
   
   

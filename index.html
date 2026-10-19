@@ -14363,23 +14363,26 @@ function resolveRevenueSwapListing(listing){
 
 
 
+// Section 307 — renvoie le montant RÉELLEMENT crédité au porteur (0 si montant négligeable ou porteur introuvable) :
+// l'appelant ne retire à l'émettrice que ce qui a effectivement été versé (conservation de la monnaie).
 function creditAbsHolder(holder, amount, entries, deal, trancheLabel){
-  if(amount<=1e-9) return;
+  if(amount<=1e-9) return 0;
   
   
   
   
   
-  holder.receivedSoFar = (holder.receivedSoFar||0) + amount;
   if(holder.holderType==='company'){
     const co = companyById(holder.holderId);
-    if(!co) return;
+    if(!co) return 0; // Section 307 — rien n'est versé : le montant reste à l'émettrice.
+    holder.receivedSoFar = (holder.receivedSoFar||0) + amount; // Section 307 — compté seulement s'il est versé.
     co.cash += amount;
     logFin(co.id, 'abs_income', amount);
     entries.push({label:`${co.name} (revenu ABS ${trancheLabel})`, amount});
   } else {
     const pl = state.players.find(p=>p.id===holder.holderId);
-    if(!pl) return;
+    if(!pl) return 0; // Section 307 — idem pour un porteur joueur introuvable.
+    holder.receivedSoFar = (holder.receivedSoFar||0) + amount; // Section 307
     pl.cash += amount;
     pl.cumAbsIncomeReceived = (pl.cumAbsIncomeReceived||0) + amount;
     state.absIncomePayments = state.absIncomePayments || [];
@@ -14388,21 +14391,29 @@ function creditAbsHolder(holder, amount, entries, deal, trancheLabel){
     if(state.absIncomePayments.length>50) state.absIncomePayments.splice(0, state.absIncomePayments.length-50);
     entries.push({label:`${pl.name} (revenu ABS ${trancheLabel})`, amount});
   }
+  return amount; // Section 307
 }
+// Section 307 — renvoie le montant RÉELLEMENT versé aux porteurs : la senior d'abord, jusqu'à son plafond, puis la
+// junior (porteurs tiers et rétention synthétique de l'émettrice). Ce qui n'est versé à AUCUN porteur (aucune tranche
+// junior, senior déjà servie, porteur introuvable) n'est pas prélevé : il reste à l'émettrice (section 275 point 5,
+// « le flux résiduel après la senior revient à l'émetteur »). Avant : rien n'était renvoyé et l'appelant retirait
+// toute la part cédée à l'émettrice, si bien que le reliquat disparaissait de la partie.
 function distributeAbsCashflow(deal, cededAmount, entries){
-  if(cededAmount<=1e-9) return;
+  if(cededAmount<=1e-9) return 0;
   let remaining = cededAmount;
+  let distributed = 0; // Section 307
   const seniorRemainingCap = Math.max(0, (deal.seniorCapTotal||0) - (deal.seniorPaidSoFar||0));
   const toSenior = Math.min(remaining, seniorRemainingCap);
   if(toSenior>1e-9 && deal.seniorRaised>1e-9){
-    (deal.seniorHolders||[]).forEach(h=>creditAbsHolder(h, toSenior*(h.amount/deal.seniorRaised), entries, deal, 'senior'));
+    (deal.seniorHolders||[]).forEach(h=>{ distributed += creditAbsHolder(h, toSenior*(h.amount/deal.seniorRaised), entries, deal, 'senior'); });
     deal.seniorPaidSoFar = (deal.seniorPaidSoFar||0) + toSenior;
     remaining -= toSenior;
   }
   if(remaining>1e-9){
     const juniorTarget = (deal.juniorHolders||[]).reduce((s,h)=>s+h.amount,0);
-    if(juniorTarget>1e-9) (deal.juniorHolders||[]).forEach(h=>creditAbsHolder(h, remaining*(h.amount/juniorTarget), entries, deal, 'junior'));
+    if(juniorTarget>1e-9) (deal.juniorHolders||[]).forEach(h=>{ distributed += creditAbsHolder(h, remaining*(h.amount/juniorTarget), entries, deal, 'junior'); });
   }
+  return distributed; // Section 307
 }
 
 
@@ -16834,8 +16845,10 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
         const full = c.amount;
         const normalResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, full, {onlyNormal:true}) : {net:full, totalWithheld:0, withholdings:[]};
         const cededAmount = full * revenueSwap.cededPctOfShare;
-        distributeAbsCashflow(revenueSwap, cededAmount, entries);
-        const residualAfterCession = Math.max(0, normalResult.net - cededAmount);
+        // Section 307 — seul le montant réellement versé aux porteurs quitte l'émettrice (et devient abs_interest_expense) ;
+        // la part cédée versée à personne (pas de junior, senior déjà servie) lui reste. Avant : cededAmount entier retiré.
+        const absPaidToHolders = distributeAbsCashflow(revenueSwap, cededAmount, entries);
+        const residualAfterCession = Math.max(0, normalResult.net - absPaidToHolders);
         const lastResortResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, residualAfterCession, {onlyLastResort:true}) : {net:residualAfterCession, totalWithheld:0, withholdings:[]};
         const totalWithheld = normalResult.totalWithheld + lastResortResult.totalWithheld;
         const allWithholdings = normalResult.withholdings.concat(lastResortResult.withholdings);
@@ -16846,7 +16859,7 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
         
         
         if(full>1e-9 || totalWithheld>1e-9){
-          splitCuts.push({companyId:c.companyId, amount:full, absCeded:cededAmount, viaSwap:false,
+          splitCuts.push({companyId:c.companyId, amount:full, absCeded:absPaidToHolders, viaSwap:false, // Section 307 — absCeded = versé aux porteurs
             net:lastResortResult.net, withheld:totalWithheld, withholdings:allWithholdings, _precomputedByAbs:true});
         }
         return;
@@ -17180,8 +17193,10 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
       const full = c.amount;
       const normalResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, full, {onlyNormal:true}) : {net:full, totalWithheld:0, withholdings:[]};
       const cededAmount = full * revenueSwap.cededPctOfShare;
-      distributeAbsCashflow(revenueSwap, cededAmount, entries);
-      const residualAfterCession = Math.max(0, normalResult.net - cededAmount);
+      // Section 307 — seul le montant réellement versé aux porteurs quitte l'émettrice (et devient abs_interest_expense) ;
+      // la part cédée versée à personne (pas de junior, senior déjà servie) lui reste. Avant : cededAmount entier retiré.
+      const absPaidToHolders = distributeAbsCashflow(revenueSwap, cededAmount, entries);
+      const residualAfterCession = Math.max(0, normalResult.net - absPaidToHolders);
       const lastResortResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, residualAfterCession, {onlyLastResort:true}) : {net:residualAfterCession, totalWithheld:0, withholdings:[]};
       const totalWithheld = normalResult.totalWithheld + lastResortResult.totalWithheld;
       const allWithholdings = normalResult.withholdings.concat(lastResortResult.withholdings);
@@ -17189,7 +17204,7 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
       
       
       if(full>1e-9 || totalWithheld>1e-9){
-        splitCuts.push({companyId:c.companyId, amount:full, absCeded:cededAmount, viaSwap:false,
+        splitCuts.push({companyId:c.companyId, amount:full, absCeded:absPaidToHolders, viaSwap:false, // Section 307 — absCeded = versé aux porteurs
           net:lastResortResult.net, withheld:totalWithheld, withholdings:allWithholdings, _precomputedByAbs:true});
       }
       return;

@@ -9,7 +9,8 @@
 //   eng.cashTotal();                                                // banque + entreprises + joueurs (hors bons et séquestres)
 //
 // Options : loadEngine({ firebase }) installe un faux SDK Firebase et retire window.storage, pour tester la branche
-// Firebase (saveGame, transactions). Les top-level `let` du moteur (state, gameCode…) sont visibles par run().
+// Firebase (saveGame, transactions). loadEngine({ transform }) modifie le code du moteur avant chargement
+// (contre-épreuve). Les top-level `let` du moteur (state, gameCode…) sont visibles par run().
 const fs = require('fs'), path = require('path'), vm = require('vm');
 
 function engineSource(){
@@ -61,7 +62,15 @@ function loadEngine(opts = {}){
   }
   sandbox.document = new Proxy({}, { get: (o, k) => (k in o ? o[k] : (k === 'querySelectorAll' ? (()=>[]) : (()=>fakeNode()))) });
   vm.createContext(sandbox);
-  vm.runInContext(engineSource(), sandbox, {filename: 'index.html#script'});
+  // opts.transform(src) permet une contre-épreuve : recharger le moteur avec un ancien comportement réintroduit,
+  // pour prouver qu'un test détecte bien la régression qu'il est censé verrouiller.
+  let src = engineSource();
+  if(opts.transform){
+    const before = src;
+    src = opts.transform(src);
+    if(src === before) throw new Error('Contre-épreuve : la transformation n’a rien modifié (motif introuvable)');
+  }
+  vm.runInContext(src, sandbox, {filename: 'index.html#script'});
   const run = (code) => vm.runInContext(code, sandbox);
   const json = (code) => JSON.parse(run(`JSON.stringify(${code})`));
 

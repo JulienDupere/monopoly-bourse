@@ -6,8 +6,8 @@ en français.
 
 ## Lire peu : chercher d'abord
 
-Ne JAMAIS lire en entier `index.html` (~930 Ko, ~250 k jetons), `RESUME_ET_REGLES.md` (~625 Ko, ~170 k jetons) ni
-les fichiers de `docs/audit/` (le JSON fait 1,7 Mo). Chercher avec Grep (`-n`), puis lire l'extrait utile avec Read
+Ne JAMAIS lire en entier `index.html` (~930 Ko, ~250 k jetons), `RESUME_ET_REGLES.md` (~60 Ko), son archive
+`RESUME_ET_REGLES_ARCHIVE_227-300.md` (~565 Ko, ~150 k jetons) ni les fichiers de `docs/audit/` (le JSON fait 1,7 Mo). Chercher avec Grep (`-n`), puis lire l'extrait utile avec Read
 `offset`/`limit`. Ne jamais se fier à un numéro de ligne noté quelque part : le retrouver par une recherche.
 
 | Pour trouver… | Motif Grep | Fichier |
@@ -15,13 +15,13 @@ les fichiers de `docs/audit/` (le JSON fait 1,7 Mo). Chercher avec Grep (`-n`), 
 | une fonction | `^(async )?function nomFonction\(` | `index.html` |
 | ses appels, ou un champ d'état | `nomFonction\(` ou `\.nomDuChamp\b` | `index.html` |
 | le code d'une livraison | `Section 307` (commentaire posé sur chaque changement) | `index.html` |
-| une section des règles | `^## 307\.` | `RESUME_ET_REGLES.md` |
+| une section des règles | `^## 307\.` | glob `RESUME_ET_REGLES*.md` (fichier principal et archive) |
 | le numéro de la dernière section | `^## [0-9]+\.` (dernier résultat) | `RESUME_ET_REGLES.md` |
-| l'historique d'une mécanique | `^## .*découvert` (titres seulement) | `RESUME_ET_REGLES.md` |
+| l'historique d'une mécanique | `^## .*découvert` (titres seulement) | glob `RESUME_ET_REGLES*.md` |
 | un bogue de l'audit | `^#### 42\.` | `docs/audit/audit-2026-10-19.md` |
 
 Seule exception : les sections 1 à 20 de `RESUME_ET_REGLES.md` (les ~310 premières lignes, ~20 Ko, avant le
-titre `## 227.`) peuvent se lire d'un bloc quand on touche une règle de base.
+titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 
 ## Infrastructure
 
@@ -38,8 +38,8 @@ titre `## 227.`) peuvent se lire d'un bloc quand on touche une règle de base.
   (JS vanilla, ~500 fonctions globales, tout le rendu en JS). Variante « légère » : peu de commentaires, beaucoup
   de lignes vides.
 - `RESUME_ET_REGLES.md` : la bible. Sections 1–20 = concept, modèle de données, règles de base (§17 bogues déjà
-  corrigés, §20 erreurs de raisonnement à éviter). Sections 227+ = une section par livraison. Les sections 21–226
-  sont dans `RESUME_ET_REGLES_ARCHIVE.md`, absent du dépôt. Les sous-titres « Code (`script_extracted.js`) » des
+  corrigés, §20 erreurs de raisonnement à éviter). Sections 301+ = une section par livraison. Sections 227–300
+  archivées dans `RESUME_ET_REGLES_ARCHIVE_227-300.md` ; 21–226 dans `RESUME_ET_REGLES_ARCHIVE.md`, absent du dépôt. Les sous-titres « Code (`script_extracted.js`) » des
   anciennes sections désignent aujourd'hui le script d'`index.html`.
 - `DEPLOY.md` : déploiement et historique des règles de sécurité Firebase. Son §2 décrit un ancien pipeline
   (`script_extracted.js`, `sync_script.py`, smoke tests) abandonné : ces fichiers n'existent plus.

@@ -7948,3 +7948,45 @@ bénéfice négatif → règle appliquée ; moins de 5 cubes disponibles → pla
 3 fois : **0 échec**. `node --check` du script : OK.
 
 **Documentation joueurs mise à jour** : cahiers 2, 4, 6 et 7 (PDF corrigés en place) et l'aide-mémoire.
+
+
+## 307. Correction des 6 bogues critiques et graves de l'audit du 2026-10-19
+
+Contexte : audit Opus du moteur (rapport `docs/audit/audit-2026-10-19.md`, 101 bogues confirmés). Demande explicite
+de l'utilisateur, verbatim : « Oui, corrige les 6 bogues critiques et graves, avec un test pour chacun, puis
+montre-moi le résultat avant de pousser. » Chaque correction a été faite dans une copie isolée, avec un test qui
+échoue sur l'ancien code et réussit sur le nouveau, puis attaquée par trois réviseurs ; leurs remarques ont donné
+une série de retouches. Chaque changement du code porte le commentaire « Section 307 ».
+
+1. **Titrisation (ABS) sans tranche junior** — `creditAbsHolder` et `distributeAbsCashflow` renvoient le montant
+   réellement versé aux porteurs ; `settlePropertyRent` et `settleNeutralPawnRent` ne retirent à l'émettrice que ce
+   montant. Ce qui n'est versé à aucun porteur reste à l'émettrice (rétention du risque, sections 275 et 277).
+   `abs_interest_expense` = montant réellement versé (section 304).
+2. **Parts privilégiées, annonces de vente** — nouvelle `reconcilePreferredListings` : une annonce ne porte jamais
+   plus de parts que le vendeur n'en détient (à la mise en vente, à l'achat, après un rachat). `callPreferredShares`
+   répartit le paiement sur la somme réelle des parts des porteurs : total versé = total débité, même dans une
+   partie déjà corrompue.
+3. **Rachat sans encaisse** — un rachat volontaire de découvert (`closeShortPosition`) ou d'option écrite
+   (`closeOptionPosition`, `closeOptionStrategy` en tout ou rien) exige l'encaisse, avec le maximum rachetable dans
+   le message. Les fermetures forcées (appel de marge) puisent d'abord dans les bons
+   (`raiseCashForForcedSettlement`, comme l'exercice forcé des sections 226-227). **Marge initiale** : ouvrir un
+   découvert, une option écrite ou une stratégie avec jambes écrites est refusé si, après l'ouverture simulée, la
+   valeur nette admissible est sous la marge exigée (`initialMarginCheck`, `maxContractsWithinInitialMargin`) ; les
+   positions couvertes, qui n'augmentent pas la marge exigée, restent permises. Le plafond de 15 % des options
+   écrites viendra avec la série suivante.
+4. **Dividendes quand la banque a une position négative** — décision de l'utilisateur : « la banque paie », comme un
+   vendeur à découvert. Montant par part = montant ÷ parts émises ; chaque porteur reçoit ce montant × ses parts
+   éligibles, calculées AU VERSEMENT (min(parts à l'annonce, parts au versement)). L'entreprise débite le montant
+   annoncé ; l'excédent réellement versé est payé par la banque (`settleBankDividendExcess`). Le CEO reçoit
+   exactement référence × parts à l'auto-versement (section 256).
+5. **Action rejouée après un rechargement** — `saveGame` : une transaction refusée avec un instantané distant vide
+   relit la valeur du serveur (`once('value')`), remplace `state`, puis renvoie `'conflict'` ; l'action n'est
+   réappliquée qu'une fois, sur l'état frais. Si le serveur ne renvoie rien, échec sans rejeu.
+6. **Impôt sur le revenu négatif** — `taxSquareCost` : impôt = min(2, max(0, 10 % de la valeur)).
+
+**Tests** : `tests/helpers/engine.js` (banc partagé), `tests/run-all.js` (lanceur), `tests/audit-bug1` à `bug6`
+et `bug3b`. **925 vérifications, 8 fichiers, 0 échec.** Une simulation de partie complète n'a trouvé aucune fuite
+d'argent due aux corrections.
+
+**Documentation joueurs à mettre à jour avec la série suivante** : cahier 1 (rachat de découvert, marge à
+l'ouverture), cahier 3 (rachat d'option écrite, marge), cahier 8 (part non versée), aide-mémoire fiche 2.

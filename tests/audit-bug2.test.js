@@ -222,6 +222,25 @@ scenarios.push(['Annonces héritées en excès (achat plafonné, migrateState)',
   ok(near(t.eng.cashTotal(), T0), `total du système conservé de bout en bout (${M(T0)} -> ${M(t.eng.cashTotal())})`);
 }]);
 
+// ---------- Section 307 — partie DÉJÀ corrompue (sauvegarde de l'ancien moteur) : parts fantômes chez les porteurs ----------
+// Le moteur d'avant le correctif a pu écrire des porteurs dont la somme dépasse qtyOutstanding (achat d'une annonce
+// périmée). Aucune réparation au chargement : c'est callPreferredShares qui répartit le rachat sur la somme RÉELLE des
+// parts des porteurs, pour que le total versé soit toujours égal au total débité à l'entreprise.
+scenarios.push(['Partie déjà corrompue (porteurs > parts en circulation) : rachat sans création d\'argent', async () => {
+  const t = await setup();
+  t.eng.run(`ISS().holders.push({playerId:P.Carol.id, qty:10000}); migrateState(state);`);
+  const sumHolders = () => t.holders().reduce((s, h) => s + h.q, 0);
+  ok(near(sumHolders(), 30000) && near(t.outstanding(), 20000), 'sauvegarde corrompue : porteurs 30 000 (Bob, Dave, Carol fantôme) pour 20 000 en circulation, laissée telle quelle au chargement');
+  const T0 = t.eng.cashTotal();
+  await t.callConserves(10000, 'rappel de 10 000 parts sur l\'émission corrompue');
+  ok(near(t.outstanding(), 10000), `il reste 10 000 parts en circulation (${t.outstanding()})`);
+  const b = t.held('Bob'), d = t.held('Dave'), c = t.held('Carol');
+  ok(near(b, d) && near(c, d), `chaque porteur est réduit dans la même proportion (Bob ${b}, Dave ${d}, Carol ${c})`);
+  await t.callConserves(10000, 'rappel du solde (10 000 parts)');
+  ok(near(t.outstanding(), 0) && t.holders().length === 0, 'rappel total : plus aucun porteur, plus aucune part fantôme sur l\'émission');
+  ok(near(t.eng.cashTotal(), T0), `total du système conservé de bout en bout (${M(T0)} -> ${M(t.eng.cashTotal())})`);
+}]);
+
 (async () => {
   const failures = [];
   for(const [name, fn] of scenarios){

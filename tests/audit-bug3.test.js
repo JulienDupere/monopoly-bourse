@@ -7,8 +7,11 @@
 //
 // Comportement voulu : un rachat VOLONTAIRE (sans _bypassTradingWindow, depuis l'interface) exige que l'encaisse
 // couvre le montant payé ; sinon il est refusé avec un message qui donne le montant maximal rachetable avec l'encaisse
-// actuelle. Les fermetures FORCÉES (appel de marge, _bypassTradingWindow) restent inchangées : elles peuvent rendre
-// l'encaisse négative.
+// actuelle. Les fermetures FORCÉES (appel de marge, _bypassTradingWindow) restent possibles sans encaisse ; depuis la
+// retouche de la section 307, elles vendent d'abord les bons du joueur (cascade des sections 226/227) et l'encaisse ne
+// devient négative que si les bons ne suffisent pas (voir aussi tests/audit-bug3b.test.js).
+// Section 307 — les découverts de 1 000 M$ de ces scénarios dépassent désormais la marge initiale : ils sont ouverts
+// comme des positions HÉRITÉES (legacy() neutralise la marge exigée le temps de l'ouverture) pour rejouer l'exploit.
 //
 // Lancer depuis la racine du dépôt :  node tests/audit-bug3.test.js
 const { loadEngine, check, near, engineSource } = require('./helpers/engine');
@@ -28,6 +31,8 @@ async function setup(){
            state.gameClock.rollCount = 3;
            drawStockCubes = function(){ return []; };
            resolveStockDraws = function(){ return {gameOver:false}; };
+           globalThis.legacy = function(fn){ const real = requiredMaintenanceMargin; requiredMaintenanceMargin = function(){ return 0; };
+             try { return fn(); } finally { requiredMaintenanceMargin = real; } };
            globalThis.snap = function(pl){
              const pos = pl.shortPositions && pl.shortPositions[B.id];
              const bankEntry = B.shareholders.find(s=>s.playerId==='BANK');
@@ -48,7 +53,7 @@ const sameSnap = (a, b) => ['cash', 'bonds', 'short', 'bank', 'bankShares', 'pnl
   const total0 = eng.cashTotal();
   let r = eng.json(`shortBonds(C, 1000)`);
   ok(!r.ok && /5\.00 M\$/.test(r.error), 'emprunt direct de 1 000 M$ en bons refusé au plafond de 5 M$ : « ' + r.error.slice(0, 80) + '… »');
-  r = eng.json(`openShortPosition(B, C, 1000)`);
+  r = eng.json(`legacy(()=>openShortPosition(B, C, 1000))`);
   ok(r.ok && near(eng.run(`C.cash`), 1050), 'vente à découvert de 1 000 M$ de Beta acceptée (encaisse 1 050 M$)');
   r = eng.json(`buyBonds(C, 1000)`);
   ok(r.ok && near(eng.run(`C.cash`), 50) && near(eng.run(`C.bondBalance`), 1000), 'placement de 1 000 M$ en bons accepté (encaisse 50 M$, bons 1 000 M$)');
@@ -81,7 +86,7 @@ const sameSnap = (a, b) => ['cash', 'bonds', 'short', 'bank', 'bankShares', 'pnl
   ok(!r.ok && /Montant maximal rachetable avec l'encaisse actuelle : 0 K\$/.test(r.error || ''), 'encaisse épuisée : même 1 K$ de rachat est refusé, maximum annoncé 0 K$');
   ok(eng.run(`requiredMaintenanceMargin(C)`) > 0, 'le reste du découvert reste ouvert : la marge exigée n’est plus nulle (' + eng.run(`requiredMaintenanceMargin(C)`).toFixed(2) + ' M$)');
 
-  // Fermeture FORCÉE (appel de marge) : inchangée, elle peut rendre l'encaisse négative.
+  // Fermeture FORCÉE (appel de marge) : toujours possible sans encaisse ; section 307 — les bons paient d'abord.
   ok(eng.run(`marginableNetWorth(C) < requiredMaintenanceMargin(C)`), 'Carl est sous la marge de maintien');
   before = eng.json(`snap(C)`); total1 = eng.cashTotal();
   eng.run(`globalThis.__logs = []; globalThis.__realLog = log; log = function(t, e){ __logs.push(String(t)); return __realLog(t, e); };`);
@@ -90,20 +95,20 @@ const sameSnap = (a, b) => ['cash', 'bonds', 'short', 'bank', 'bankShares', 'pnl
   after = eng.json(`snap(C)`);
   const forced = before.short * priceB;
   ok(after.short === 0 && eng.run(`!(C.shortPositions && C.shortPositions[B.id])`), 'appel de marge : la position restante est fermée de force');
-  ok(after.cash < 0 && near(after.cash, before.cash - forced, 1e-6), 'l’appel de marge rend l’encaisse négative (' + after.cash.toFixed(2) + ' M$), comme avant');
-  ok(near(after.bank - before.bank, forced, 1e-6), 'argent débité = argent crédité : banque +' + forced.toFixed(2) + ' M$');
+  ok(near(after.cash, 0, 1e-6) && near(after.bonds, before.bonds - (forced - before.cash), 1e-6), 'section 307 — l’appel de marge vend d’abord les bons : encaisse ' + after.cash.toFixed(2) + ' M$ (plus de dette gratuite), bons ' + before.bonds.toFixed(2) + ' → ' + after.bonds.toFixed(2) + ' M$');
+  ok(near(after.bank - before.bank, forced - (before.bonds - after.bonds), 1e-6), 'argent débité = argent crédité : banque +' + forced.toFixed(2) + ' M$ de rachat, −' + (before.bonds - after.bonds).toFixed(2) + ' M$ de bons remboursés');
   ok(near(eng.cashTotal(), total1, 1e-6), 'conservation pendant l’appel de marge');
   ok(eng.json(`__logs`).some(t => /Appel de marge AUTOMATIQUE/.test(t) && /Ce n'est PAS une décision du joueur/.test(t)), 'le journal annonce la fermeture FORCÉE');
 
   // ---------- 2. Sur une année : la manœuvre ne rapporte plus rien sans risque ----------
   console.log('2. Une année plus tard (6 lancers)');
   eng = await setup();
-  eng.run(`openShortPosition(B, C, 1000); buyBonds(C, 1000);`);
+  eng.run(`legacy(()=>openShortPosition(B, C, 1000)); buyBonds(C, 1000);`);
   r = eng.json(`closeShortPosition(B, C, ${MAX})`);
   ok(!r.ok, 'le rachat sans encaisse est refusé');
   eng.run(`advanceGameClock()`);
   ok(eng.run(`!(C.shortPositions && C.shortPositions[B.id])`), 'au lancer suivant, l’appel de marge ferme la position (chemin forcé, marché fermé)');
-  ok(eng.run(`C.cash`) < -950, 'encaisse après fermeture forcée et frais d’emprunt : ' + eng.run(`C.cash`).toFixed(2) + ' M$ (frais payés)');
+  ok(near(eng.run(`C.bondBalance`), 0, 1e-6) && eng.run(`C.cash`) > -40, 'section 307 — après frais d’emprunt et fermeture forcée, tous les bons ont été vendus d’abord ; l’encaisse n’est négative que du reste : encaisse ' + eng.run(`C.cash`).toFixed(2) + ' M$, bons ' + eng.run(`C.bondBalance`).toFixed(2) + ' M$');
   ok(eng.run(`C.cumInterestPaid||0`) > 0, 'Carl a payé ' + eng.run(`C.cumInterestPaid`).toFixed(2) + ' M$ de frais d’emprunt');
   for(let i = 0; i < 5; i++) eng.run(`advanceGameClock()`);
   const nw = eng.run(`netWorth(C)`);
@@ -112,7 +117,7 @@ const sameSnap = (a, b) => ['cash', 'bonds', 'short', 'bank', 'bankShares', 'pnl
   // ---------- 3. Variantes : levier long gratuit, et joueur CEO d'une autre entreprise ----------
   console.log('3. Variantes de la fiche');
   eng = await setup();
-  eng.run(`openShortPosition(B, C, 1000)`);
+  eng.run(`legacy(()=>openShortPosition(B, C, 1000))`);
   r = eng.json(`executeShareTrade(A, C, 'buy', 1000)`);
   ok(r.ok, 'Carl achète 1 000 M$ d’actions Alpha avec le produit du découvert');
   before = eng.json(`snap(C)`); total1 = eng.cashTotal();
@@ -122,7 +127,7 @@ const sameSnap = (a, b) => ['cash', 'bonds', 'short', 'bank', 'bankShares', 'pnl
 
   eng = await setup();
   const aliceCash = eng.run(`ALICE.cash`);
-  r = eng.json(`openShortPosition(B, ALICE, 1000)`);
+  r = eng.json(`legacy(()=>openShortPosition(B, ALICE, 1000))`);
   ok(r.ok, 'Alice, CEO d’Alpha, vend Beta à découvert pour 1 000 M$');
   r = eng.json(`buyBonds(ALICE, 1000)`);
   ok(r.ok, 'Alice place 1 000 M$ en bons');
@@ -160,20 +165,20 @@ const sameSnap = (a, b) => ['cash', 'bonds', 'short', 'bank', 'bankShares', 'pnl
   // ---------- 5. Fermeture forcée hors fenêtre de marché ----------
   console.log('5. Fermeture forcée (_bypassTradingWindow) hors fenêtre de marché');
   eng = await setup();
-  eng.run(`openShortPosition(B, C, 1000); buyBonds(C, 1000); state.gameClock.rollCount = 4;`);
+  eng.run(`legacy(()=>openShortPosition(B, C, 1000)); buyBonds(C, 1000); state.gameClock.rollCount = 4;`);
   ok(eng.run(`tradingWindowOpen()`) === false, 'lancer 4 : marché fermé');
   r = eng.json(`closeShortPosition(B, C, ${MAX})`);
   ok(!r.ok && /marché est fermé/.test(r.error || ''), 'rachat volontaire hors fenêtre : refusé pour marché fermé (inchangé)');
   before = eng.json(`snap(C)`); total1 = eng.cashTotal();
   r = eng.json(`closeShortPosition(B, C, ${MAX}, true)`);
   after = eng.json(`snap(C)`);
-  ok(r.ok && after.short === 0 && near(after.cash, -950, 1e-6), 'fermeture forcée de 1 000 M$ avec 50 M$ : acceptée, encaisse −950 M$ (mécanisme existant)');
-  ok(near(after.bank - before.bank, 1000, 1e-6) && near(eng.cashTotal(), total1, 1e-6), 'argent débité = argent crédité (1 000 M$), total conservé');
+  ok(r.ok && after.short === 0 && near(after.cash, 0, 1e-6) && near(after.bonds, 50, 1e-6), 'fermeture forcée de 1 000 M$ avec 50 M$ d’encaisse et 1 000 M$ de bons : acceptée, les bons paient le manque (encaisse 0, bons 50 M$ — section 307)');
+  ok(near(after.bank - before.bank, 1000 - 950, 1e-6) && near(eng.cashTotal(), total1, 1e-6), 'argent débité = argent crédité (1 000 M$ de rachat, 950 M$ de bons remboursés), total conservé');
 
   // ---------- 6. Chemin de l'interface : modalShortShares('close') ----------
   console.log('6. Interface : fenêtre « Racheter pour clôturer »');
   eng = await setup();
-  eng.run(`openShortPosition(B, C, 1000); buyBonds(C, 1000); myPlayerId = C.id;`);
+  eng.run(`legacy(()=>openShortPosition(B, C, 1000)); buyBonds(C, 1000); myPlayerId = C.id;`);
   const alerts = [];
   eng.sandbox.alert = (m) => { alerts.push(String(m)); };
   const ctl = {};

@@ -8546,17 +8546,18 @@ function processYearEnd(year){
   log(`L'année financière ${year} commence (2 semestres de 3 lancers de dés complétés) — intérêts hypothécaires, dividendes REIT, accords de compensation de loyer (réglés puis clôturés) et contrats d'assurance normale (expirés) traités.`);
 }
 
-// Section 307 — base de répartition d'un dividende ORDINAIRE (annoncé ou auto-versé) : les parts réellement détenues.
-// La banque peut vendre au-delà de son flottant (achats, assignation de puts écrits, exercice de calls) : sa position
-// devient alors négative (voulu, section 298) et les joueurs détiennent ensemble plus que sharesIssued. Répartir sur
-// sharesIssued versait alors plus que le montant débité à l'entreprise (argent créé à chaque dividende). La base est
-// max(sharesIssued, somme des positions positives — une position négative de la banque compte pour 0) : elle vaut
-// sharesIssued dans tous les autres cas (banque positive ou nulle, découverts seuls), donc rien n'y change ; en
-// surdétention, le total versé vaut exactement le montant débité.
-function dividendDistributionBasis(co){
-  const issued = co.sharesIssued || 0;
-  const heldPositively = (co.shareholders || []).reduce((s, h)=>s + Math.max(0, h.shares || 0), 0);
-  return Math.max(issued, heldPositively);
+// Section 307 — dividende ORDINAIRE (annoncé ou auto-versé) quand la banque a une position NÉGATIVE (elle a vendu au-delà
+// de son flottant : achats, assignation de puts écrits, exercice de calls — voulu, section 298) : « la banque paie »,
+// comme un vendeur à découvert. Le montant par part reste fixe (montant ÷ parts émises) et chaque porteur reçoit ce
+// montant × ses parts éligibles ; l'entreprise ne débite que le montant annoncé ; l'excédent versé (montant par part ×
+// parts détenues au-delà des parts émises) est payé par la banque depuis state.bank.cash. Ainsi :
+// total versé = débit net de l'entreprise + paiement de la banque, au centime près. Renvoie le montant payé.
+function settleBankDividendExcess(co, paidTotal, debited, entries){
+  const excess = paidTotal - debited;
+  if(!(excess>0)) return 0;
+  state.bank.cash -= excess;
+  if(excess>1e-9) entries.push({label:`Banque (paiement compensatoire — position négative sur ${co.name})`, amount:-excess});
+  return excess;
 }
 
 function forfeitPendingDividendAnnouncementsAtGameEnd(){
@@ -8651,9 +8652,10 @@ function advanceGameClock(){
       
       
       
-      // Section 307 — la base ne descend jamais sous les parts des détenteurs enregistrés : une annonce enregistrée par
-      // l'ancien code (base = sharesIssued) pendant que la banque était négative ne peut plus verser plus que son montant.
-      const totalSharesBasis = Math.max(ann.totalSharesAtAnnouncement || 0, totalRecordShares);
+      // Section 307 — montant par part FIXE : montant annoncé ÷ parts émises. Les parts éligibles se calculent AU
+      // VERSEMENT (min(parts à l'annonce, parts au versement)) ; si les porteurs détiennent plus que les parts émises
+      // (banque négative), la banque paie l'excédent (settleBankDividendExcess).
+      const perShare = ann.amount/(co.sharesIssued || ann.totalSharesAtAnnouncement || totalRecordShares);
       const entries = [];
       let paidTotal = 0;
       ann.recordHolders.forEach(rec=>{
@@ -8667,7 +8669,7 @@ function advanceGameClock(){
         
         const eligibleShares = Math.min(currentShares, rec.shares);
         if(eligibleShares>1e-9){
-          const cut = ann.amount * (eligibleShares/totalSharesBasis);
+          const cut = perShare*eligibleShares; // Section 307 — montant par part fixe
           const pl = state.players.find(x=>x.id===rec.playerId);
           if(pl){ pl.cash += cut; pl.cumDividendsReceived = (pl.cumDividendsReceived||0) + cut; paidTotal += cut; entries.push({label:`${pl.name} (dividende reçu — ${co.name})`, amount:cut}); }
         }
@@ -8679,7 +8681,8 @@ function advanceGameClock(){
         logFin(co.id, 'dividend_forfeited_return', unclaimed);
         entries.push({label:`${co.name} (portion de dividende non réclamée — retour trésorerie)`, amount:unclaimed});
       }
-      const dividendPerShare = ann.amount/totalSharesBasis;
+      const bankPaid = settleBankDividendExcess(co, paidTotal, ann.amount, entries); // Section 307 — la banque paie sa position négative
+      const dividendPerShare = perShare; // Section 307 — les découverts paient au même taux par part que les porteurs
       state.players.forEach(pl=>{
         const shortPos = pl.shortPositions && pl.shortPositions[ann.companyId];
         if(shortPos && shortPos.shares>1e-9){
@@ -8688,7 +8691,7 @@ function advanceGameClock(){
           entries.push({label:`${pl.name} (paiement compensatoire — position à découvert sur ${co.name})`, amount:-owed});
         }
       });
-      log(`${co.name} verse son dividende annoncé de ${fmt(ann.amount)} (annoncé au lancer #${ann.announcedAtRoll}) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non réclamé (actionnaire(s) ayant vendu depuis l'annonce)`:''}${totalSharesBasis>co.sharesIssued+1e-9?` (réparti sur ${fmtShares(totalSharesBasis)} parts détenues — position de la banque négative)`:''}.`, entries); // Section 307 — mention de la base élargie
+      log(`${co.name} verse son dividende annoncé de ${fmt(ann.amount)} (annoncé au lancer #${ann.announcedAtRoll}) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non réclamé (actionnaire(s) ayant vendu depuis l'annonce)`:''}${bankPaid>1e-9?`, dont ${fmt(bankPaid)} payé par la banque (position négative sur ${co.name})`:''}.`, entries); // Section 307 — mention du paiement de la banque
     });
     state.dividendAnnouncements = state.dividendAnnouncements.filter(a=>a.payAtRoll>state.gameClock.rollCount);
     
@@ -8719,13 +8722,13 @@ function advanceGameClock(){
           
           logFin(co.id, 'dividend_payout', -autoAmount, state.gameClock.rollCount-1);
           const realHolders = co.shareholders.filter(s=>s.playerId!=='BANK' && s.shares>1e-9);
-          // Section 307 — répartition sur les parts réellement détenues (voir dividendDistributionBasis) : jamais plus
-          // qu'autoAmount n'est versé, même quand la banque a une position négative.
-          const distributionBasis = dividendDistributionBasis(co);
+          // Section 307 — montant par part fixe = la référence : chaque porteur (le CEO compris, section 256) reçoit
+          // exactement référence × ses parts ; si la banque est négative, elle paie l'excédent (settleBankDividendExcess).
+          const perShare = co.dividendBenchmarkPerShare;
           const entries = [{label:`${co.name} (auto-versement de dividende)`, amount:-autoAmount}];
           let paidTotal = 0;
           realHolders.forEach(h=>{
-            const cut = autoAmount * (h.shares/distributionBasis); // Section 307 — base = parts réellement détenues
+            const cut = perShare*h.shares; // Section 307 — référence × parts
             const pl = state.players.find(x=>x.id===h.playerId);
             if(pl && cut>1e-9){ pl.cash += cut; pl.cumDividendsReceived = (pl.cumDividendsReceived||0)+cut; paidTotal += cut; entries.push({label:`${pl.name} (dividende auto-versé — ${co.name})`, amount:cut}); }
           });
@@ -8744,7 +8747,7 @@ function advanceGameClock(){
             logFin(co.id, 'dividend_forfeited_return', unclaimed, state.gameClock.rollCount-1);
             entries.push({label:`${co.name} (portion de dividende non versée — part de la banque, retour trésorerie)`, amount:unclaimed});
           }
-          const perShare = autoAmount/distributionBasis; // Section 307 — les découverts paient au même taux par part que les porteurs
+          const bankPaid = settleBankDividendExcess(co, paidTotal, autoAmount, entries); // Section 307 — la banque paie sa position négative
           state.players.forEach(pl=>{
             const shortPos = pl.shortPositions && pl.shortPositions[co.id];
             if(shortPos && shortPos.shares>1e-9){
@@ -8753,7 +8756,7 @@ function advanceGameClock(){
               entries.push({label:`${pl.name} (paiement compensatoire — position à découvert sur ${co.name})`, amount:-owed});
             }
           });
-          log(`${co.name} verse automatiquement son dividende de ${fmt(autoAmount)} (auto-versement activé, benchmark ${fmtPrice(co.dividendBenchmarkPerShare)}/part) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non versé (part de la banque, retourné en trésorerie)`:''}${distributionBasis>co.sharesIssued+1e-9?` (réparti sur ${fmtShares(distributionBasis)} parts détenues — position de la banque négative)`:''}.`, entries); // Section 307 — mention de la base élargie
+          log(`${co.name} verse automatiquement son dividende de ${fmt(autoAmount)} (auto-versement activé, benchmark ${fmtPrice(co.dividendBenchmarkPerShare)}/part) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non versé (part de la banque, retourné en trésorerie)`:''}${bankPaid>1e-9?`, dont ${fmt(bankPaid)} payé par la banque (position négative sur ${co.name})`:''}.`, entries); // Section 307 — mention du paiement de la banque
           co.dividendAutoPaySemesterIdx = semesterAfter;
         }
       }
@@ -11072,6 +11075,10 @@ async function callPreferredShares(companyId, issuanceId, qty, opts){
   co.cash -= amount;
   logFin(co.id, 'preferred_share_call_outflow', -amount);
   const ratio = qty/issuance.qtyOutstanding;
+  // Section 307 — le montant payé est réparti sur la somme RÉELLE des parts des porteurs (et non sur qtyOutstanding
+  // seul) : total versé = total débité à l'entreprise, même dans une partie sauvegardée qui contient déjà des parts
+  // fantômes (porteurs > parts en circulation, ancien bogue des annonces). Chaque porteur est réduit du même ratio.
+  const heldTotal = issuance.holders.reduce((s,h)=>s+Math.max(0, h.qty||0), 0);
   const entries = [{label:`${co.name} (rachat de ${fmtShares(qty)} part(s) privilégiée(s) @ ${fmtPrice(issuance.callPrice)})`, amount:-amount}];
   
   
@@ -11079,7 +11086,7 @@ async function callPreferredShares(companyId, issuanceId, qty, opts){
   
   issuance.holders.forEach(h=>{
     const reduced = h.qty*ratio;
-    const owed = reduced*issuance.callPrice;
+    const owed = heldTotal>1e-12 ? amount*(Math.max(0, h.qty||0)/heldTotal) : 0; // Section 307 — part du montant réellement débité
     const pl = state.players.find(p=>p.id===h.playerId);
     if(pl){ pl.cash += owed; entries.push({label:`${pl.name} (parts privilégiées rappelées — ${co.name})`, amount:owed}); }
     h.qty -= reduced;
@@ -11353,6 +11360,19 @@ function openShortPosition(company, player, amount){
   const price = company.stockPrice||0;
   if(!(price>0)) return {ok:false, error:'Le prix de l’action est invalide pour le moment.'};
   const qty = amount/price;
+  // Section 307 — marge initiale : le découvert ne s'ouvre que si la marge de maintien reste respectée APRÈS l'opération
+  // (sinon l'appel de marge le refermait au lancer suivant en laissant une dette gratuite face aux bons).
+  const marginSim = initialMarginCheck(player, p=>{
+    const ex = p.shortPositions[company.id];
+    if(ex) ex.shares += qty; else p.shortPositions[company.id] = {shares: qty, avgOpenPrice: price};
+    p.cash += amount;
+  });
+  if(!marginSim.ok){
+    const headroom = Math.max(0, marginableNetWorth(player) - requiredMaintenanceMargin(player));
+    const maxAmount = headroom/SHORT_MARGIN_MAINTENANCE_PCT;
+    const maxShown = maxAmount>=1 ? Math.floor(maxAmount*100)/100 : Math.floor(maxAmount*1000)/1000; // arrondi vers le bas : réellement ouvrable
+    return {ok:false, error:`Marge initiale insuffisante pour ce découvert de ${fmt(amount)} sur ${company.name} : après l'ouverture, la marge exigée serait de ${fmt(marginSim.reqAfter)} (${(SHORT_MARGIN_MAINTENANCE_PCT*100).toFixed(0)} % de la valeur notionnelle des positions à découvert / options écrites nues) pour une valeur nette admissible (hors parts de CEO) de ${fmt(marginSim.nwAfter)}. Montant maximal ouvrable : ${fmt(maxShown)}.`};
+  }
   let bankEntry = company.shareholders.find(s=>s.playerId==='BANK');
   if(!bankEntry){ bankEntry = {playerId:'BANK', shares:0}; company.shareholders.push(bankEntry); }
   bankEntry.shares -= qty; 
@@ -11401,7 +11421,7 @@ function closeShortPosition(company, player, amount, _bypassTradingWindow){
   // (executeShareTrade, buyBonds, achat d'option…), l'encaisse personnelle doit couvrir le montant payé. Sans cette garde,
   // « vendre à découvert -> placer en bons -> racheter » laissait une encaisse négative illimitée et gratuite, qui
   // contournait le plafond de dette des bons. Les fermetures FORCÉES (appel de marge : _bypassTradingWindow=true) ne
-  // passent pas ici : elles peuvent toujours rendre l'encaisse négative (mécanisme existant).
+  // passent pas ici : elles vendent d'abord les bons du joueur (voir plus bas), puis rendent l'encaisse négative au besoin.
   if(!_bypassTradingWindow && effectiveAmount>(player.cash||0)+1e-9){
     const cashNow = player.cash||0;
     const maxAmount = Math.max(0, cashNow);
@@ -11413,6 +11433,13 @@ function closeShortPosition(company, player, amount, _bypassTradingWindow){
   
   
   
+  // Section 307 — fermeture FORCÉE (appel de marge, _bypassTradingWindow) : même cascade que l'exercice forcé d'une
+  // option (sections 226 et 227) — 1) encaisse, 2) bons sans risque du joueur, 3) encaisse négative seulement si les
+  // bons ne suffisent pas. Sans elle, l'appel de marge laissait une dette gratuite face à un gros solde de bons.
+  if(_bypassTradingWindow){
+    const shortfall = effectiveAmount - (player.cash||0);
+    if(shortfall>1e-9) raiseCashForForcedSettlement(player, shortfall, `Rachat forcé d'un découvert (${company.name})`);
+  }
   player.cumRealizedPnl = (player.cumRealizedPnl||0) + (pos.avgOpenPrice-price)*qty;
   player.cash -= effectiveAmount;
   state.bank.cash += effectiveAmount;
@@ -11451,6 +11478,37 @@ function accrueShortBorrowFees(){
 }
 
 
+// Section 307 — marge initiale à l'ouverture d'un découvert ou d'une option écrite. simulate(p) applique l'ouverture
+// sur des COPIES des positions du joueur (encaisse comprise) ; on mesure marginableNetWorth et la marge exigée, puis on
+// restaure exactement l'état. Refus si, après l'opération, marginableNetWorth < requiredMaintenanceMargin — sauf si
+// l'ouverture n'augmente pas la marge exigée (covered call, cash-secured put, jambe écrite protégée par un spread) :
+// une ouverture couverte qui n'exige aucune marge reste toujours possible.
+function initialMarginCheck(player, simulate){
+  const reqBefore = requiredMaintenanceMargin(player);
+  const savedCash = player.cash;
+  const hadShorts = Object.prototype.hasOwnProperty.call(player, 'shortPositions'), savedShorts = player.shortPositions;
+  const hadOptions = Object.prototype.hasOwnProperty.call(player, 'optionPositions'), savedOptions = player.optionPositions;
+  player.shortPositions = {};
+  Object.keys(savedShorts||{}).forEach(k=>{ player.shortPositions[k] = Object.assign({}, savedShorts[k]); });
+  player.optionPositions = (savedOptions||[]).map(p=>Object.assign({}, p));
+  try {
+    simulate(player);
+    const reqAfter = requiredMaintenanceMargin(player);
+    const nwAfter = marginableNetWorth(player);
+    return {ok: nwAfter >= reqAfter-1e-9 || reqAfter <= reqBefore+1e-9, nwAfter, reqAfter, reqBefore};
+  } finally {
+    player.cash = savedCash;
+    if(hadShorts) player.shortPositions = savedShorts; else delete player.shortPositions;
+    if(hadOptions) player.optionPositions = savedOptions; else delete player.optionPositions;
+  }
+}
+// Section 307 — plus grand nombre entier de contrats k dans [0, upTo] dont l'ouverture respecte la marge initiale
+// (fits(k) est monotone : la marge exigée croît avec k, la valeur nette ne bouge pas).
+function maxContractsWithinInitialMargin(upTo, fits){
+  let lo = 0, hi = Math.max(0, Math.floor(upTo));
+  while(lo<hi){ const mid = Math.ceil((lo+hi)/2); if(fits(mid)) lo = mid; else hi = mid-1; }
+  return lo;
+}
 function requiredMaintenanceMargin(player){
   let requiredMargin = 0;
   const shortCoIds = player.shortPositions ? Object.keys(player.shortPositions).filter(coId=>player.shortPositions[coId].shares>1e-9) : [];
@@ -11952,6 +12010,20 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
   }
   const notional = optionNotional(shares, premium);
   const typeLabel = type==='call' ? 'CALL' : 'PUT';
+  // Section 307 — marge initiale pour une option ÉCRITE : simulation de l'écriture (fusion dans la position existante
+  // comme plus bas, prime encaissée) ; refus si la marge de maintien n'est plus respectée, avec le maximum ouvrable.
+  if(side==='short'){
+    const simulateWrite = (k)=>initialMarginCheck(player, p=>{
+      p.cash += optionNotional(k, premium);
+      const ex = p.optionPositions.find(pos=>pos.companyId===company.id && pos.type===type && pos.side===side && Math.abs(pos.strike-strike)<1e-9 && pos.expiryRoll===expiryRoll);
+      if(ex) ex.shares += k; else p.optionPositions.push({id:'__simulation__', companyId:company.id, type, side, strike, expiryRoll, shares:k, premiumAtOpen:premium});
+    });
+    const marginSim = simulateWrite(shares);
+    if(!marginSim.ok){
+      const maxContracts = maxContractsWithinInitialMargin(shares-1, k=>simulateWrite(k).ok);
+      return {ok:false, error:`Marge initiale insuffisante pour écrire ${shares} contrat(s) ${typeLabel} sur ${company.name} : après l'opération, la marge exigée serait de ${fmt(marginSim.reqAfter)} pour une valeur nette admissible (hors parts de CEO) de ${fmt(marginSim.nwAfter)}. Nombre maximal de contrats ouvrables : ${maxContracts}.`};
+    }
+  }
   const entries = [];
   
   
@@ -11991,7 +12063,9 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
   return {ok:true, entries, qty:shares};
 }
 
-function closeOptionPosition(player, positionId, shares, _bypassTradingWindow){
+// Section 307 — _cashPrechecked : appel interne de closeOptionStrategy, qui a déjà vérifié le flux NET de toutes les
+// jambes contre l'encaisse (la garde par jambe ne s'applique pas, pour ne jamais fermer une stratégie à moitié).
+function closeOptionPosition(player, positionId, shares, _bypassTradingWindow, _cashPrechecked){
   
   
   
@@ -12021,6 +12095,19 @@ function closeOptionPosition(player, positionId, shares, _bypassTradingWindow){
     entries.push({label:`${player.name} (vente de clôture — option ${typeLabel}, ${co.name})`, amount:notional});
     entries.push({label:`Banque (rachat de l'option ${typeLabel} — ${co.name})`, amount:-notional});
   } else {
+    // Section 307 — rachat VOLONTAIRE d'une option ÉCRITE : même garde que closeShortPosition, l'encaisse personnelle
+    // doit couvrir le rachat (sinon « écrire -> placer en bons -> racheter » laissait une dette gratuite illimitée).
+    if(!_bypassTradingWindow && !_cashPrechecked && notional>(player.cash||0)+1e-9){
+      const cashNow = player.cash||0;
+      const perContract = optionNotional(1, premium);
+      const maxContracts = perContract>0 ? Math.min(Math.floor(qty), Math.floor(Math.max(0, cashNow)/perContract)) : 0;
+      return {ok:false, error:`Encaisse personnelle insuffisante pour ce rachat : il coûte ${fmt(notional)} (${qty} contrat(s) ${typeLabel} à ${fmtPrice(premium)}/part) et votre encaisse est de ${fmt(cashNow)}. Maximum rachetable avec l'encaisse actuelle : ${maxContracts} contrat(s) (${fmt(maxContracts*perContract)}). Retirez des bons gouvernementaux ou vendez des actifs pour racheter davantage.`};
+    }
+    // Section 307 — rachat FORCÉ (appel de marge) : les bons du joueur paient d'abord le manque (sections 226 et 227).
+    if(_bypassTradingWindow){
+      const shortfall = notional - (player.cash||0);
+      if(shortfall>1e-9) raiseCashForForcedSettlement(player, shortfall, `Rachat forcé d'une option écrite (${co.name})`);
+    }
     player.cash -= notional;
     state.bank.cash += notional;
     player.cumOptionNetPremium = (player.cumOptionNetPremium||0) - notional;
@@ -12112,6 +12199,22 @@ function openOptionStrategy(company, player, kind, direction, strikeLow, strikeH
     return {ok:false, error:`Cette structure ne coûte rien et ne peut que rapporter (flux net à l'ouverture nul) — ce n'est pas un contrat valide.`};
   }
   if(netFlow<0 && (-netFlow)>player.cash+1e-9) return {ok:false, error:'Encaisse personnelle insuffisante pour ce débit net.'};
+  // Section 307 — marge initiale quand la stratégie contient des jambes écrites : simulation de toutes les jambes (une
+  // jambe écrite protégée par sa jambe achetée n'exige que la perte maximale du spread, éventuellement 0).
+  if(priced.some(l=>l.side==='short')){
+    const simulateStrategy = (k)=>initialMarginCheck(player, p=>{
+      priced.forEach((l, i)=>{
+        const nt = optionNotional(k, l.premium);
+        p.cash += (l.side==='short' ? nt : -nt);
+        p.optionPositions.push({id:'__simulation__'+i, companyId:company.id, type:l.type, side:l.side, strike:l.strike, expiryRoll, shares:k, premiumAtOpen:l.premium, strategyId:'__simulation__', strategyKind:kind, cashSettled:true});
+      });
+    });
+    const marginSim = simulateStrategy(contracts);
+    if(!marginSim.ok){
+      const maxContracts = maxContractsWithinInitialMargin(contracts-1, k=>simulateStrategy(k).ok);
+      return {ok:false, error:`Marge initiale insuffisante pour ${contracts} contrat(s) de ${OPTION_STRATEGY_LABELS[kind]} (${direction==='buy'?'achat':'vente'}) sur ${company.name} : après l'opération, la marge exigée serait de ${fmt(marginSim.reqAfter)} pour une valeur nette admissible (hors parts de CEO) de ${fmt(marginSim.nwAfter)}. Nombre maximal de contrats ouvrables : ${maxContracts}.`};
+    }
+  }
   const strategyId = uid();
   if(!player.optionPositions) player.optionPositions = [];
   priced.forEach(l=>{
@@ -12129,15 +12232,34 @@ function openOptionStrategy(company, player, kind, direction, strikeLow, strikeH
   return {ok:true, entries, strategyId, netFlow};
 }
 
+// Section 307 — clôture d'une stratégie : tout ou rien. Le flux NET de toutes les jambes (ventes des jambes achetées
+// moins rachats des jambes écrites) est calculé AVANT de fermer quoi que ce soit ; un débit net supérieur à l'encaisse
+// refuse toute la stratégie. Les jambes achetées sont fermées d'abord (leur crédit finance les jambes écrites).
 function closeOptionStrategy(player, strategyId){
+  if(!tradingWindowOpen()) return {ok:false, error:`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`};
+  if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
   const legs = (player.optionPositions||[]).filter(p=>p.strategyId===strategyId && p.shares>1e-9);
   if(legs.length===0) return {ok:false, error:'Stratégie introuvable ou déjà clôturée.'};
+  let credits = 0, debits = 0;
+  for(const leg of legs){
+    const co = companyById(leg.companyId);
+    if(!co) return {ok:false, error:'Entreprise introuvable.'};
+    const notional = optionNotional(leg.shares, optionPremiumFor(co, leg.type, leg.strike, leg.expiryRoll, leg.side==='short'));
+    if(leg.side==='short') debits += notional; else credits += notional;
+  }
+  const netDebit = debits - credits;
+  const cashNow = player.cash||0;
+  if(netDebit>cashNow+1e-9){
+    return {ok:false, error:`Encaisse personnelle insuffisante pour clôturer cette stratégie : débit net ${fmt(netDebit)} (rachat des jambes écrites ${fmt(debits)}, vente des jambes achetées ${fmt(credits)}) et votre encaisse est de ${fmt(cashNow)} — il manque ${fmt(netDebit-cashNow)}. Aucune jambe n'a été clôturée (jamais de clôture partielle d'une stratégie). Retirez des bons gouvernementaux ou vendez des actifs, puis réessayez.`};
+  }
   const entries = [];
   let qty = 0;
-  legs.forEach(leg=>{
-    const res = closeOptionPosition(player, leg.id, Number.MAX_SAFE_INTEGER);
-    if(res.ok){ entries.push(...res.entries); qty += res.qty; }
-  });
+  const ordered = legs.filter(l=>l.side==='long').concat(legs.filter(l=>l.side!=='long'));
+  for(const leg of ordered){
+    const res = closeOptionPosition(player, leg.id, Number.MAX_SAFE_INTEGER, false, true);
+    if(!res.ok) return {ok:false, error:res.error}; // défense en profondeur : impossible après les vérifications ci-dessus
+    entries.push(...res.entries); qty += res.qty;
+  }
   return {ok:true, entries, qty};
 }
 
@@ -12155,7 +12277,9 @@ function settleOptionStrategyLegCash(player, pos, company, intrinsic){
 
 
 
-function raiseCashForForcedSettlement(player, amountNeeded){
+// Section 307 — reasonLabel (facultatif) : libellé du journal pour les autres règlements forcés (rachat forcé d'un
+// découvert ou d'une option écrite par l'appel de marge) ; sans lui, le libellé historique de l'exercice d'option.
+function raiseCashForForcedSettlement(player, amountNeeded, reasonLabel){
   let remaining = amountNeeded;
   let raised = 0;
   if(remaining>1e-9 && (player.bondBalance||0)>1e-9){
@@ -12163,7 +12287,7 @@ function raiseCashForForcedSettlement(player, amountNeeded){
     player.bondBalance -= fromBonds;
     player.cash += fromBonds;
     state.bank.cash -= fromBonds;
-    log(`💰 Règlement forcé d'une option — vente automatique de ${fmt(fromBonds)} de bons sans risque pour ${player.name} (encaisse insuffisante à elle seule pour le livrable).`,
+    log(`💰 ${reasonLabel || "Règlement forcé d'une option"} — vente automatique de ${fmt(fromBonds)} de bons sans risque pour ${player.name} (encaisse insuffisante à elle seule pour le livrable).`,
       [{label:`${player.name} (vente automatique — bons sans risque)`, amount:fromBonds}, {label:`Banque (retrait versé — bons sans risque)`, amount:-fromBonds}]);
     remaining -= fromBonds;
     raised += fromBonds;
@@ -18343,7 +18467,7 @@ function modalAnnounceDividend(){
         id: uid(), companyId: co.id, amount,
         announcedAtRoll: state.gameClock.rollCount, payAtRoll,
         recordHolders: realHolders.map(h=>({playerId:h.playerId, shares:h.shares})),
-        totalSharesAtAnnouncement: dividendDistributionBasis(co), // Section 307 — parts réellement détenues (banque négative = 0)
+        totalSharesAtAnnouncement: co.sharesIssued, // Section 307 — montant par part fixe (montant ÷ parts émises) ; la banque paie sa position négative au versement
       });
       const entries = [{label:`${co.name} (dividende annoncé — immobilisé)`, amount:-amount}];
       log(`${co.name} annonce un dividende total de ${fmt(amount)}, immobilisé et versé au prochain semestre (dans ${rollsUntilSemesterEnd()} lancer(s)) aux actionnaires actuels, au prorata de LEUR participation À CE MOMENT.`, entries);

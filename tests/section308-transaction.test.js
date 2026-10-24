@@ -19,7 +19,11 @@ const ok = (cond, msg) => { check(cond, msg); n++; };
 function makeFakeServer(){
   const data = new Map();
   const clients = [];
-  const ctl = { failNext: {}, onTx: null };
+  // lostAck[client] = k : les k prochaines transactions sont ÉCRITES puis rejetées « disconnect » (accusé perdu) ;
+  // failCode : erreur des échecs failNext (« permission_denied » par défaut ; « disconnect » = non écrite) ;
+  // onceFails : la relecture once() est impossible (hors ligne).
+  const ctl = { failNext: {}, lostAck: {}, failCode: null, onceFails: false, onTx: null };
+  const reads = { once: 0 };
   const stats = { tx: [] };
   const tick = () => new Promise(r => setImmediate(r));
   const snap = v => ({ exists: () => v !== null && v !== undefined, val: () => (v === undefined ? null : v) });
@@ -34,7 +38,7 @@ function makeFakeServer(){
     clients.push(client);
     function ref(p){
       return {
-        once(){ return Promise.resolve(snap(cur(p))); },
+        once(){ reads.once++; return ctl.onceFails ? Promise.reject(new Error('hors ligne (simulé)')) : Promise.resolve(snap(cur(p))); },
         on(ev, cb){
           listeners.set(p, (listeners.get(p) || []).concat([cb]));
           queueMicrotask(() => { if(!(listeners.get(p) || []).includes(cb)) return; cache.set(p, cur(p)); cb(snap(cur(p))); });
@@ -45,6 +49,10 @@ function makeFakeServer(){
         remove(){ data.delete(p); clients.forEach(c => c.deliver(p, null)); return Promise.resolve(); },
         async transaction(fn, onComplete, applyLocally){
           const optimistic = applyLocally !== false;
+          if(client.pendingEcho && !(ctl.failNext[name] > 0)){   // connexion revenue : l'écouteur reçoit la valeur du serveur
+            const e = client.pendingEcho; client.pendingEcho = null;
+            cache.set(e.p, e.v); (listeners.get(e.p) || []).forEach(cb => cb(snap(e.v)));
+          }
           let input = cache.has(p) ? cache.get(p) : null;
           let out = fn(input);
           const entry = { client: name, result: null };
@@ -54,11 +62,18 @@ function makeFakeServer(){
           await tick();
           if(ctl.onTx) await ctl.onTx({ client: name, out, write: v => write(p, v), current: () => cur(p) });
           await tick();
+          if(ctl.lostAck[name] > 0 && cur(p) === input){
+            ctl.lostAck[name]--;
+            entry.result = 'écrit, accusé perdu';
+            data.set(p, out); clients.filter(c => c !== client).forEach(c => c.deliver(p, out));
+            client.pendingEcho = { p, v: out };   // l'auteur ne la reçoit qu'au retour de la connexion
+            throw new Error('disconnect');
+          }
           if(ctl.failNext[name] > 0){
             ctl.failNext[name]--;
             entry.result = 'échec réseau';
             if(optimistic) client.fireLocal(p, cur(p));
-            throw new Error('permission_denied (simulé)');
+            throw new Error(ctl.failCode || 'permission_denied (simulé)');
           }
           for(let i = 0; i < 25; i++){
             const now = cur(p);
@@ -78,7 +93,7 @@ function makeFakeServer(){
     };
   }
   const settle = async () => { for(let i = 0; i < 8; i++) await tick(); };
-  return { data, ctl, stats, sdk, write, cur, tick, settle };
+  return { data, ctl, stats, reads, sdk, write, cur, tick, settle };
 }
 
 const totalOf = s => (s.bank.cash || 0) + s.companies.reduce((t, c) => t + (c.cash || 0), 0) + s.players.reduce((t, p) => t + (p.cash || 0), 0);
@@ -139,6 +154,8 @@ const OLD_LISTENER = src => src
   .replace('}, undefined, false); // Section 308', '}); // Section 308')
   .replace('  if(actionsInFlight>0) return false;\r\n', '').replace('  if(actionsInFlight>0) return false;\n', '')
   .replace('if(typeof incoming.version===\'number\' && confirmedVersion!==null && incoming.version<confirmedVersion) return false;', '');
+const NO_IDEMPOTENCE_ON_CONFLICT = src => src.replace("if(saved==='conflict' && stateHasActionId(state, actionId))", 'if(false)');
+const NO_REREAD = src => src.replace("if(failure==='network' && maybeWritten && gen===actionGeneration){", 'if(false){');
 const NO_DEFERRAL = src => src.replace('  if(actionsInFlight>0) return false;\r\n', '').replace('  if(actionsInFlight>0) return false;\n', '');
 const NO_RESTORE_ON_REFUSAL = src => src.replace(
   'if(gen===actionGeneration) restoreActionBase(baseRaw, baseLocals); return res; }',
@@ -369,6 +386,47 @@ async function scenarioNetworkThenRetry(engineOpts){
       return inner;
     })`);
     ok(res && res.ok && eng.run('state.version') === v0 + 1, 'I : une seule sauvegarde pour l’action et son action imbriquée');
+  });
+
+  // =====================================================================================================
+  await scenario('J. Accusé de réception perdu : la transaction est écrite mais la réponse se perd (« disconnect »)', async () => {
+    const run = async (engineOpts, setupCtl) => {
+      const T = await setupFirebase(engineOpts);
+      const before = T.S();
+      const bob0 = before.players.find(p => p.id === T.ids[1]).cash;
+      setupCtl(T.server.ctl);
+      T.server.reads.once = 0;
+      const res = await T.eng.run(GIFT_CODE);
+      T.server.ctl.onceFails = false;
+      await T.server.settle();
+      const S = T.S();
+      return { T, res, before, bob0, bobS: S.players.find(p => p.id === T.ids[1]).cash, lines: S.log.filter(e => GIFT_RE.test(e.text)).length,
+        ids: (S.appliedActionIds || []).length, tx: T.server.stats.tx.map(t => t.result).join(', ') };
+    };
+    // J1 : accusé perdu une fois, l'essai suivant voit l'action déjà écrite.
+    let r = await run({}, c => { c.lostAck.B = 1; });
+    console.log(`    [J1] transactions : ${r.tx} | Bob ${r.bob0.toFixed(2)} → ${r.bobS.toFixed(2)}, ${r.lines} ligne(s) au journal`);
+    ok(r.res && r.res.ok === true && near(r.bobS, r.bob0 + 7) && r.lines === 1, 'J1 : action annoncée réussie et enregistrée UNE fois (+7 M$, avant le correctif : +14 M$)');
+    ok(near(totalOf(r.T.S()), totalOf(r.before)) && r.T.eng.run('lastSerialized') === r.T.server.cur(r.T.path), 'J1 : conservation de la monnaie, l’appareil correspond au serveur');
+    ok(r.ids >= 1 && r.ids <= 100, `J1 : l’identifiant de l’action est enregistré avec elle (appliedActionIds : ${r.ids})`);
+    const c1 = await run({ transform: NO_IDEMPOTENCE_ON_CONFLICT }, c => { c.lostAck.B = 1; });
+    console.log("    [J1 contre-épreuve] transactions : " + c1.tx + " | ok=" + (c1.res && c1.res.ok));
+    ok(near(c1.bobS, c1.bob0 + 14) && c1.lines === 2, `J1 : contre-épreuve — sans la clé d’idempotence, l’action est rejouée et enregistrée deux fois (+${(c1.bobS - c1.bob0).toFixed(2)} M$)`);
+    // J2 : accusé perdu, puis tous les essais échouent : la relecture du serveur trouve l'action.
+    r = await run({}, c => { c.lostAck.B = 1; c.failNext.B = 4; c.failCode = 'disconnect'; });
+    console.log(`    [J2] transactions : ${r.tx} | relectures : ${r.T.server.reads.once} | retour ok=${r.res && r.res.ok}`);
+    ok(r.res && r.res.ok === true && near(r.bobS, r.bob0 + 7) && r.lines === 1 && r.T.alerts.length === 0, 'J2 : la relecture trouve l’action sur le serveur : annoncée réussie, enregistrée une fois, aucun message d’échec');
+    ok(near(r.T.eng.json('state').players.find(p => p.id === r.T.ids[1]).cash, r.bob0 + 7), 'J2 : l’appareil adopte l’état du serveur (Bob +7 M$)');
+    const c2 = await run({ transform: NO_REREAD }, c => { c.lostAck.B = 1; c.failNext.B = 4; c.failCode = 'disconnect'; });
+    ok(c2.res && c2.res.ok === false && /PAS été enregistrée/.test(c2.res.error) && c2.lines === 1, 'J2 : contre-épreuve — sans la relecture, l’action est annoncée « PAS enregistrée » alors qu’elle l’est (fantôme)');
+    // J3 : idem, mais la relecture est impossible : message honnête, jamais « PAS enregistrée ».
+    r = await run({}, c => { c.lostAck.B = 1; c.failNext.B = 4; c.failCode = 'disconnect'; c.onceFails = true; });
+    console.log(`    [J3] retour : ${JSON.stringify({ ok: r.res.ok, reason: r.res.reason, uncertain: r.res.uncertain })} | « ${r.res.error.slice(0, 100)}… »`);
+    ok(r.res.ok === false && r.res.uncertain === true && r.res.reason === 'unknown' && /impossible de savoir/.test(r.res.error) && !/PAS été enregistrée/.test(r.res.error), 'J3 : relecture impossible : « impossible de savoir si votre action a été enregistrée », sans affirmer qu’elle ne l’est pas');
+    ok(r.lines === 1 && near(r.bobS, r.bob0 + 7), 'J3 : sur le serveur, l’action est bien là, une fois');
+    // J4 : refus définitif (permission_denied) : rien n'a pu être écrit, pas de relecture, « PAS enregistrée ».
+    r = await run({}, c => { c.failNext.B = 5; });
+    ok(r.res.ok === false && r.res.reason === 'network' && /PAS été enregistrée/.test(r.res.error) && r.T.server.reads.once === 0 && r.lines === 0, 'J4 : refus du serveur (permission_denied) : aucune relecture, « PAS enregistrée », rien sur le serveur');
   });
 
   if(failures.length){

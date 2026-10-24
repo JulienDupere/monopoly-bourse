@@ -100,7 +100,8 @@ const INSTALLER_TRACAGE = `(function(){
       return res;
     };
     return origTenter.call(this, enveloppe, o).then(
-      res => { ctx.appels[i] = !!(res && res.ok); return res; },
+      // Section 308 — accusé de réception perdu : issue « incertaine » quand le serveur n'a pas pu être relu.
+      res => { ctx.appels[i] = (res && res.uncertain) ? 'incertaine' : !!(res && res.ok); return res; },
       e => { ctx.appels[i] = 'exception'; throw e; });
   };
   const origHorloge = advanceGameClock;
@@ -362,6 +363,9 @@ function verifier(env){
           const nl = local ? compter(local.__banc, t) : 0;
           if(nl > 0) ajouter('FANTÔME_LOCAL', `${quoi} annoncée en échec mais présente dans la mémoire de ${ctx.app.client.nom}`);
         }
+      } else if(res === 'incertaine'){
+        // Annoncée « on ne sait pas si elle a été enregistrée » (serveur injoignable) : 0 ou 1 fois, jamais plus.
+        if(n > 1) ajouter('DOUBLÉE', `${quoi} d'issue incertaine mais appliquée ${n} fois sur le serveur`);
       } else {                                                        // 'en cours' : interrompue
         if(vivant) continue;                                          // déjà signalée NON_TERMINÉE
         if(n > 1) ajouter('DOUBLÉE', `${quoi} interrompue par un rechargement mais appliquée ${n} fois`);

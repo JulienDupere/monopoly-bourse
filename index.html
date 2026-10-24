@@ -7017,7 +7017,11 @@ function maybeResolveEtfAuctions(){
   const year = currentGameYear();
   state.etfs.forEach(etf=>{ if(etf.opened) resolveEtfAuction(etf, year); });
 }
-async function sellEtfUnits(etfId, sellerId, buyerId, pct, price){
+// Section 308 — bogue 57 : opts.expectedHeld = parts du vendeur affichées au moment du clic. Si elles ont changé
+// (la même vente vient d'être enregistrée — double clic —, ou un autre appareil a modifié la détention), la
+// vente est refusée au lieu d'être rejouée.
+async function sellEtfUnits(etfId, sellerId, buyerId, pct, price, opts){
+  opts = opts || {};
   
   
   
@@ -7027,6 +7031,7 @@ async function sellEtfUnits(etfId, sellerId, buyerId, pct, price){
     const buyer = companyById(buyerId);
     if(!seller || !buyer) return {ok:false, error:'Entreprise invalide.'};
     const held = seller.etfHoldings[etfId]||0;
+    if(typeof opts.expectedHeld==='number' && Math.abs(held-opts.expectedHeld)>1e-9) return {ok:false, error:`${seller.name} détient maintenant ${held}% du ${etfLabel(etfId)} (et non plus ${opts.expectedHeld}%) — la vente a peut-être déjà été enregistrée ; rien n'a été vendu, vérifiez avant de recommencer.`, code:'stale-etf-holding'};
     if(!(pct>0) || pct>held) return {ok:false, error:'Pourcentage invalide.'};
     seller.etfHoldings[etfId] = held-pct;
     buyer.etfHoldings[etfId] = (buyer.etfHoldings[etfId]||0) + pct;
@@ -12538,10 +12543,34 @@ function goAdvanceAmount(rank, company){
   const r = riskAdjustedRate(state.settings.goAdvanceRate, company);
   return 2 * Math.pow(1+r, -rank);
 }
-async function takeGoAdvance(companyId){
+// Section 308 — bogue 58 (décision de Julien) : la subvention d'avance n'est vendue qu'après une confirmation
+// explicite. La fenêtre fige le nombre de subventions dues à l'ouverture : une 2e confirmation (double clic, 2e
+// appareil) trouve un autre nombre et est refusée au lieu de vendre une 2e subvention.
+function modalConfirmGoAdvance(companyId){
+  const co = companyById(companyId);
+  if(!co) return;
+  const owed = co.goAdvancesOwed||0;
+  const rank = owed + 1;
+  const amount = goAdvanceAmount(rank, co);
+  const rate = riskAdjustedRate(state.settings.goAdvanceRate, co);
+  openModal(`
+    <h3>💸 Subvention d'avance — ${esc(co.name)}</h3>
+    <div class="small" style="margin-bottom:10px;">${esc(co.name)} vend sa ${rank}${rank===1?'re':'e'} subvention d'avance : elle reçoit <b>${fmt(amount)}</b> de la banque maintenant (taux ${(rate*100).toFixed(1)}%), et son ${rank}${rank===1?'er':'e'} passage sur GO futur ne lui versera aucun salaire. Des cubes rouges sont ajoutés à son action. Cette vente ne peut pas être annulée.</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mOk">Vendre la subvention (${fmt(amount)})</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', ()=>{ closeModal(); takeGoAdvance(companyId, {expectedOwed: owed}); });
+}
+async function takeGoAdvance(companyId, opts){
+  opts = opts || {};
   const res = await attemptActionWithRetry(async ()=>{
     const co = companyById(companyId);
     if(!co) return {ok:false};
+    if(Number.isInteger(opts.expectedOwed) && (co.goAdvancesOwed||0)!==opts.expectedOwed){ // Section 308 — bogue 58
+      return {ok:false, error:`${co.name} doit maintenant ${co.goAdvancesOwed||0} subvention(s) d'avance (au lieu de ${opts.expectedOwed} à l'ouverture de la fenêtre) — rien n'a été vendu ; rouvrez la fenêtre si vous voulez une autre subvention.`, code:'stale-go-advance'};
+    }
     if(state.settings.goAdvanceMax>0 && co.goAdvancesOwed>=state.settings.goAdvanceMax){
       return {ok:false, error:`${co.name} a déjà atteint le nombre maximal de subventions d'avance simultanées autorisé pour cette partie (${state.settings.goAdvanceMax}) — au moins un passage sur GO doit d'abord rembourser une subvention existante.`};
     }
@@ -12594,10 +12623,12 @@ async function sendToJail(companyId){
   const res = await attemptActionWithRetry(async ()=>{
     const co = companyById(companyId);
     if(!co) return {ok:false};
+    // Section 308 — bogue 60 : une entreprise déjà enquêtée ne l'est pas une 2e fois (double clic, 2e appareil).
+    if(co.inJail) return {ok:false, error:`${co.name} fait déjà l'objet d'une enquête de l'AMF — aucune nouvelle enquête n'est ouverte.`, code:'already-jailed'};
     applySendToJailEffect(co);
     return {ok:true};
   }, {label:'Envoi en prison (AMF)'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error) alert(res.error); render(); return res; }
   
   
   
@@ -15292,7 +15323,7 @@ function renderEtfCard(etf, isCreator){
   const totalHeld = etfTotalHeldPct(etf);
   const holders = state.companies.map(c=>({c, held:c.etfHoldings[etf.id]||0})).filter(x=>x.held>0.001);
   const myCo = myCompany();
-  const myHeld = myCo ? (myCo.etfHoldings[etf.id]||0) : 0;
+  const myHeld = myCo ? (myCo.etfHoldings[etf.id]||0) : 0; // Section 308 — bogue 57 : aussi porté par le bouton « Vendre » (data-etf-held)
   const inBidWindow = etf.opened && (state.gameClock.rollCount % 6 === 1);
   let statusHtml;
   if(!etf.opened){
@@ -15336,7 +15367,7 @@ function renderEtfCard(etf, isCreator){
         <div><label>Acheteur (une autre entreprise — jamais la banque)</label><select id="etfSellBuyer_${etf.id}">${state.companies.filter(c=>c.id!==myCo.id).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
         <div><label>Pourcentage</label><input type="number" min="0.1" max="${myHeld}" step="0.1" id="etfSellPct_${etf.id}" value="${Math.min(1,myHeld)}" style="width:100px;"></div>
         <div><label>Prix convenu (${esc(state.unit)})</label><input type="number" min="0" step="0.01" id="etfSellPrice_${etf.id}" value="0" style="width:140px;"></div>
-        <div><button class="btn btn-ghost btn-sm" data-etf-sell="${etf.id}">Vendre</button></div>
+        <div><button class="btn btn-ghost btn-sm" data-etf-sell="${etf.id}" data-etf-held="${myHeld}">Vendre</button></div>
       </div>
     ` : ''}
     ${etfChartHtml}
@@ -16130,7 +16161,7 @@ function bindTabEvents(t){
     const openSellHousesBtn = document.getElementById('openSellHousesBtn');
     if(openSellHousesBtn) openSellHousesBtn.addEventListener('click', modalSellHouses);
     
-    document.querySelectorAll('[data-go-advance]').forEach(b=>b.addEventListener('click', ()=>takeGoAdvance(b.dataset.goAdvance)));
+    document.querySelectorAll('[data-go-advance]').forEach(b=>b.addEventListener('click', ()=>modalConfirmGoAdvance(b.dataset.goAdvance))); // Section 308 — bogue 58 : confirmation explicite
     
     
     
@@ -16643,7 +16674,8 @@ function bindTabEvents(t){
       const buyerId = document.getElementById('etfSellBuyer_'+id).value;
       const pct = parseFloat(document.getElementById('etfSellPct_'+id).value)||0;
       const price = parseFloat(document.getElementById('etfSellPrice_'+id).value)||0;
-      sellEtfUnits(id, myCo.id, buyerId, pct, price);
+      const expectedHeld = parseFloat(b.dataset.etfHeld); // Section 308 — bogue 57 : détention affichée au moment du clic
+      sellEtfUnits(id, myCo.id, buyerId, pct, price, Number.isFinite(expectedHeld) ? {expectedHeld} : {});
     }));
   }
   

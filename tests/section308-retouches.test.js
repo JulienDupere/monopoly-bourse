@@ -8,17 +8,27 @@
 //      remplaçait par sa fenêtre de transaction (runModalActionWithRetry : closeModal(); render() ; buildHouse :
 //      render(); showTransactionPopup(...)) : jamais montrée.
 // R9 : une action en file qui échoue ne fait pas reculer seenDiceRollEventRoll (doublon de « Résultats du tour »).
+// R4 : action lancée hors ligne : avec le vrai SDK, la transaction attend la reconnexion sans limite ; tous les
+//      boutons d'action étaient ignorés sans message et rien n'était visible. Désormais : refus de lancer une action
+//      quand la connexion est connue comme coupée, indicateur « Enregistrement… / en attente du réseau », clic
+//      ignoré signalé ; l'action déjà en vol s'enregistre au retour de la connexion (voulu).
+// R5 : relecture après un accusé perdu : once('value') sur un chemin écouté répond depuis le cache local, qui peut
+//      ne pas contenir l'écriture ; « non écrite » n'est conclu que sur une version STRICTEMENT plus récente que la
+//      base de l'essai, sinon l'issue est incertaine (le faux SDK du banc est fidèle sur ce point).
+// R6 : issue incertaine dans une fenêtre : la fenêtre se ferme (OK actif invitait à recliquer → doublon possible).
+// R10 : appel imbriqué d'attemptActionWithRetry signalé par console.error.
 // R7 : champ qui enregistre au « change » (mDiscount) restauré après un rendu : le navigateur n'émet plus « change »
 //      à la sortie du champ (valeur posée par le code) ; la valeur affichée n'était jamais enregistrée.
 // R8 : fermer une fenêtre arme l'anti-rebond ; une fenêtre qui vient d'apparaître n'accepte aucun clic pendant
 //      500 ms ; une fenêtre qui se redessine elle-même ne relance pas l'anti-rebond.
-// (Les autres retouches sont ajoutées au fil des commits, un scénario par point.)
+// R11 (documentation seule, commentaire près d'adoptRemoteRaw) : pas de test.
 //
 // Appareils = moteurs (vm) avec le mini-DOM du banc (tests/helpers/fake-dom.js), complété ici pour les champs,
 // le focus et les événements. Contre-épreuve pour chaque correctif (loadEngine({transform})).
 // Lancer depuis la racine du dépôt :  node tests/section308-retouches.test.js
 const { loadEngine, check } = require('./helpers/engine');
 const { creerDocument } = require('./helpers/fake-dom');
+const { Reseau, mulberry32 } = require('./helpers/fake-firebase');
 
 let n = 0;
 const ok = (cond, msg) => { check(cond, msg); n++; };
@@ -111,6 +121,39 @@ async function partieSolo(opts = {}){
   return { shared, A, ids, code: A.run('gameCode'), serveur: () => JSON.parse(shared.get('game:' + A.run('gameCode'))) };
 }
 
+// --- Appareils sur le faux serveur Firebase du banc (tests/helpers/fake-firebase.js) --------------------------------
+function fausseDate(maintenant){
+  return class DateVirtuelle extends Date { constructor(...a){ if(a.length === 0) super(maintenant()); else super(...a); } static now(){ return maintenant(); } };
+}
+async function partieReseau(graine, transform){
+  const eng = loadEngine();
+  const ids = await eng.newGame(['Alice', 'Bob'], ['garp', 'garp']);
+  await eng.run('saveGame({silent:true})');
+  const code = eng.run('gameCode');
+  const R = new Reseau({ graine });
+  const chemin = 'data/game:' + code;
+  R.ecrireServeur(chemin, eng.mem.get('game:' + code));
+  return { R, code, chemin, ids, transform, serveur: () => JSON.parse(R.valeur(chemin)) };
+}
+function appareilReseau(env, nom, joueurId){
+  const client = env.R.creerClient(nom);
+  const doc = documentDeTest();
+  const ls = new Map([['mb:lastcode', env.code], ['mb:mychar:' + env.code, joueurId]]);
+  const M = Object.create(Math); M.random = mulberry32(env.R.entier(2 ** 31) + 1);
+  const alerts = [];
+  const eng = loadEngine({ firebase: client.firebase, transform: env.transform, globals: {
+    document: doc,
+    localStorage: { getItem: k => (ls.has(k) ? ls.get(k) : null), setItem: (k, v) => { ls.set(k, String(v)); }, removeItem: k => { ls.delete(k); } },
+    Math: M, Date: fausseDate(() => env.R.maintenant()),
+    setTimeout: client.setTimeout, setInterval: client.setInterval, clearTimeout: client.clearTimeout, clearInterval: client.clearInterval,
+    alert: m => alerts.push(String(m)), confirm: () => true,
+    Event: class { constructor(t){ this.type = t; } },
+    __FIREBASE_CONFIG__: { apiKey: 'cle-de-test', databaseURL: 'https://banc.invalid' },
+  } });
+  return { nom, client, doc, eng, alerts, run: c => eng.run(c), json: c => eng.json(c) };
+}
+const indicateur = app => { const el = app.doc.trouver('actionStatusIndicator'); return { visible: el.classList.contains('show'), horsLigne: el.classList.contains('offline'), texte: el.innerHTML }; };
+
 // --- Contre-épreuves ------------------------------------------------------------------------------------------------
 const ANNULER_LIBRE_PARTOUT = src => src.replace("return !!(b.closest && b.closest('#modalHost')) && /^(annuler|fermer|ok|×|✕)$/i.test((b.textContent||'').trim());", "return /^(annuler|fermer|ok|×|✕)$/i.test((b.textContent||'').trim());");
 const FERMETURE_SANS_ANTIREBOND = src => src.replace('  if(isModalOpen()) lastModalOpenMs = Date.now();\n', '');
@@ -120,6 +163,10 @@ const POINTEUR_IGNORE = src => src.replace('  if(pointerDeferRemainingMs(nowMs)>
 const SANS_CHANGE_A_LA_SORTIE = src => src.replace("if(el.value!==el.defaultValue && typeof el.dispatchEvent==='function' && typeof Event==='function') el.dispatchEvent(new Event('change', {bubbles:true}));", '');
 const RENDU_OUVRE_POPUP = src => src.replace('  scheduleDeferredPopups();\n  const tabs = visibleTabs();', '  maybeShowDiceRollTurnPopup(); maybeShowCeoAnnouncementExecutionPopup();\n  const tabs = visibleTabs();');
 const VU_RECULE = src => src.replace("if(typeof seenDiceRollEventRoll!=='number' || (typeof l.seenDiceRollEventRoll==='number' && l.seenDiceRollEventRoll>=seenDiceRollEventRoll)) seenDiceRollEventRoll = l.seenDiceRollEventRoll;", 'seenDiceRollEventRoll = l.seenDiceRollEventRoll;');
+const SANS_REFUS_HORS_LIGNE = src => src.replace('  if(window.storage || firebaseConnected!==false) return false;', '  return false;');
+const RELECTURE_NAIVE = src => src.replace('provenAbsent = typeof fresh.version===\'number\' && maybeWrittenBaseVersion!==null && fresh.version>maybeWrittenBaseVersion;', 'provenAbsent = true;');
+const FENETRE_RESTE_OUVERTE = src => src.replace('  if(res && res.uncertain){ closeModal(); if(res.error) alert(res.error); return res; }\n', '');
+const IMBRIQUE_WARN = src => src.replace("console.error('attemptActionWithRetry imbriqué : exécuté dans l’action en cours.');", "console.warn('attemptActionWithRetry imbriqué : exécuté dans l’action en cours.');");
 const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Date.now();\n', '  lastModalOpenMs = Date.now();\n');
 
 (async () => {
@@ -249,6 +296,127 @@ const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Dat
       console.log(`    [${variante}] action refusée : ${r.ok === false} ; seenDiceRollEventRoll après restauration : ${vu}`);
       if(variante === 'corrigé') ok(r.ok === false && vu === 5 && A.eng.cashTotal() === total0, 'R9 : l’action est annulée (monnaie intacte) mais seenDiceRollEventRoll ne recule pas (5)');
       else ok(vu === 4, 'R9 : contre-épreuve — l’ancienne restauration ramène seenDiceRollEventRoll à 4 (la fenêtre reviendrait)');
+    }
+  });
+
+  // =====================================================================================================
+  await scenario('R4. Connexion coupée : action refusée avec un message, indicateur visible, clic ignoré signalé', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const env = await partieReseau(404, variante === 'ancien' ? SANS_REFUS_HORS_LIGNE : undefined);
+      const A = appareilReseau(env, 'Alice', env.ids[0]);
+      await env.R.pomper();
+      const coB = A.run("state.companies.find(c=>c.name==='Co Bob').id");
+      await env.R.attendrePromesse(A.run(`attemptActionWithRetry(async ()=>{ state.players[0].pendingBids = [{id:'b1', companyId:${ESC(coB)}, price:1, qty:1, createdAt:'x', roll:0}]; return {ok:true}; })`));
+      await env.R.pomper();
+      A.run("closeModal(); activeTab = 'portefeuille'; render()");
+      const enLigne = A.run('firebaseConnected') === true && !indicateur(A).visible;
+      const cash0 = env.serveur().players[0].cash;
+      env.R.couper(A.client, 120000); await tick();
+      const coupe = A.run('firebaseConnected') === false;
+      // 1) Action lancée juste après la coupure (dans le délai de grâce) : en vol, elle attend la reconnexion.
+      const p1 = A.run(`globalThis.__r1 = null; attemptActionWithRetry(async ()=>{ state.players[0].cash += 1; state.bank.cash -= 1; return {ok:true}; }, {label:'Virement test'}).then(r=>{ __r1 = r; return r; })`);
+      await tick(10);
+      const ind1 = indicateur(A);
+      // 2) Clic sur un bouton d'action pendant l'envoi : ignoré, et signalé.
+      A.run('lastActionEndMs = 0; lastModalOpenMs = 0;');
+      const c = A.doc.cliquer('[data-cancel-bid]'); await c.promesse;
+      const ind2 = indicateur(A);
+      // 3) Trois secondes plus tard, toujours hors ligne : une nouvelle action n'est pas lancée.
+      env.R.temps += 3000;
+      const p2 = A.run(`globalThis.__r2 = null; attemptActionWithRetry(async ()=>{ state.players[0].cash += 5; state.bank.cash -= 5; return {ok:true}; }).then(r=>{ __r2 = r; return r; })`);
+      await tick(10);
+      const r2 = A.json('__r2'); const enVol = A.run('actionsInFlight'); const cashLocal = A.run('state.players[0].cash');
+      console.log(`    [${variante}] en ligne ${enLigne}, coupé ${coupe} ; action 1 en vol : indicateur « ${ind1.texte} » (visible ${ind1.visible}, rouge ${ind1.horsLigne}) ; clic : ${c.clic}, « ${ind2.texte} » ; action 2 : ${JSON.stringify(r2)}, actions en vol ${enVol}`);
+      if(variante === 'corrigé'){
+        ok(enLigne && coupe, 'R4 : « .info/connected » suivi (vrai en ligne, faux pendant la coupure)');
+        ok(ind1.visible && ind1.horsLigne && /en attente du réseau/.test(ind1.texte) && /Virement test/.test(ind1.texte), 'R4 : action en vol hors ligne : indicateur visible « ⏳ Enregistrement en attente du réseau (Virement test)… »');
+        ok(c.clic === 'bloqué' && /déjà en cours d’enregistrement/.test(ind2.texte), 'R4 : clic ignoré pendant l’envoi : signalé dans l’indicateur');
+        ok(r2 && r2.ok === false && r2.reason === 'offline' && /Pas de connexion au serveur : action non envoyée/.test(r2.error) && enVol === 1 && cashLocal === cash0 + 1, 'R4 : connexion coupée depuis plus de 2 s : action refusée tout de suite, message clair, rien de modifié ni mis en file');
+        const r1 = await env.R.attendrePromesse(p1); await env.R.pomper();
+        const S = env.serveur();
+        ok(r1.ok === true && S.players[0].cash === cash0 + 1 && A.run('firebaseConnected') === true && !indicateur(A).visible, 'R4 : à la reconnexion, l’action en vol s’enregistre une fois (+1), l’action refusée est absente (pas +5) ; indicateur masqué');
+        A.run('firebaseConnected = false; firebaseDisconnectedSinceMs = 0;');
+        ok(A.run('isKnownOffline()') === true, 'R4 : (contrôle) coupure connue depuis longtemps → refus');
+        const L = appareil(new Map());
+        ok(L.run('firebaseConnected = false; firebaseDisconnectedSinceMs = 0; isKnownOffline()') === false, 'R4 : mode local (window.storage) : jamais de refus « hors ligne »');
+      } else {
+        ok(r2 === null && enVol === 2, 'R4 : contre-épreuve — sans le refus, la 2e action part en file et attend la reconnexion sans limite');
+      }
+    }
+  });
+
+  // =====================================================================================================
+  await scenario('R5. Accusé perdu puis relecture depuis le cache local : issue incertaine, jamais « PAS enregistrée » à tort', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const env = await partieReseau(505, variante === 'ancien' ? RELECTURE_NAIVE : undefined);
+      const A = appareilReseau(env, 'Alice', env.ids[0]);
+      await env.R.pomper();
+      // a) La 1re écriture arrive sur le serveur, l'accusé et la valeur poussée sont perdus (cache local périmé) ; les
+      //    essais suivants échouent (« disconnect ») ; la connexion est revenue : la relecture répond depuis le cache.
+      A.eng.sandbox.__ecrireServeur = raw => env.R.ecrireServeur(env.chemin, raw);
+      A.run(`globalThis.__ecrit = false; saveGame = async function(){ saveFailureMaybeWritten = true; if(!__ecrit){ __ecrit = true; __ecrireServeur(JSON.stringify(Object.assign({}, state, {version: state.version + 1}))); } return false; }`);
+      const cash0 = env.serveur().players[0].cash;
+      const ra = await env.R.attendrePromesse(A.run(`attemptActionWithRetry(async ()=>{ state.players[0].cash += 7; state.bank.cash -= 7; return {ok:true}; })`));
+      const Sa = env.serveur();
+      // b) Contrôle : la valeur relue est plus récente (version de base + 1, écrite par un autre appareil) et ne contient
+      //    pas l'action : « PAS enregistrée » reste la bonne conclusion.
+      const env2 = await partieReseau(506, variante === 'ancien' ? RELECTURE_NAIVE : undefined);
+      const B = appareilReseau(env2, 'Alice', env2.ids[0]);
+      await env2.R.pomper();
+      B.eng.sandbox.__autreEcriture = () => { const s = env2.serveur(); s.bank.cash -= 2; s.players[1].cash += 2; s.version += 1; const raw = JSON.stringify(s); env2.R.ecrireServeur(env2.chemin, raw); B.client.vue.set(env2.chemin, raw); };
+      B.run(`globalThis.__ecrit = false; saveGame = async function(){ saveFailureMaybeWritten = true; if(!__ecrit){ __ecrit = true; __autreEcriture(); } return false; }`);
+      const rb = await env2.R.attendrePromesse(B.run(`attemptActionWithRetry(async ()=>{ state.players[0].cash += 7; state.bank.cash -= 7; return {ok:true}; })`));
+      console.log(`    [${variante}] a) serveur : Alice ${cash0} → ${Sa.players[0].cash} ; annonce : ${JSON.stringify({ ok: ra.ok, uncertain: ra.uncertain, reason: ra.reason })} | b) annonce : ${JSON.stringify({ ok: rb.ok, uncertain: rb.uncertain, reason: rb.reason })}`);
+      if(variante === 'corrigé'){
+        ok(Sa.players[0].cash === cash0 + 7 && ra.ok === false && ra.uncertain === true && ra.reason === 'unknown' && /impossible de savoir/.test(ra.error), 'R5 : écriture faite, cache périmé : issue incertaine (« impossible de savoir »), pas « PAS enregistrée »');
+        ok(A.run('state.players[0].cash') === cash0, 'R5 : l’appareil revient au dernier état enregistré qu’il connaît (la partie se mettra à jour au retour de la connexion)');
+        ok(rb.ok === false && !rb.uncertain && rb.reason === 'network' && rb.notSaved === true, 'R5 : valeur relue plus récente sans l’action : « PAS enregistrée » (preuve d’absence)');
+        // Fidélité du faux SDK (en-tête de tests/helpers/fake-firebase.js) : once() depuis le cache d'un chemin écouté.
+        const C = appareilReseau(env2, 'Carl', env2.ids[1]);
+        await env2.R.pomper();
+        const avant = env2.R.valeur(env2.chemin);
+        const s = JSON.parse(avant); s.version += 1; env2.R.ecrireServeur(env2.chemin, JSON.stringify(s));   // écrit sans pousser
+        const lu = await env2.R.attendrePromesse(C.run(`firebase.database().ref(${ESC(env2.chemin)}).once('value').then(x=>x.val())`));
+        env2.R.ecrireServeur('data/autre', 'valeur-serveur');
+        const luSansEcoute = await env2.R.attendrePromesse(C.run(`firebase.database().ref('data/autre').once('value').then(x=>x.val())`));
+        env2.R.couper(C.client, 1000); await tick();
+        const infoCoupe = await env2.R.attendrePromesse(C.run(`firebase.database().ref('.info/connected').once('value').then(x=>x.val())`));
+        await env2.R.pomper();
+        const infoRetour = await env2.R.attendrePromesse(C.run(`firebase.database().ref('.info/connected').once('value').then(x=>x.val())`));
+        ok(lu === avant && luSansEcoute === 'valeur-serveur' && infoCoupe === false && infoRetour === true, 'R5 : faux SDK fidèle — once() sur un chemin écouté répond depuis le cache (même périmé), sinon depuis le serveur ; « .info/connected » faux pendant la coupure, vrai au retour');
+      } else {
+        ok(Sa.players[0].cash === cash0 + 7 && ra.ok === false && !ra.uncertain && ra.notSaved === true, 'R5 : contre-épreuve — relecture naïve : « PAS enregistrée » alors que le serveur a l’action (le joueur reclique : doublon)');
+      }
+    }
+  });
+
+  // =====================================================================================================
+  await scenario('R6. Issue incertaine dans une fenêtre : la fenêtre se ferme', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const T = await partieSolo(variante === 'ancien' ? { transform: FENETRE_RESTE_OUVERTE } : {});
+      const { A } = T;
+      A.run(`saveGame = async function(){ saveFailureMaybeWritten = true; return false; }; readServerGameRaw = async function(){ return {ok:false}; };`);
+      A.run(`openModal('<h3>Virement</h3><div id="mRetryStatus"></div><button id="mCancel">Annuler</button><button id="mOk">Confirmer le virement</button>'); document.getElementById('mOk').addEventListener('click', ()=>runModalActionWithRetry(async ()=>{ state.players[0].cash += 1; state.bank.cash -= 1; return {ok:true}; }));`);
+      await A.cliquer('#mOk');
+      const ouverte = A.doc.fenetreOuverte();
+      const okActif = ouverte && A.doc.trouver('mOk') && !A.doc.trouver('mOk').disabled;
+      console.log(`    [${variante}] fenêtre ouverte après l’issue incertaine : ${ouverte} (OK actif ${!!okActif}) ; alerte : ${A.alerts.join(' | ').slice(0, 90)}…`);
+      if(variante === 'corrigé') ok(!ouverte && A.alerts.some(m => /impossible de savoir/.test(m) && /se mettra à jour au retour de la connexion/.test(m)), 'R6 : la fenêtre se ferme, le message explique que la partie se mettra à jour au retour de la connexion');
+      else ok(ouverte && okActif, 'R6 : contre-épreuve — la fenêtre restait ouverte avec « Confirmer » actif (recliquer = nouvel identifiant, doublon possible)');
+    }
+  });
+
+  // =====================================================================================================
+  await scenario('R10. Appel imbriqué d’attemptActionWithRetry : console.error', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const T = await partieSolo(variante === 'ancien' ? { transform: IMBRIQUE_WARN } : {});
+      const errs = [], warns = [];
+      T.A.eng.sandbox.console = Object.assign(Object.create(console), { error: (...a) => errs.push(a.join(' ')), warn: (...a) => warns.push(a.join(' ')) });
+      const r = await T.A.run(`attemptActionWithRetry(async ()=>{ const inner = await attemptActionWithRetry(async ()=>{ state.bank.cash -= 1; state.players[0].cash += 1; return {ok:true}; }); return inner; })`);
+      const signale = errs.some(m => /imbriqué/.test(m));
+      console.log(`    [${variante}] action : ${r.ok} ; console.error : ${signale} ; console.warn : ${warns.some(m => /imbriqué/.test(m))}`);
+      if(variante === 'corrigé') ok(r.ok === true && signale, 'R10 : l’appel imbriqué s’exécute dans l’action englobante et est signalé par console.error');
+      else ok(!signale, 'R10 : contre-épreuve — avec console.warn, rien n’apparaît dans les erreurs');
     }
   });
 

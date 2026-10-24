@@ -291,6 +291,12 @@ tr:last-child td{border-bottom:none;}
 .tok{width:6px;height:6px;border-radius:50%;display:inline-block;border:1px solid #fff;}
 .sq.mine{box-shadow:inset 0 0 0 2px var(--gold);}
 .board-center{grid-row:2/11;grid-column:2/11;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.35);font-family:inherit;font-weight:800;text-transform:uppercase;font-size:15px;text-align:center;}
+/* Section 308 — retouche de la revue : indicateur d'enregistrement. Apparaît après 350 ms (pas de clignotement pour
+   une action rapide), tout de suite pour un message ponctuel (.now : clic ignoré) ; rouge brique hors ligne. */
+.action-status{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:60;max-width:min(92vw,520px);padding:8px 14px;border-radius:var(--radius-md);background:var(--ink);color:#fff;font-size:14px;line-height:1.4;box-shadow:0 8px 24px -6px rgba(17,24,39,0.4);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .15s ease,visibility 0s linear .15s;}
+.action-status.show{opacity:1;visibility:visible;transition:opacity .15s ease .35s,visibility 0s linear .35s;}
+.action-status.show.now{transition:opacity .1s ease,visibility 0s;}
+.action-status.offline{background:var(--brick);}
 .footer-note{color:var(--muted);font-size:11px;text-align:center;margin-top:30px;font-family:'IBM Plex Mono',monospace;}
 .tv-wrap{max-width:1100px;margin:0 auto;}
 .tv-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px;color:var(--ink);}
@@ -445,6 +451,9 @@ tr:last-child td{border-bottom:none;}
        qui vivaient auparavant à la fin de chaque fonction renderXxx() de script_extracted.js sont retirés
        (devenus inutiles, un seul suffit désormais). -->
   <div id="modalHost"></div>
+  <!-- Section 308 — retouche de la revue : indicateur d'enregistrement d'une action (hors de #app, au-dessus des
+       fenêtres) : « Enregistrement en cours… », « en attente du réseau », clic ignoré. -->
+  <div id="actionStatusIndicator" class="action-status" role="status" aria-live="polite"></div>
 </div>
 
 <script>
@@ -2334,6 +2343,9 @@ async function readServerGameRaw(){
     if(!db) return {ok:false};
     await firebaseAuthReady();
     // Hors ligne, le SDK répondrait avec son cache local (qui ne contient pas une écriture dont l'accusé est perdu).
+    // Section 308 — retouche de la revue : même en ligne, once('value') sur un chemin déjà écouté (startPolling)
+    // répond depuis ce cache ; l'appelant ne conclut donc « non écrite » que sur une version plus récente (voir
+    // runActionWithRetry).
     try{ const c = await db.ref('.info/connected').once('value'); if(c && c.val()===false) return {ok:false}; }catch(e){}
     const snap = await db.ref('data/'+firebaseSafeKey('game:'+gameCode)).once('value');
     return {ok:true, raw: (snap && snap.exists()) ? snap.val() : null};
@@ -2343,15 +2355,20 @@ function attemptActionWithRetry(applyFn, opts){
   if(actionApplyDepth>0){
     // Appel imbriqué (une applyFn qui appelle une autre action) : il fait partie de l'action englobante,
     // qui sauvegarde le tout ; le mettre en file bloquerait les deux.
-    console.warn('attemptActionWithRetry imbriqué : exécuté dans l’action en cours.');
+    // Section 308 — retouche de la revue : console.error (et non warn) pour repérer un futur mauvais usage.
+    console.error('attemptActionWithRetry imbriqué : exécuté dans l’action en cours.');
     return Promise.resolve().then(()=>applyFn());
   }
+  // Section 308 — retouche de la revue : connexion connue comme coupée : l'action n'est pas lancée (sinon elle
+  // attendrait la reconnexion sans limite, tous les boutons d'action ignorés). Rien n'est modifié.
+  if(isKnownOffline()) return Promise.resolve(offlineActionResult());
   const gen = actionGeneration;
   actionsInFlight++;
   const btn = takeClickedActionButton();
   if(btn) btn.disabled = true;
   const run = actionQueueTail.then(()=>runActionWithRetry(applyFn, opts||{}, gen));
   actionQueueTail = run.catch(()=>{});
+  updateActionStatusIndicator(); // Section 308 — retouche de la revue : « Enregistrement en cours… »
   return run.then(res=>{ finishAction(gen, btn, res); return res; }, err=>{ finishAction(gen, btn, null); throw err; });
 }
 function finishAction(gen, btn, res){
@@ -2359,6 +2376,7 @@ function finishAction(gen, btn, res){
   if(gen!==actionGeneration) return;
   actionsInFlight = Math.max(0, actionsInFlight-1);
   lastActionEndMs = Date.now();
+  updateActionStatusIndicator(); // Section 308 — retouche de la revue
   try{
     const applied = (actionsInFlight===0 && lastReceivedRaw && !shouldDeferRemoteState()) ? applyRemoteStateIfNewer(lastReceivedRaw) : false;
     // Action non enregistrée : l'écran repasse tout de suite au dernier état enregistré.
@@ -2374,9 +2392,11 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
   let baseRaw = null, baseLocals = null, failure = null;
   const actionId = newActionId(); // Section 308 — accusé de réception perdu
   let maybeWritten = false;
+  let maybeWrittenBaseVersion = null; // Section 308 — retouche de la revue : version de base la plus haute d'un essai peut-être écrit
   for(let attempt=1; attempt<=maxAttempts; attempt++){
     if(needsReapply){
       if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
+      if(attempt===1 && isKnownOffline()) return offlineActionResult(); // Section 308 — retouche de la revue : action en file, connexion coupée entre-temps
       if(attempt===1) adoptReceivedStateBeforeAction(); // Section 308 — C2 : revérifiée sur l'état à jour
       if(baseLocals) restoreActionLocals(baseLocals);
       baseRaw = JSON.stringify(state);
@@ -2398,7 +2418,12 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
     if(saved===true){ if(label) setMyActionStatus(label, 'confirmed'); return res; }
     failure = (saved==='conflict') ? 'conflict' : 'network';
     if(saved==='conflict' && stateHasActionId(state, actionId)){ if(label) setMyActionStatus(label, 'confirmed'); return res; } // déjà écrite (accusé perdu) : pas de rejeu
-    if(saved===false && saveFailureMaybeWritten) maybeWritten = true;
+    if(saved===false && saveFailureMaybeWritten){
+      maybeWritten = true;
+      // Section 308 — retouche de la revue : saveGame(false) laisse state intact : state.version est la base de cet essai.
+      const bv = (typeof state.version==='number') ? state.version : 0;
+      maybeWrittenBaseVersion = (maybeWrittenBaseVersion===null) ? bv : Math.max(maybeWrittenBaseVersion, bv);
+    }
     if(onRetry) onRetry(attempt, failure);
 
 
@@ -2410,6 +2435,7 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
   if(failure==='network' && maybeWritten && gen===actionGeneration){
     const read = await readServerGameRaw();
     if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
+    let provenAbsent = !!(read.ok && !read.raw); // partie introuvable sur le serveur : rien n'a pu être écrit
     if(read.ok && read.raw){
       const fresh = JSON.parse(read.raw);
       migrateState(fresh);
@@ -2418,8 +2444,13 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
         if(label) setMyActionStatus(label, 'confirmed');
         return res;
       }
+      // Section 308 — retouche de la revue : la valeur lue peut venir du cache local du SDK (once() sur un chemin
+      // écouté), sans l'écriture dont l'accusé s'est perdu. Elle ne prouve l'absence de l'action que si elle est
+      // STRICTEMENT plus récente que la base de tout essai peut-être écrit (une écriture de base b donne la version
+      // b+1 avec l'identifiant, que toutes les suivantes gardent) ; sinon l'issue reste incertaine.
+      provenAbsent = typeof fresh.version==='number' && maybeWrittenBaseVersion!==null && fresh.version>maybeWrittenBaseVersion;
     }
-    if(!read.ok){
+    if(!provenAbsent){
       if(label) setMyActionStatus(label, 'failed');
       restoreActionBase(baseRaw, baseLocals);
       return {ok:false, error:actionFailureMessage('unknown'), uncertain:true, reason:'unknown'};
@@ -2445,6 +2476,68 @@ function setMyActionStatus(label, status){
   if(!label) return;
   myLastActionStatus = {label, status, tsMs: Date.now()};
   updateMyActionStatusBar();
+  updateActionStatusIndicator(); // Section 308 — retouche de la revue
+}
+// Section 308 — retouche de la revue : connexion au serveur et indicateur d'enregistrement.
+// - firebaseConnected suit « .info/connected » (écouteur posé au démarrage de la synchro Firebase, jamais en mode
+//   window.storage) : true, false, ou null (inconnu : mode local, pas encore d'information).
+// - Une action n'est pas LANCÉE quand la connexion est connue comme coupée depuis OFFLINE_REFUSE_GRACE_MS (le
+//   délai laisse passer le « faux » initial du SDK avant sa première connexion, et une micro-coupure) : message
+//   clair, rien n'est modifié. Une action déjà en vol, elle, attend la reconnexion puis s'enregistre, rejouée et
+//   revérifiée sur l'état frais (voulu).
+// - #actionStatusIndicator montre « ⏳ Enregistrement en cours… » (ou « en attente du réseau ») tant qu'une action
+//   est en vol, et signale brièvement un clic ignoré parce qu'une action est en cours.
+const OFFLINE_REFUSE_GRACE_MS = 2000;
+const OFFLINE_ACTION_MESSAGE = 'Pas de connexion au serveur : action non envoyée, réessayez quand la connexion revient.';
+let firebaseConnected = null;
+let firebaseDisconnectedSinceMs = 0;
+let firebaseConnectedWatch = null;
+function watchFirebaseConnection(db){
+  if(firebaseConnectedWatch || !db) return;
+  try{
+    const ref = db.ref('.info/connected');
+    const callback = snap=>{
+      const v = snap ? snap.val() : null;
+      if(v===true) firebaseConnected = true;
+      else if(v===false){ if(firebaseConnected!==false) firebaseDisconnectedSinceMs = Date.now(); firebaseConnected = false; }
+      updateActionStatusIndicator();
+    };
+    ref.on('value', callback);
+    firebaseConnectedWatch = {ref, callback};
+  }catch(e){ console.error('Suivi de la connexion Firebase impossible :', e); }
+}
+function isKnownOffline(nowMs){
+  if(window.storage || firebaseConnected!==false) return false;
+  if(nowMs===undefined) nowMs = Date.now();
+  return nowMs - firebaseDisconnectedSinceMs >= OFFLINE_REFUSE_GRACE_MS;
+}
+function offlineActionResult(){ return {ok:false, error:OFFLINE_ACTION_MESSAGE, notSaved:true, reason:'offline'}; }
+const ACTION_STATUS_FLASH_MS = 2500;
+let actionStatusFlash = null; // {text, untilMs}
+function flashActionStatus(text){
+  actionStatusFlash = {text, untilMs: Date.now() + ACTION_STATUS_FLASH_MS};
+  updateActionStatusIndicator();
+  setTimeout(updateActionStatusIndicator, ACTION_STATUS_FLASH_MS + 50);
+}
+function actionStatusIndicatorState(nowMs){
+  if(nowMs===undefined) nowMs = Date.now();
+  const offline = !window.storage && firebaseConnected===false;
+  let main = '';
+  if(actionsInFlight>0){
+    const lbl = (myLastActionStatus && myLastActionStatus.status==='pending' && myLastActionStatus.label) ? ` (${myLastActionStatus.label})` : '';
+    main = offline ? `⏳ Enregistrement en attente du réseau${lbl} : votre action partira au retour de la connexion.` : `⏳ Enregistrement en cours…${lbl}`;
+  }
+  const flash = (actionStatusFlash && nowMs < actionStatusFlash.untilMs) ? actionStatusFlash.text : '';
+  return {main, flash, offline: offline && !!main};
+}
+function updateActionStatusIndicator(){
+  const el = (typeof document!=='undefined') ? document.getElementById('actionStatusIndicator') : null;
+  if(!el || !el.classList) return;
+  const s = actionStatusIndicatorState();
+  el.innerHTML = [s.main ? esc(s.main) : '', s.flash ? `<b>${esc(s.flash)}</b>` : ''].filter(Boolean).join('<br>');
+  el.classList.toggle('show', !!(s.main || s.flash));
+  el.classList.toggle('now', !!s.flash);
+  el.classList.toggle('offline', s.offline);
 }
 
 
@@ -6698,6 +6791,10 @@ function adoptRemoteRaw(raw){
   const incoming = JSON.parse(raw);
   // Section 308 — une valeur reçue AVANT notre dernière écriture (version plus basse) ne doit pas
   // ramener l'appareil en arrière : l'écouteur livrera la valeur à jour.
+  // Section 308 — retouche de la revue (limite connue) : une valeur de version plus basse qui serait vraiment la
+  // nouvelle valeur du serveur (restauration manuelle dans la console Firebase, réutilisation d'un code de partie)
+  // est ignorée jusqu'à la prochaine action de cet appareil (conflit : la transaction adopte la valeur du serveur)
+  // ou jusqu'au rechargement de la page. Aucun chemin du code ne produit ce cas : la version ne fait que monter.
   const confirmedVersion = rawGameVersion(lastSerialized);
   if(typeof incoming.version==='number' && confirmedVersion!==null && incoming.version<confirmedVersion) return false;
   state = incoming;
@@ -6738,6 +6835,7 @@ function startPolling(){
     return;
   }
   const generation = ++syncGeneration;
+  watchFirebaseConnection(db); // Section 308 — retouche de la revue : « .info/connected » (local au SDK, sans authentification)
   firebaseAuthReady().then(()=>{
     if(generation!==syncGeneration || !gameCode) return; // Section 305 — stopSync()/startPolling() rappelé entre-temps.
     const ref = db.ref('data/'+firebaseSafeKey('game:'+gameCode));
@@ -14185,6 +14283,10 @@ async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
     return {ok:false, error: String((e && e.message) || e)};
   }
   if(okBtn) okBtn.disabled = false;
+  // Section 308 — retouche de la revue : issue incertaine (accusé perdu, relecture impossible) : la fenêtre se ferme.
+  // Laissée ouverte avec « OK » actif, elle invitait à recliquer — nouvel identifiant d'action, donc doublon possible ;
+  // le message explique que la partie se mettra à jour au retour de la connexion.
+  if(res && res.uncertain){ closeModal(); if(res.error) alert(res.error); return res; }
   if(!res || !res.ok){ if(statusEl && res && (res.notSaved || res.uncertain)) statusEl.textContent = ''; if(res && res.error) alert(res.error); return res; } // Section 308
   closeModal(); render();
   return res;
@@ -16476,6 +16578,9 @@ if(typeof document!=='undefined' && document.addEventListener){
     if(!b) return;
     if(shouldIgnoreActionClick(Date.now(), actionsInFlight>0, Math.max(lastActionEndMs, lastModalOpenMs), true)){
       e.stopPropagation(); e.preventDefault();
+      // Section 308 — retouche de la revue : un clic ignoré parce qu'une action est en cours est signalé (le 2e clic
+      // d'un double clic, ignoré par l'anti-rebond après la fin de l'action, reste silencieux).
+      if(actionsInFlight>0) flashActionStatus('Une action est déjà en cours d’enregistrement : ce clic a été ignoré.');
       return;
     }
     lastClickedActionButton = {el:b, ms:Date.now()};
@@ -16573,6 +16678,7 @@ function confirmWithFreshConditions(o){
     try{ res = await o.run(fresh); }
     catch(e){ console.error('confirmWithFreshConditions — exception :', e); res = {ok:false, error:`Une erreur inattendue est survenue (${e && e.message ? e.message : e}).`}; }
     if(res && res.ok){ closeModal(); if(o.onDone) o.onDone(res); return res; }
+    if(res && res.uncertain){ closeModal(); if(res.error) alert(res.error); return res; } // Section 308 — retouche de la revue : comme runModalActionWithRetry
     if(res && res.code==='stale-conditions'){ repaint(); return res; }
     const b = document.getElementById('mOk');
     if(b) b.disabled = false;

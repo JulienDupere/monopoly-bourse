@@ -18,7 +18,13 @@
 //  - ref(chemin).on('value', cb) : demande d'écoute envoyée au serveur, qui répond par la valeur courante, puis
 //    pousse chaque nouvelle valeur. Le cache local d'un chemin n'existe que tant qu'un écouteur y est posé ET a reçu
 //    sa première valeur. off() retire l'écouteur ; sans écouteur, le cache est oublié.
-//  - ref.once('value') : lit la valeur du SERVEUR (aller-retour), jamais le cache.
+//  - ref.once('value') : comme le vrai SDK (once = écoute ponctuelle), répond depuis le CACHE du client quand un
+//    écouteur est actif sur le chemin et a déjà reçu sa valeur (cache rempli) — même pendant une coupure, et même si
+//    ce cache ne contient pas encore une écriture faite sur le serveur (accusé perdu) ; sinon lit la valeur du
+//    serveur (aller-retour, en attente pendant une coupure). [Section 308 — retouche de la revue : fidélité.]
+//  - ref('.info/connected') : chemin local, jamais envoyé au serveur ; on('value') et once('value') donnent l'état de
+//    la connexion du client (vrai au départ, faux pendant une coupure, de nouveau vrai à la reconnexion), et chaque
+//    changement est notifié aux écouteurs (de façon asynchrone). [Section 308 — retouche de la revue : fidélité.]
 //  - ref.transaction(fn, onComplete, applyLocally) :
 //      1re passe de fn sur le cache LOCAL (null tant que l'écouteur n'a rien reçu) ; fn renvoie undefined → abandon
 //      immédiat, résolu avec {committed:false, snapshot} de l'instantané local ; sinon la valeur part au serveur avec
@@ -109,6 +115,7 @@ class Reseau {
       prochainId: 1,
       stats: { transactions: 0, ecritures: 0, perimes: 0, abandonsLocaux: 0, refus: 0 },
       echecsAVenir: 0,                   // nombre de transactions que le serveur refusera
+      infoConnecte: [],                  // écouteurs de « .info/connected » (Section 308 — retouche de la revue)
     };
     client.firebase = this.fauxSdk(client);
     client.setTimeout = (fn, ms) => R.planifier(client, fn, ms, false);
@@ -136,8 +143,32 @@ class Reseau {
     };
   }
 
+  // Section 308 — retouche de la revue : « .info/connected », servi localement comme dans le vrai SDK.
+  refInfoConnecte(client){
+    const R = this;
+    return {
+      key: 'connected',
+      toString(){ return 'faux://.info/connected'; },
+      on(evenement, cb){
+        client.infoConnecte.push(cb);
+        Promise.resolve().then(() => { if(client.vivant && client.infoConnecte.includes(cb)) R.appelerInfo(client, cb); });
+        return cb;
+      },
+      off(evenement, cb){ client.infoConnecte = cb === undefined ? [] : client.infoConnecte.filter(x => x !== cb); },
+      once(){ return Promise.resolve().then(() => instantane(client.connecte)); },
+    };
+  }
+  appelerInfo(client, cb){
+    try{ cb(instantane(client.connecte)); }
+    catch(err){ this.erreursEcouteurs.push(`${client.nom} : écouteur .info/connected : ${err && err.stack || err}`); }
+  }
+  notifierConnexion(client){
+    for(const cb of client.infoConnecte.slice()) Promise.resolve().then(() => { if(client.vivant && client.infoConnecte.includes(cb)) this.appelerInfo(client, cb); });
+  }
+
   fausseRef(client, chemin){
     const R = this;
+    if(chemin === '.info/connected') return this.refInfoConnecte(client);
     return {
       key: chemin.split('/').pop(),
       toString(){ return 'faux://' + chemin; },
@@ -149,6 +180,12 @@ class Reseau {
       off(evenement, cb){ R.retirerEcouteur(client, chemin, cb); },
       once(evenement){
         if(evenement !== 'value') throw new Error('Faux SDK : once(« value ») seulement');
+        // Section 308 — retouche de la revue : écouteur actif et cache rempli → réponse depuis le cache, sans aller-retour.
+        if(client.ecouteurs.has(chemin) && client.vue.has(chemin)){
+          const v = R.visible(client, chemin).valeur;
+          R.noter(`${client.nom} : once(${chemin}) servi depuis le cache local (${resume(v)})`);
+          return Promise.resolve().then(() => instantane(v));
+        }
         return new Promise((resolve, reject) => R.envoyer(client, { type: 'lire', chemin, resolve, reject }));
       },
       set(v){ return new Promise((resolve, reject) => R.envoyer(client, { type: 'ecrire', chemin, valeur: norm(v), resolve, reject })); },
@@ -369,6 +406,7 @@ class Reseau {
     client.entrant.length = 0;
     for(const s of this.abonnes.values()) s.delete(client);
     client.connecte = false;
+    this.notifierConnexion(client);      // Section 308 — retouche de la revue : « .info/connected » passe à faux
     // Transactions envoyées : rejetées « disconnect » (le client ne sait pas si elles ont été écrites).
     const envoyees = client.requetes.filter(r => r.type === 'tx');
     client.requetes = client.requetes.filter(r => r.type !== 'ecoute' && r.type !== 'finEcoute' && r.type !== 'tx');
@@ -384,6 +422,7 @@ class Reseau {
   reconnecter(client){
     if(!client.vivant || client.connecte) return;
     client.connecte = true;
+    this.notifierConnexion(client);      // Section 308 — retouche de la revue : « .info/connected » repasse à vrai
     const ecoutes = [...client.ecouteurs.keys()].map(chemin => ({ type: 'ecoute', chemin, id: client.prochainId++, arrive: false }));
     client.requetes = ecoutes.concat(client.requetes);
     this.noter(`${client.nom} : reconnexion (${client.requetes.length} demande(s) à renvoyer)`);

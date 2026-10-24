@@ -2052,6 +2052,7 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
   pushHistorySnapshot(0); 
   await storageSet('game:'+code, JSON.stringify(s), true);
   gameCode = code; state = s;
+  resetActionQueue(); // Section 308
   await storageSet('mychar:'+code, players[0].id, false);
   await storageSet('lastcode', code, false);
   myPlayerId = players[0].id;
@@ -2073,6 +2074,7 @@ async function loadGame(code){
   state = JSON.parse(raw);
   migrateState(state);
   gameCode = code;
+  resetActionQueue(); // Section 308 — une partie (re)chargée repart avec une file d'actions vide.
   lastDiceResult = null; 
   lastDiceResults = null;
   const mp = await storageGet('mychar:'+code, false);
@@ -2160,7 +2162,9 @@ async function saveGame(opts){
   
   
   
-  const fbDb = firebaseDb();
+  // Section 308 — bogue 71 : en mode local (window.storage : tests, mode hors ligne), la sauvegarde ne passe
+  // JAMAIS par Firebase, même si le SDK est chargé (comme storageGet/storageSet et startPolling).
+  const fbDb = window.storage ? null : firebaseDb();
   if(gameCode && fbDb){
     await firebaseAuthReady(); // Section 305
     if(state.version===undefined) state.version = 0;
@@ -2181,7 +2185,7 @@ async function saveGame(opts){
         
         if(expectedRaw===null ? (currentVal!==null && currentVal!==undefined) : (currentVal!==expectedRaw)) return undefined;
         return rawToTry;
-      });
+      }, undefined, false); // Section 308 — bogue 74 : applyLocally=false, l'écouteur ne voit jamais une valeur non confirmée par le serveur.
     }catch(e){ txResult = null; }
     toggleSaveFailedWarning(txResult===null);
     if(txResult===null) return false; 
@@ -2246,7 +2250,7 @@ async function saveGame(opts){
   
   const ok = await storageSet('game:'+gameCode, raw, true);
   toggleSaveFailedWarning(ok===null);
-  if(ok===null) return false; 
+  if(ok===null){ state.version--; return false; } // Section 308 — rien n'est écrit : la version locale ne doit pas avancer.
   lastSerialized = raw;
   return true;
 }
@@ -2260,28 +2264,110 @@ function toggleSaveFailedWarning(show){
 
 
 
-async function attemptActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}={}){
+// Section 308 — enveloppe transactionnelle (bogues 44, 73, 74) :
+// - une seule action à la fois sur cet appareil : les appels suivants attendent leur tour dans une file
+//   (ex. plusieurs mises REIT d'une même fenêtre), aucun n'est perdu ;
+// - pendant une action, les valeurs reçues du serveur sont mises de côté (applyRemoteStateIfNewer) et
+//   appliquées à la fin : state n'est jamais remplacé en cours de calcul ;
+// - une action n'est adoptée que si sa sauvegarde réussit ; sur tout échec (applyFn refuse après avoir déjà
+//   modifié state, exception, réseau, conflits répétés), state revient à l'état d'avant l'application — le
+//   dernier état confirmé par le serveur (état local entre deux actions, ou valeur fraîche du serveur après
+//   un conflit) — et les globales locales du lancer sont restaurées.
+let actionQueueTail = Promise.resolve();
+let actionsInFlight = 0;
+let actionApplyDepth = 0;
+let actionGeneration = 0;
+let lastActionEndMs = 0;
+function resetActionQueue(){
+  actionGeneration++;
+  actionQueueTail = Promise.resolve();
+  actionsInFlight = 0;
+  actionApplyDepth = 0;
+}
+function snapshotActionLocals(){
+  return {lastDiceResult, lastDiceResults, lastNeutralPawnResults, seenDiceRollEventRoll};
+}
+function restoreActionLocals(l){
+  if(!l) return;
+  lastDiceResult = l.lastDiceResult; lastDiceResults = l.lastDiceResults;
+  lastNeutralPawnResults = l.lastNeutralPawnResults; seenDiceRollEventRoll = l.seenDiceRollEventRoll;
+}
+function restoreActionBase(baseRaw, baseLocals){
+  if(baseRaw!==null && JSON.stringify(state)!==baseRaw) state = JSON.parse(baseRaw);
+  restoreActionLocals(baseLocals);
+}
+function actionFailureMessage(reason, attempts, detail){
+  const tail = 'Votre action n’a PAS été enregistrée ; la partie affiche le dernier état enregistré.';
+  if(reason==='network') return `Connexion au serveur perdue (ou partie introuvable) — ${attempts} essai(s) d’enregistrement sans succès. ${tail} Vérifiez votre connexion puis recommencez.`;
+  if(reason==='exception') return `Une erreur inattendue est survenue pendant l’action${detail ? ` (${detail})` : ''}. ${tail}`;
+  if(reason==='reloaded') return `La partie a été rechargée pendant l’action. ${tail}`;
+  return `Conflits répétés : d’autres joueurs enregistrent en même temps — nouvel essai automatique fait ${attempts} fois sans succès. ${tail} Réessayez dans un instant.`;
+}
+function attemptActionWithRetry(applyFn, opts){
+  if(actionApplyDepth>0){
+    // Appel imbriqué (une applyFn qui appelle une autre action) : il fait partie de l'action englobante,
+    // qui sauvegarde le tout ; le mettre en file bloquerait les deux.
+    console.warn('attemptActionWithRetry imbriqué : exécuté dans l’action en cours.');
+    return Promise.resolve().then(()=>applyFn());
+  }
+  const gen = actionGeneration;
+  actionsInFlight++;
+  const btn = takeClickedActionButton();
+  if(btn) btn.disabled = true;
+  const run = actionQueueTail.then(()=>runActionWithRetry(applyFn, opts||{}, gen));
+  actionQueueTail = run.catch(()=>{});
+  return run.then(res=>{ finishAction(gen, btn, res); return res; }, err=>{ finishAction(gen, btn, null); throw err; });
+}
+function finishAction(gen, btn, res){
+  if(btn) btn.disabled = false;
+  if(gen!==actionGeneration) return;
+  actionsInFlight = Math.max(0, actionsInFlight-1);
+  lastActionEndMs = Date.now();
+  try{
+    const applied = (actionsInFlight===0 && lastReceivedRaw && !isLocalInputActive()) ? applyRemoteStateIfNewer(lastReceivedRaw) : false;
+    // Action non enregistrée : l'écran repasse tout de suite au dernier état enregistré.
+    if(!applied && res && res.notSaved && gameCode && state) render();
+  }catch(e){ console.error('Rafraîchissement après action impossible :', e); } // le résultat de l'action reste transmis à l'appelant
+}
+async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen){
   let res = null;
   let needsReapply = true;
+  let baseRaw = null, baseLocals = null, failure = null;
   for(let attempt=1; attempt<=maxAttempts; attempt++){
     if(needsReapply){
-      
-      
-      res = await applyFn();
-      if(!res || !res.ok) return res; 
+      if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
+      if(baseLocals) restoreActionLocals(baseLocals);
+      baseRaw = JSON.stringify(state);
+      baseLocals = snapshotActionLocals();
+      actionApplyDepth++;
+      try{ res = await applyFn(); }
+      catch(e){
+        console.error('Action interrompue par une exception — rien n’est enregistré :', e);
+        res = {ok:false, error:actionFailureMessage('exception', attempt, e && e.message ? e.message : String(e)), notSaved:true, reason:'exception'};
+      }
+      finally{ actionApplyDepth--; }
+      // {ok:false, persist:true} : refus dont le nettoyage (ex. annonce périmée retirée) doit être enregistré.
+      if((!res || !res.ok) && !(res && res.persist===true)){ if(gen===actionGeneration) restoreActionBase(baseRaw, baseLocals); return res; }
     }
+    if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
     if(label) setMyActionStatus(label, 'pending');
     const saved = await saveGame({silent:true});
-    if(saved===true){ if(label) setMyActionStatus(label, 'confirmed'); return res; } 
-    if(onRetry) onRetry(attempt);
-    
-    
-    
-    
+    if(saved===true){ if(label) setMyActionStatus(label, 'confirmed'); return res; }
+    failure = (saved==='conflict') ? 'conflict' : 'network';
+    if(onRetry) onRetry(attempt, failure);
+
+
+
+
     needsReapply = (saved==='conflict');
   }
   if(label) setMyActionStatus(label, 'failed');
-  return {ok:false, error:`Un autre appareil sauvegarde en continu — nouvel essai automatique fait ${maxAttempts} fois sans succès. Réessaie dans un instant.`};
+  // Après un conflit, saveGame a déjà remplacé state par la valeur du serveur : seules les globales locales
+  // sont à restaurer. Après un échec réseau, state porte encore l'action non enregistrée : on la retire.
+  if(gen===actionGeneration){
+    if(failure==='conflict') restoreActionLocals(baseLocals); else restoreActionBase(baseRaw, baseLocals);
+  }
+  return {ok:false, error:actionFailureMessage(failure, maxAttempts), notSaved:true, reason:failure};
 }
 
 
@@ -4413,8 +4499,8 @@ function renderEntreprise(){
   const readyActionHtml = company.inJail
     ? `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`
     : (company.ready
-        ? `<button class="btn btn-ghost btn-sm" data-cancel-ready="${company.id}">🔄 Annuler Tour Terminé</button>`
-        : (blockReadyForNegativeCash ? '' : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}">✅ Tour Terminé</button>`));
+        ? `<button class="btn btn-ghost btn-sm" data-cancel-ready="${company.id}" data-roll="${state.gameClock.rollCount}">🔄 Annuler Tour Terminé</button>`
+        : (blockReadyForNegativeCash ? '' : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}" data-roll="${state.gameClock.rollCount}">✅ Tour Terminé</button>`)); // Section 308 — data-roll : lancer affiché au moment du clic
 
   
   
@@ -6306,9 +6392,28 @@ function isLocalInputActive(){
   return false;
 }
 
+// Section 308 — version d'une valeur sérialisée (mise en cache : lastSerialized change peu souvent).
+let rawVersionCache = {raw:null, version:null};
+function rawGameVersion(raw){
+  if(!raw) return null;
+  if(rawVersionCache.raw!==raw){
+    let v = null;
+    try{ v = JSON.parse(raw).version; }catch(e){ v = null; }
+    rawVersionCache = {raw, version: typeof v==='number' ? v : null};
+  }
+  return rawVersionCache.version;
+}
 function applyRemoteStateIfNewer(raw){
+  // Section 308 — pendant une action de cet appareil, la valeur reçue attend la fin de l'action
+  // (finishAction l'applique) : state n'est jamais remplacé au milieu d'un calcul ou d'une sauvegarde.
+  if(actionsInFlight>0) return false;
   if(raw && raw !== lastSerialized){
-    state = JSON.parse(raw);
+    const incoming = JSON.parse(raw);
+    // Section 308 — une valeur reçue AVANT notre dernière écriture (version plus basse) ne doit pas
+    // ramener l'appareil en arrière : l'écouteur livrera la valeur à jour.
+    const confirmedVersion = rawGameVersion(lastSerialized);
+    if(typeof incoming.version==='number' && confirmedVersion!==null && incoming.version<confirmedVersion) return false;
+    state = incoming;
     migrateState(state);
     lastSerialized = raw;
     render();
@@ -6914,7 +7019,11 @@ function maybeResolveEtfAuctions(){
   const year = currentGameYear();
   state.etfs.forEach(etf=>{ if(etf.opened) resolveEtfAuction(etf, year); });
 }
-async function sellEtfUnits(etfId, sellerId, buyerId, pct, price){
+// Section 308 — bogue 57 : opts.expectedHeld = parts du vendeur affichées au moment du clic. Si elles ont changé
+// (la même vente vient d'être enregistrée — double clic —, ou un autre appareil a modifié la détention), la
+// vente est refusée au lieu d'être rejouée.
+async function sellEtfUnits(etfId, sellerId, buyerId, pct, price, opts){
+  opts = opts || {};
   
   
   
@@ -6924,6 +7033,7 @@ async function sellEtfUnits(etfId, sellerId, buyerId, pct, price){
     const buyer = companyById(buyerId);
     if(!seller || !buyer) return {ok:false, error:'Entreprise invalide.'};
     const held = seller.etfHoldings[etfId]||0;
+    if(typeof opts.expectedHeld==='number' && Math.abs(held-opts.expectedHeld)>1e-9) return {ok:false, error:`${seller.name} détient maintenant ${held}% du ${etfLabel(etfId)} (et non plus ${opts.expectedHeld}%) — la vente a peut-être déjà été enregistrée ; rien n'a été vendu, vérifiez avant de recommencer.`, code:'stale-etf-holding'};
     if(!(pct>0) || pct>held) return {ok:false, error:'Pourcentage invalide.'};
     seller.etfHoldings[etfId] = held-pct;
     buyer.etfHoldings[etfId] = (buyer.etfHoldings[etfId]||0) + pct;
@@ -6940,8 +7050,9 @@ async function sellEtfUnits(etfId, sellerId, buyerId, pct, price){
       [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:`${seller.name} (vente ${pct}%)`, amount:price}]);
     return {ok:true};
   }, {label:'Vente de parts REIT'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
   render();
+  return res;
 }
 
 function processEtfLap(){
@@ -11300,7 +11411,7 @@ async function buyPreferredSharesFromListing(listingId, buyerId, qty, opts){
   const sellerQty = (seller && sellerHolder) ? Math.max(0, sellerHolder.qty) : 0;
   if(!(sellerQty>1e-9)){
     state.preferredMarketListings = state.preferredMarketListings.filter(l=>l.id!==listingId);
-    return {ok:false, error:`${seller?seller.name:'Le vendeur'} ne détient plus aucune part de cette émission (rachetées ou déjà vendues) — l'annonce est retirée, aucun achat n'a eu lieu.`};
+    return {ok:false, persist:true, error:`${seller?seller.name:'Le vendeur'} ne détient plus aucune part de cette émission (rachetées ou déjà vendues) — l'annonce est retirée, aucun achat n'a eu lieu.`}; // Section 308 — persist : le retrait de l'annonce est enregistré malgré le refus.
   }
   if(!(qty>0) || qty>listing.qty+1e-9) return {ok:false, error:'Quantité invalide.'};
   // Section 307 — quantité transférée plafonnée à la détention réelle du vendeur ; l'acheteur ne paie que
@@ -12434,10 +12545,34 @@ function goAdvanceAmount(rank, company){
   const r = riskAdjustedRate(state.settings.goAdvanceRate, company);
   return 2 * Math.pow(1+r, -rank);
 }
-async function takeGoAdvance(companyId){
+// Section 308 — bogue 58 (décision de Julien) : la subvention d'avance n'est vendue qu'après une confirmation
+// explicite. La fenêtre fige le nombre de subventions dues à l'ouverture : une 2e confirmation (double clic, 2e
+// appareil) trouve un autre nombre et est refusée au lieu de vendre une 2e subvention.
+function modalConfirmGoAdvance(companyId){
+  const co = companyById(companyId);
+  if(!co) return;
+  const owed = co.goAdvancesOwed||0;
+  const rank = owed + 1;
+  const amount = goAdvanceAmount(rank, co);
+  const rate = riskAdjustedRate(state.settings.goAdvanceRate, co);
+  openModal(`
+    <h3>💸 Subvention d'avance — ${esc(co.name)}</h3>
+    <div class="small" style="margin-bottom:10px;">${esc(co.name)} vend sa ${rank}${rank===1?'re':'e'} subvention d'avance : elle reçoit <b>${fmt(amount)}</b> de la banque maintenant (taux ${(rate*100).toFixed(1)}%), et son ${rank}${rank===1?'er':'e'} passage sur GO futur ne lui versera aucun salaire. Des cubes rouges sont ajoutés à son action. Cette vente ne peut pas être annulée.</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="mCancel">Annuler</button>
+      <button class="btn btn-primary" id="mOk">Vendre la subvention (${fmt(amount)})</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', ()=>{ closeModal(); takeGoAdvance(companyId, {expectedOwed: owed}); });
+}
+async function takeGoAdvance(companyId, opts){
+  opts = opts || {};
   const res = await attemptActionWithRetry(async ()=>{
     const co = companyById(companyId);
     if(!co) return {ok:false};
+    if(Number.isInteger(opts.expectedOwed) && (co.goAdvancesOwed||0)!==opts.expectedOwed){ // Section 308 — bogue 58
+      return {ok:false, error:`${co.name} doit maintenant ${co.goAdvancesOwed||0} subvention(s) d'avance (au lieu de ${opts.expectedOwed} à l'ouverture de la fenêtre) — rien n'a été vendu ; rouvrez la fenêtre si vous voulez une autre subvention.`, code:'stale-go-advance'};
+    }
     if(state.settings.goAdvanceMax>0 && co.goAdvancesOwed>=state.settings.goAdvanceMax){
       return {ok:false, error:`${co.name} a déjà atteint le nombre maximal de subventions d'avance simultanées autorisé pour cette partie (${state.settings.goAdvanceMax}) — au moins un passage sur GO doit d'abord rembourser une subvention existante.`};
     }
@@ -12455,8 +12590,9 @@ async function takeGoAdvance(companyId){
       [{label:`${co.name} (subvention d'avance)`, amount:amount}, {label:'Banque', amount:-amount}]);
     return {ok:true};
   }, {label:'Subvention d\'avance GO'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
   render();
+  return res;
 }
 
 function jailedCompanyIds(){
@@ -12489,10 +12625,12 @@ async function sendToJail(companyId){
   const res = await attemptActionWithRetry(async ()=>{
     const co = companyById(companyId);
     if(!co) return {ok:false};
+    // Section 308 — bogue 60 : une entreprise déjà enquêtée ne l'est pas une 2e fois (double clic, 2e appareil).
+    if(co.inJail) return {ok:false, error:`${co.name} fait déjà l'objet d'une enquête de l'AMF — aucune nouvelle enquête n'est ouverte.`, code:'already-jailed'};
     applySendToJailEffect(co);
     return {ok:true};
   }, {label:'Envoi en prison (AMF)'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error) alert(res.error); render(); return res; }
   
   
   
@@ -12739,6 +12877,7 @@ async function rollDiceAndMove(companyId){
   
   let result = null;
   const res = await attemptActionWithRetry(async ()=>{
+    if(state.gameEndedReason) return {ok:false, error:gameEndedRollMessage(), code:'game-ended'}; // Section 308 — bogue 17 : revérifié sur l'état frais
     const co = companyById(companyId);
     if(!co) return {ok:false};
     
@@ -12786,17 +12925,29 @@ async function rollDiceAndMove(companyId){
   return result;
 }
 
-async function performRollForAllCompanies(){
-  
-  
+// Section 308 — bogues 17 et 59 : chaque action de tour porte le numéro du lancer qu'elle vise (celui affiché au
+// moment du clic) ; sans numéro, c'est le lancer courant au moment de l'appel.
+function turnExpectedRoll(v){ return Number.isInteger(v) ? v : state.gameClock.rollCount; }
+function gameEndedRollMessage(){
+  const r = state.gameEndedReason;
+  return r.reason==='maxDuration'
+    ? `La partie est terminée (durée maximale atteinte) — plus aucun lancer de dés n'est possible.`
+    : `La partie est terminée (${r.companyName} ${r.reason==='bankOwnsAll' ? `la banque possède désormais 100% de ses parts` : `a atteint 0 en bourse`}) — plus aucun lancer de dés n'est possible.`;
+}
+// Refus commun aux actions de tour, évalué DANS l'applyFn, donc sur l'état frais (et de nouveau après un conflit).
+function turnActionRefusal(expectedRoll){
+  if(state.gameEndedReason) return {ok:false, error:gameEndedRollMessage(), code:'game-ended'};
+  if(state.gameClock.rollCount!==expectedRoll) return {ok:false, error:'Ce lancer a déjà été joué — la partie est passée au tour suivant. Vérifiez l’écran avant d’agir à nouveau.', code:'stale-roll'};
+  return null;
+}
+// opts (Section 308) : expectedRoll (lancer visé), requireAllReady (lancer déclenché par le dernier « Tour Terminé » :
+// revérifie que toutes les entreprises qui lancent sont prêtes), auto (refus « déjà joué » / « pas toutes prêtes »
+// sans alerte), logLine (ligne de journal écrite dans la même action, ex. « Forcer le tour »).
+async function performRollForAllCompanies(opts){
+  opts = opts || {};
+  const expectedRoll = turnExpectedRoll(opts.expectedRoll);
   if(state.gameEndedReason){
-    const r = state.gameEndedReason;
-    
-    
-    const alertMsg = r.reason==='maxDuration'
-      ? `La partie est terminée (durée maximale atteinte) — plus aucun lancer de dés n'est possible.`
-      : `La partie est terminée (${r.companyName} ${r.reason==='bankOwnsAll' ? `la banque possède désormais 100% de ses parts` : `a atteint 0 en bourse`}) — plus aucun lancer de dés n'est possible.`;
-    alert(alertMsg);
+    if(!opts.auto) alert(gameEndedRollMessage());
     return null;
   }
   
@@ -12817,10 +12968,13 @@ async function performRollForAllCompanies(){
   
   let results = [], neutralPawnResults = [];
   const res = await attemptActionWithRetry(async ()=>{
-    
-    
-    
-    
+    const refusal = turnActionRefusal(expectedRoll); // Section 308 — bogue 17
+    if(refusal) return refusal;
+    if(opts.requireAllReady){
+      const mustBeReady = activeCompanies().filter(c=>!c.inJail);
+      if(mustBeReady.length===0 || !mustBeReady.every(c=>c.ready)) return {ok:false, error:'Toutes les entreprises ne sont plus prêtes — le lancer attend leur « Tour Terminé ».', code:'not-all-ready'};
+    }
+    if(opts.logLine) log(opts.logLine);
     const alreadyJailedBeforeThisTurn = activeCompanies().filter(c=>c.inJail);
     const rollers = activeCompanies().filter(c=>!c.inJail);
     
@@ -12913,7 +13067,11 @@ async function performRollForAllCompanies(){
     results = localResults; neutralPawnResults = localNeutralPawnResults;
     return {ok:true};
   }, {label:'Lancer les dés pour tous'});
-  if(!res.ok){ if(res.error) alert(res.error); return null; }
+  if(!res.ok){
+    const quiet = opts.auto && (res.code==='stale-roll' || res.code==='not-all-ready'); // Section 308 — un autre appareil a déjà lancé
+    if(res.error && !quiet) alert(res.error);
+    return null;
+  }
   render();
   return results;
 }
@@ -13167,6 +13325,7 @@ function showDiceRollTurnPopup(co, roll){
 }
 
 function modalForceNextTurn(){
+  const expectedRoll = state.gameClock.rollCount; // Section 308 — bogue 17 : lancer affiché à l'ouverture de la fenêtre
   openModal(`
     <h3>Forcer le prochain tour</h3>
     <div class="small" style="margin-bottom:10px;">Forcer le lancer de dés pour toutes les entreprises maintenant, même si certaines n'ont pas encore cliqué sur « Prêt » ? Le statut « Prêt » de toutes les entreprises sera quand même réinitialisé après ce lancer, comme pour un tour normal.</div>
@@ -13178,8 +13337,8 @@ function modalForceNextTurn(){
   document.getElementById('mOk').addEventListener('click', async ()=>{
     closeModal();
     try{
-      log(`⏩ L'administrateur force le lancer de dés pour toutes les entreprises (sans attendre que toutes soient « Prêtes »).`);
-      const results = await performRollForAllCompanies();
+      // Section 308 — bogue 17 : la ligne de journal est écrite dans l'action du lancer (plus hors enveloppe).
+      const results = await performRollForAllCompanies({expectedRoll, logLine:`⏩ L'administrateur force le lancer de dés pour toutes les entreprises (sans attendre que toutes soient « Prêtes »).`});
       if(results && results.length>0){
         const summary = results.map(r=>`${r.companyName}: ${r.d1}+${r.d2}=${r.total} (case ${r.oldPos}→${r.jailed?30:r.newPos}${r.jailed?', enquête AMF':''}${r.passedGo?', passe par GO':''})`).join('\n');
         alert(`Tour forcé — ${results.length} entreprise(s) ont lancé les dés :\n\n${summary}`);
@@ -13194,11 +13353,14 @@ async function rollDiceForAll(){
   return performRollForAllCompanies();
 }
 
-async function checkAllCompaniesReady(){
+// Section 308 — bogues 17 et 59 : expectedRoll = lancer visé par l'action qui déclenche ; le lancer revérifie sur
+// l'état frais que toutes les entreprises sont prêtes et que ce lancer n'a pas déjà été joué. Renvoie true si le
+// lancer a eu lieu (sinon l'appelant redessine).
+async function checkAllCompaniesReady(expectedRoll){
   const rollers = activeCompanies().filter(c=>!c.inJail);
   if(rollers.length===0 || !rollers.every(c=>c.ready)) return false;
-  await performRollForAllCompanies();
-  return true;
+  const results = await performRollForAllCompanies({expectedRoll: turnExpectedRoll(expectedRoll), requireAllReady:true, auto:true});
+  return results!==null;
 }
 
 
@@ -13216,10 +13378,16 @@ async function checkAllCompaniesReady(){
 
 
 
-async function markCompanyReady(companyId){
+// Section 308 — bogues 17 et 59 : expectedRoll = lancer affiché au moment du clic (data-roll). Refus si ce lancer a
+// déjà été joué ou si la partie est finie ; un 2e « Tour Terminé » sur une entreprise déjà prête est ignoré sans
+// rien enregistrer. Renvoie le résultat de l'action ({ok, error, code, triggered}).
+async function markCompanyReady(companyId, expectedRoll){
+  expectedRoll = turnExpectedRoll(expectedRoll);
   const res = await attemptActionWithRetry(async ()=>{
     const co = companyById(companyId);
     if(!co) return {ok:false, error:'Entreprise introuvable.'};
+    const refusal = turnActionRefusal(expectedRoll);
+    if(refusal) return refusal;
     if(myPlayerId!==co.ceoId) return {ok:false, error:`Seul le CEO de ${co.name} peut la déclarer prête pour le lancer de dés pour tous.`};
     if(co.inJail) return {ok:false, error:`${co.name} est enquêtée par l'AMF — elle ne participe pas au lancer de dés pour tous ce tour-ci.`};
     
@@ -13231,19 +13399,24 @@ async function markCompanyReady(companyId){
     
     
     if(co.cash<0 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`};
+    if(co.ready) return {ok:false, error:null, code:'already-ready'};
     co.ready = true;
     log(`${co.name} est prête pour le prochain lancer de dés pour tous.`);
     return {ok:true};
   }, {label:'Prêt pour le lancer de dés'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error) alert(res.error); if(res.code) render(); return res; }
   
   
   
-  const triggered = await checkAllCompaniesReady();
+  const triggered = await checkAllCompaniesReady(expectedRoll);
   if(!triggered) render();
+  return {ok:true, triggered};
 }
 
-async function cancelCompanyReady(companyId){
+// Section 308 — bogue 17 : l'annulation vise le lancer affiché ; refusée s'il a déjà été joué (le statut « prête »
+// a alors déjà servi) ou si la partie est finie.
+async function cancelCompanyReady(companyId, expectedRoll){
+  expectedRoll = turnExpectedRoll(expectedRoll);
   const co0 = companyById(companyId);
   if(!co0){ alert('Entreprise introuvable.'); return; }
   if(myPlayerId!==co0.ceoId){ alert(`Seul le CEO de ${co0.name} peut annuler son statut « prête ».`); return; }
@@ -13252,13 +13425,16 @@ async function cancelCompanyReady(companyId){
     const co = companyById(companyId);
     if(!co) return {ok:false, error:'Entreprise introuvable.'};
     if(myPlayerId!==co.ceoId) return {ok:false, error:`Seul le CEO de ${co.name} peut annuler son statut « prête ».`};
-    if(!co.ready) return {ok:true}; 
+    const refusal = turnActionRefusal(expectedRoll);
+    if(refusal) return refusal;
+    if(!co.ready) return {ok:false, error:null, code:'not-ready'}; // déjà annulé : rien à enregistrer
     co.ready = false;
     log(`${co.name} annule son statut « prête » pour le lancer de dés pour tous.`);
     return {ok:true};
   }, {label:'Annuler prêt'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error) alert(res.error); render(); return res; }
   render();
+  return res;
 }
 
 
@@ -13594,7 +13770,7 @@ async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
     res = await attemptActionWithRetry(applyFn, {
       maxAttempts,
       label,
-      onRetry: (attempt)=>{ if(statusEl) statusEl.textContent = `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; },
+      onRetry: (attempt, failure)=>{ if(statusEl) statusEl.textContent = failure==='network' ? `Connexion au serveur perdue — nouvel essai d’enregistrement (${attempt})...` : `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; }, // Section 308
     });
   } catch(e){
     if(okBtn) okBtn.disabled = false;
@@ -13603,7 +13779,7 @@ async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
     return {ok:false, error: String((e && e.message) || e)};
   }
   if(okBtn) okBtn.disabled = false;
-  if(!res || !res.ok){ if(res && res.error) alert(res.error); return res; }
+  if(!res || !res.ok){ if(statusEl && res && res.notSaved) statusEl.textContent = ''; if(res && res.error) alert(res.error); return res; } // Section 308
   closeModal(); render();
   return res;
 }
@@ -15149,7 +15325,7 @@ function renderEtfCard(etf, isCreator){
   const totalHeld = etfTotalHeldPct(etf);
   const holders = state.companies.map(c=>({c, held:c.etfHoldings[etf.id]||0})).filter(x=>x.held>0.001);
   const myCo = myCompany();
-  const myHeld = myCo ? (myCo.etfHoldings[etf.id]||0) : 0;
+  const myHeld = myCo ? (myCo.etfHoldings[etf.id]||0) : 0; // Section 308 — bogue 57 : aussi porté par le bouton « Vendre » (data-etf-held)
   const inBidWindow = etf.opened && (state.gameClock.rollCount % 6 === 1);
   let statusHtml;
   if(!etf.opened){
@@ -15193,7 +15369,7 @@ function renderEtfCard(etf, isCreator){
         <div><label>Acheteur (une autre entreprise — jamais la banque)</label><select id="etfSellBuyer_${etf.id}">${state.companies.filter(c=>c.id!==myCo.id).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
         <div><label>Pourcentage</label><input type="number" min="0.1" max="${myHeld}" step="0.1" id="etfSellPct_${etf.id}" value="${Math.min(1,myHeld)}" style="width:100px;"></div>
         <div><label>Prix convenu (${esc(state.unit)})</label><input type="number" min="0" step="0.01" id="etfSellPrice_${etf.id}" value="0" style="width:140px;"></div>
-        <div><button class="btn btn-ghost btn-sm" data-etf-sell="${etf.id}">Vendre</button></div>
+        <div><button class="btn btn-ghost btn-sm" data-etf-sell="${etf.id}" data-etf-held="${myHeld}">Vendre</button></div>
       </div>
     ` : ''}
     ${etfChartHtml}
@@ -15848,11 +16024,51 @@ function renderSpectatorView(){
 
 
 
+// Section 308 — anti-rebond des boutons d'action (bogues 32, 57, 58, 59, 60) : un clic sur un bouton d'action
+// est ignoré pendant qu'une action de cet appareil est en cours, et pendant ACTION_CLICK_DEBOUNCE_MS après la
+// fin d'une action ou l'ouverture d'une fenêtre (le 2e clic d'un double clic ne tombe jamais sur la ligne
+// remontée ni sur le bouton de confirmation). Onglets, menus, listes et boutons Annuler/Fermer restent libres.
+const ACTION_CLICK_DEBOUNCE_MS = 500;
+let lastModalOpenMs = 0;
+let lastClickedActionButton = null;
+function shouldIgnoreActionClick(nowMs, busy, lastBlockingMs, isActionTarget){
+  if(!isActionTarget) return false;
+  if(busy) return true;
+  return (nowMs - (lastBlockingMs||0)) < ACTION_CLICK_DEBOUNCE_MS;
+}
+function isFreeClickButton(b){
+  if(!b) return true;
+  if(['mCancel','mChainClose','mRentTurnOk','entActionsMenuBtn','whoami','leaveGame'].includes(b.id)) return true;
+  if(b.hasAttribute && (b.hasAttribute('aria-expanded') || b.hasAttribute('data-free-click'))) return true;
+  if(b.closest && b.closest('.tabs, summary')) return true;
+  return /^(annuler|fermer|ok|×|✕)$/i.test((b.textContent||'').trim());
+}
+function actionClickTarget(el){
+  const b = (el && el.closest) ? el.closest('button') : null;
+  return (b && !isFreeClickButton(b)) ? b : null;
+}
+function takeClickedActionButton(){
+  const c = lastClickedActionButton;
+  lastClickedActionButton = null;
+  return (c && Date.now()-c.ms < 1000) ? c.el : null;
+}
+if(typeof document!=='undefined' && document.addEventListener){
+  document.addEventListener('click', e=>{
+    const b = actionClickTarget(e.target);
+    if(!b) return;
+    if(shouldIgnoreActionClick(Date.now(), actionsInFlight>0, Math.max(lastActionEndMs, lastModalOpenMs), true)){
+      e.stopPropagation(); e.preventDefault();
+      return;
+    }
+    lastClickedActionButton = {el:b, ms:Date.now()};
+  }, true);
+}
 function openModal(html){
   const host = document.getElementById('modalHost');
   if(!host) return;
   host.innerHTML = `<div class="modal-bg" id="modalBg"><div class="modal">${html}</div></div>`;
-  document.getElementById('modalBg').addEventListener('click', e=>{ if(e.target.id==='modalBg') closeModal(); });
+  const openedMs = lastModalOpenMs = Date.now(); // Section 308
+  document.getElementById('modalBg').addEventListener('click', e=>{ if(e.target.id==='modalBg' && Date.now()-openedMs>=ACTION_CLICK_DEBOUNCE_MS) closeModal(); });
 }
 function closeModal(){ const host = document.getElementById('modalHost'); if(host) host.innerHTML=''; }
 
@@ -15920,8 +16136,9 @@ function bindTabEvents(t){
     
     
     
-    document.querySelectorAll('[data-mark-ready]').forEach(b=>b.addEventListener('click', ()=>markCompanyReady(b.dataset.markReady)));
-    document.querySelectorAll('[data-cancel-ready]').forEach(b=>b.addEventListener('click', ()=>cancelCompanyReady(b.dataset.cancelReady)));
+    // Section 308 — bogues 17 et 59 : le clic porte le numéro du lancer affiché.
+    document.querySelectorAll('[data-mark-ready]').forEach(b=>b.addEventListener('click', ()=>markCompanyReady(b.dataset.markReady, parseInt(b.dataset.roll,10))));
+    document.querySelectorAll('[data-cancel-ready]').forEach(b=>b.addEventListener('click', ()=>cancelCompanyReady(b.dataset.cancelReady, parseInt(b.dataset.roll,10))));
     
     
     
@@ -15946,7 +16163,7 @@ function bindTabEvents(t){
     const openSellHousesBtn = document.getElementById('openSellHousesBtn');
     if(openSellHousesBtn) openSellHousesBtn.addEventListener('click', modalSellHouses);
     
-    document.querySelectorAll('[data-go-advance]').forEach(b=>b.addEventListener('click', ()=>takeGoAdvance(b.dataset.goAdvance)));
+    document.querySelectorAll('[data-go-advance]').forEach(b=>b.addEventListener('click', ()=>modalConfirmGoAdvance(b.dataset.goAdvance))); // Section 308 — bogue 58 : confirmation explicite
     
     
     
@@ -16459,7 +16676,8 @@ function bindTabEvents(t){
       const buyerId = document.getElementById('etfSellBuyer_'+id).value;
       const pct = parseFloat(document.getElementById('etfSellPct_'+id).value)||0;
       const price = parseFloat(document.getElementById('etfSellPrice_'+id).value)||0;
-      sellEtfUnits(id, myCo.id, buyerId, pct, price);
+      const expectedHeld = parseFloat(b.dataset.etfHeld); // Section 308 — bogue 57 : détention affichée au moment du clic
+      sellEtfUnits(id, myCo.id, buyerId, pct, price, Number.isFinite(expectedHeld) ? {expectedHeld} : {});
     }));
   }
   

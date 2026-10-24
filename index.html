@@ -2323,9 +2323,11 @@ function finishAction(gen, btn, res){
   if(gen!==actionGeneration) return;
   actionsInFlight = Math.max(0, actionsInFlight-1);
   lastActionEndMs = Date.now();
-  const applied = (actionsInFlight===0 && lastReceivedRaw && !isLocalInputActive()) ? applyRemoteStateIfNewer(lastReceivedRaw) : false;
-  // Action non enregistrée : l'écran repasse tout de suite au dernier état enregistré.
-  if(!applied && res && res.notSaved && gameCode && state) render();
+  try{
+    const applied = (actionsInFlight===0 && lastReceivedRaw && !isLocalInputActive()) ? applyRemoteStateIfNewer(lastReceivedRaw) : false;
+    // Action non enregistrée : l'écran repasse tout de suite au dernier état enregistré.
+    if(!applied && res && res.notSaved && gameCode && state) render();
+  }catch(e){ console.error('Rafraîchissement après action impossible :', e); } // le résultat de l'action reste transmis à l'appelant
 }
 async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen){
   let res = null;

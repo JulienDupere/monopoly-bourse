@@ -16394,7 +16394,10 @@ function isFreeClickButton(b){
   if(['mCancel','mChainClose','mRentTurnOk','entActionsMenuBtn','whoami','leaveGame'].includes(b.id)) return true;
   if(b.hasAttribute && (b.hasAttribute('aria-expanded') || b.hasAttribute('data-free-click'))) return true;
   if(b.closest && b.closest('.tabs, summary')) return true;
-  return /^(annuler|fermer|ok|×|✕)$/i.test((b.textContent||'').trim());
+  // Section 308 — retouche de la revue : le libellé seul (« Annuler », « Fermer », « OK ») ne libère qu'un bouton
+  // d'une fenêtre. Dans l'onglet, un bouton « Annuler » peut être une action de liste (data-cancel-bid /
+  // data-cancel-ask des ordres en attente) : un double clic annulait l'ordre suivant, remonté sous le curseur.
+  return !!(b.closest && b.closest('#modalHost')) && /^(annuler|fermer|ok|×|✕)$/i.test((b.textContent||'').trim());
 }
 function actionClickTarget(el){
   const b = (el && el.closest) ? el.closest('button') : null;
@@ -16407,6 +16410,15 @@ function takeClickedActionButton(){
 }
 if(typeof document!=='undefined' && document.addEventListener){
   document.addEventListener('click', e=>{
+    // Section 308 — retouche de la revue : une fenêtre apparue il y a moins de ACTION_CLICK_DEBOUNCE_MS (ouverte,
+    // ou remplaçant une fenêtre qui vient de se fermer) n'accepte aucun clic sur ses boutons, même libres : le
+    // 2e clic d'un double clic sur « OK » ne referme pas la fenêtre suivante (« Résultats du tour ») à l'instant
+    // où elle apparaît (même règle que le fond de la fenêtre, voir openModal).
+    const anyBtn = (e.target && e.target.closest) ? e.target.closest('button') : null;
+    if(anyBtn && anyBtn.closest && anyBtn.closest('#modalHost') && Date.now()-lastModalOpenMs < ACTION_CLICK_DEBOUNCE_MS){
+      e.stopPropagation(); e.preventDefault();
+      return;
+    }
     const b = actionClickTarget(e.target);
     if(!b) return;
     if(shouldIgnoreActionClick(Date.now(), actionsInFlight>0, Math.max(lastActionEndMs, lastModalOpenMs), true)){
@@ -16416,15 +16428,24 @@ if(typeof document!=='undefined' && document.addEventListener){
     lastClickedActionButton = {el:b, ms:Date.now()};
   }, true);
 }
-function openModal(html){
+function openModal(html, opts){
   const host = document.getElementById('modalHost');
   if(!host) return;
+  // Section 308 — retouche de la revue : une fenêtre qui se redessine elle-même ({redraw:true}, ex. changement de
+  // durée dans modalInsureBundle) ne relance pas l'anti-rebond de 500 ms.
+  const redraw = !!(opts && opts.redraw) && isModalOpen();
   host.innerHTML = `<div class="modal-bg" id="modalBg"><div class="modal">${html}</div></div>`;
-  const openedMs = lastModalOpenMs = Date.now(); // Section 308
+  if(!redraw) lastModalOpenMs = Date.now();
+  const openedMs = lastModalOpenMs; // Section 308
   document.getElementById('modalBg').addEventListener('click', e=>{ if(e.target.id==='modalBg' && Date.now()-openedMs>=ACTION_CLICK_DEBOUNCE_MS) closeModal(); });
 }
 function closeModal(){
-  const host = document.getElementById('modalHost'); if(host) host.innerHTML='';
+  const host = document.getElementById('modalHost');
+  // Section 308 — retouche de la revue : fermer une fenêtre arme l'anti-rebond (lastModalOpenMs = horodatage du
+  // dernier changement de fenêtre, ouverture ou fermeture) : le 2e clic d'un double clic sur « OK » ne tombe pas
+  // sur le bouton d'action situé dessous.
+  if(isModalOpen()) lastModalOpenMs = Date.now();
+  if(host) host.innerHTML='';
   scheduleDeferredPopups(); // Section 308 — C1 : les fenêtres d'information en attente s'affichent maintenant
 }
 // Section 308 — C2 : confirmation sur des conditions revérifiées à l'état à jour (utilitaire générique).
@@ -18959,7 +18980,7 @@ function modalInsureBundle(claimMode, term, isRegenerate){
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
       <button class="btn btn-primary" id="mOk">Confirmer la sélection</button>
-    </div>`);
+    </div>`, {redraw: !!isRegenerate}); // Section 308 — retouche de la revue : redessin sans relancer l'anti-rebond
   document.getElementById('mCancel').addEventListener('click', closeModal);
   
   

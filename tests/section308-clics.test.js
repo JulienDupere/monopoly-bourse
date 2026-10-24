@@ -10,6 +10,7 @@
 // vrai gestionnaire de clics du moteur (capturé par un document de test). Contre-épreuve pour chaque correctif.
 // Lancer depuis la racine du dépôt :  node tests/section308-clics.test.js
 const { loadEngine, check, near, engineSource } = require('./helpers/engine');
+const { creerDocument } = require('./helpers/fake-dom');
 
 let n = 0;
 const ok = (cond, msg) => { check(cond, msg); n++; };
@@ -40,9 +41,9 @@ const NO_GO_CHECK = src => src.replace("if(Number.isInteger(opts.expectedOwed) &
 
 // Bouton factice (élément <button> vu par le gestionnaire de clics).
 function button(opts){
-  const b = Object.assign({ id: '', tagName: 'BUTTON', textContent: '', disabled: false, attrs: {}, inTabs: false }, opts);
+  const b = Object.assign({ id: '', tagName: 'BUTTON', textContent: '', disabled: false, attrs: {}, inTabs: false, inModal: false }, opts);
   b.hasAttribute = a => Object.prototype.hasOwnProperty.call(b.attrs, a);
-  b.closest = sel => (sel === 'button' ? b : (b.inTabs ? {} : null));
+  b.closest = sel => (sel === 'button' ? b : sel === '#modalHost' ? (b.inModal ? {} : null) : (b.inTabs ? {} : null));
   return b;
 }
 // Clic de bout en bout : le gestionnaire du moteur (phase de capture) décide ; s'il laisse passer, le gestionnaire
@@ -83,8 +84,19 @@ async function game3(engineOpts){
     ok(f(10000, false, 9700, true) === true && f(10000, false, 9501, true) === true, 'A : moins de 500 ms après la fin d’une action ou l’ouverture d’une fenêtre : ignoré');
     ok(f(10000, false, 9500, true) === false && f(10000, false, 0, true) === false, 'A : à partir de 500 ms : accepté');
     const free = b => eng.sandbox.isFreeClickButton(b);
-    ok(free(button({ id: 'mCancel', textContent: 'Annuler' })) && free(button({ textContent: ' Fermer ' })) && free(button({ textContent: 'OK' })), 'A : Annuler / Fermer / OK restent libres');
-    ok(!free(button({ textContent: 'Annuler un bid' })) && !free(button({ id: 'mCancelRequest', textContent: 'Annuler la demande' })), 'A : « Annuler un bid », « Annuler la demande » sont des actions (anti-rebond)');
+    ok(free(button({ id: 'mCancel', textContent: 'Annuler' })) && free(button({ textContent: ' Fermer ', inModal: true })) && free(button({ textContent: 'OK', inModal: true })), 'A : Annuler / Fermer / OK d’une fenêtre restent libres');
+    ok(!free(button({ id: 'mCancelRequest', textContent: 'Annuler la demande', inModal: true })), 'A : « Annuler la demande » est une action (anti-rebond)');
+    // Section 308 — retouche de la revue : le vrai bouton « Annuler » d'un ordre en attente (onglet Portefeuille),
+    // dessiné par le moteur, est une action de liste : soumis à l'anti-rebond (le libellé ne libère que dans une fenêtre).
+    {
+      const doc = creerDocument();
+      const E = loadEngine({ globals: { document: doc } });
+      const ids = await E.newGame(['Alice', 'Bob'], ['garp', 'garp']);
+      E.run(`myPlayerId = ${JSON.stringify(ids[0])}; state.players[0].pendingBids = [{id:'b1', companyId: state.companies[1].id, price:1, qty:1, createdAt:'x', roll:0}]; activeTab = 'portefeuille'; render()`);
+      const real = doc.trouver('[data-cancel-bid]');
+      ok(!!real && real.textContent.trim() === 'Annuler' && !E.sandbox.isFreeClickButton(real), 'A : le vrai bouton « Annuler » d’un ordre en attente (data-cancel-bid) est soumis à l’anti-rebond');
+      ok(!E.sandbox.isFreeClickButton(button({ textContent: 'Annuler' })) && !E.sandbox.isFreeClickButton(button({ textContent: 'OK' })), 'A : hors fenêtre, un libellé « Annuler » ou « OK » ne libère pas le bouton');
+    }
     ok(free(button({ id: 'entActionsMenuBtn' })) && free(button({ attrs: { 'aria-expanded': 'false' } })) && free(button({ attrs: { 'data-free-click': '' } })) && free(button({ inTabs: true })), 'A : menus (aria-expanded, menu Actions), onglets et data-free-click restent libres');
     ok(!free(button({ textContent: 'Ouvrir une enquête AMF' })) && !free(button({ id: 'mOk', textContent: 'Confirmer' })), 'A : boutons d’action et de confirmation soumis à l’anti-rebond');
   });

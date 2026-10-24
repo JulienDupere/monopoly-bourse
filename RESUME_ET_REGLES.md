@@ -755,3 +755,94 @@ d'argent due aux corrections.
 
 **Documentation joueurs à mettre à jour avec la série suivante** : cahier 1 (rachat de découvert, marge à
 l'ouverture), cahier 3 (rachat d'option écrite, marge), cahier 8 (part non versée), aide-mémoire fiche 2.
+
+## 308. Synchronisation et multijoueur : une action n'est adoptée que si elle est enregistrée, plus de double envoi, plus de fenêtre fermée ou vidée par un autre joueur — 2026-10-24
+
+Contexte : première série de corrections des bogues moyens et faibles de l'audit du 2026-10-19 (lot 1 sur 10, le
+plus prioritaire). Demande explicite de l'utilisateur, verbatim : « Je ne veux pas de problème de synchronisation,
+de fermeture quand une action d'un autre joueur est prise. » Il a demandé aussi : « une mise à jour venue d'un autre
+joueur ne doit jamais fermer ni vider une fenêtre, un formulaire ou un menu déroulant en cours, l'action étant
+revérifiée sur l'état à jour à la confirmation », « imposer le choix Vous êtes dès le premier accès », une
+confirmation pour la subvention d'avance, et un banc d'essai multi-appareils. Bogues traités : 17, 32, 44, 57, 58,
+59, 60, 71, 72, 73, 74, plus un défaut trouvé par le banc (accusé de réception perdu). Chaque changement du code
+porte le commentaire « Section 308 ».
+
+1. **Adoption transactionnelle** (`attemptActionWithRetry` → `runActionWithRetry`, `finishAction`) — une seule
+   action à la fois par appareil (file ; les appels programmatiques attendent leur tour). Pendant une action, une
+   valeur reçue du serveur est mise de côté et appliquée à la fin ; une valeur plus ancienne que la dernière
+   confirmée (version plus basse) n'est jamais appliquée. Une action n'est adoptée que si sa sauvegarde réussit : sur
+   tout échec (refus de l'applyFn après modification, exception, réseau, conflits répétés), `state` revient au
+   dernier état confirmé et les globales du lancer sont restaurées. Exception : `{ok:false, persist:true}` (annonce
+   de privilégiées périmée retirée, section 307). Messages : « connexion perdue » ou « conflits répétés », « Votre
+   action n'a PAS été enregistrée ; la partie affiche le dernier état enregistré ». Transaction Firebase en
+   `applyLocally=false`. Corrige 44 (action perdue annoncée réussie, ou appliquée deux fois au clic suivant), 73
+   (offre de swap ou de compensation effacée par un refus) et 74 (« Résultats du tour » d'un lancer rejoué).
+2. **Accusé de réception perdu** (trouvé par le banc) — le serveur écrit l'action puis la connexion tombe avant la
+   réponse : l'essai suivant voyait un conflit et rejouait l'action (enregistrée deux fois), ou l'annonçait « PAS
+   enregistrée » alors qu'elle l'était. Chaque action a désormais un identifiant unique, ajouté à
+   `state.appliedActionIds` (100 derniers, défaut `[]` dans `migrateState`) dans la même écriture que la mutation.
+   En conflit, si l'état frais contient l'identifiant, l'action est réussie sans rejeu ; avant d'annoncer un échec
+   réseau, le serveur est relu. Relecture impossible : « impossible de savoir si votre action a été enregistrée »
+   (résultat `{ok:false, uncertain:true}`).
+3. **Pas de double envoi** — le bouton cliqué est désactivé pendant l'envoi ; un clic sur un bouton d'action est
+   ignoré pendant une action et 500 ms après sa fin ou l'ouverture d'une fenêtre (`shouldIgnoreActionClick`) ;
+   onglets, menus, champs, Annuler/Fermer/OK restent libres. Gardes de fond : `sendToJail` refuse une entreprise déjà
+   enquêtée (60) ; la vente REIT porte la détention affichée (`expectedHeld`, 57) ; la subvention d'avance passe par
+   une fenêtre de confirmation qui fige le rang (`expectedOwed`, 58, décision de l'utilisateur). Corrige 32 (2e clic
+   sur la ligne remontée).
+4. **Actions de tour liées au numéro du lancer** — « Tour Terminé », son annulation et « Forcer le tour » portent le
+   `rollCount` affiché (`data-roll`) ; refus dans l'applyFn si le lancer a changé (« Ce lancer a déjà été joué ») ou
+   si la partie est terminée. Le lancer non forcé revérifie que toutes les entreprises qui lancent sont prêtes.
+   Corrige 17 (deux lancers pour un tour, lancer après la fin de partie) et 59 (double « Tour Terminé »).
+5. **Mode local** (71) — `saveGame` n'utilise Firebase que sans `window.storage`.
+6. **Fenêtres, formulaires et menus** (72) — la valeur reçue est appliquée tout de suite et l'onglet redessiné en
+   préservant les champs modifiés par le joueur (clé `id`/`name`/`data-*`, jamais en double), le focus, le curseur,
+   les menus ouverts, le défilement et le logo de fondation (`renderPreservingForms`). Rendu différé seulement
+   pendant une vraie interaction (8 s après la dernière frappe, 30 s au plus pour un `<select>` ouvert :
+   `shouldDeferRemoteState`), pour ne pas recréer le blocage de la section 187bis. Une fenêtre ouverte ne bloque
+   plus la synchro et n'est jamais remplacée : « Résultats du tour » et l'annonce CEO exécutée attendent sa
+   fermeture (une seule fenêtre, qui signale les autres lancers).
+7. **Revérification à la confirmation** — au début de chaque action, la dernière valeur reçue est adoptée.
+   Utilitaire `confirmWithFreshConditions` : si les conditions affichées à l'ouverture ont changé, la fenêtre montre
+   les nouvelles et demande une 2e confirmation ; rien n'est fait avant. Appliqué à la subvention d'avance et à la
+   vente REIT (nouvelle fenêtre de confirmation qui signale un prix nul). À appliquer ensuite à l'assurance (15/49)
+   et aux prêts (24/50). Audit des ~100 applyFn : aucune ne modifie un objet de `state` capturé avant l'action.
+8. **« Vous êtes » imposé** (décision de l'utilisateur) — `loadGame` ne donne plus `players[0]` (le créateur) à un
+   appareil sans identité mémorisée ; `renderIdentityGate` s'affiche avant tout autre écran (joueurs, spectateur,
+   quitter) et `chooseIdentity` mémorise le choix.
+9. **Retouches de la revue** (un réviseur Opus, puis vérification) — le texte « Annuler »/« Fermer »/« OK » ne
+   libère un bouton de l'anti-rebond que dans une fenêtre (les « Annuler » de la liste des ordres en attente y sont
+   soumis : un double clic annulait deux ordres) ; `closeModal` arme l'anti-rebond et une fenêtre apparue depuis
+   moins de 500 ms n'accepte aucun clic ; la valeur reçue attend qu'aucun pointeur ne soit enfoncé (un clic sur
+   « Fonder » juste après une saisie était avalé) ; `render()` ne fait plus que programmer les fenêtres
+   d'information (`scheduleDeferredPopups`), si bien que « Résultats du tour » n'est plus jamais remplacée ni
+   perdue ; un champ qui enregistre au `change` et a été restauré est enregistré à la sortie du champ, jamais
+   par le retrait du champ lors d'un rendu (Chrome émet alors `focusout`), donc jamais en pleine saisie.
+   **Hors ligne** : suivi de `.info/connected` ; une action lancée quand la coupure est connue depuis plus de 2 s
+   (et plus de 4 s après le dernier retour au premier plan, le temps que le SDK se reconnecte au réveil du
+   téléphone) est refusée (« Pas de connexion au serveur : action non envoyée… ») ; indicateur `#actionStatusIndicator` en bas
+   d'écran (« ⏳ Enregistrement en cours… », « en attente du réseau » en rouge, clic ignoré signalé) ; une action
+   déjà en vol s'enregistre à la reconnexion, revérifiée sur l'état frais. La relecture après un accusé perdu ne
+   conclut « non écrite » que si la version lue dépasse la base de l'action (le vrai SDK répond à `once` depuis son
+   cache) ; sinon issue incertaine, et la fenêtre se ferme.
+
+**Banc d'essai multi-appareils** : `tests/helpers/fake-firebase.js` (faux serveur partagé, un faux SDK compat par
+appareil, transactions comme le vrai SDK, coupures, refus, fermeture de page, ordonnanceur à graine),
+`tests/helpers/fake-dom.js` (mini-DOM qui exécute les vrais gestionnaires de clics), `tests/section308-sync.test.js`
+(8 scénarios : actions concurrentes, Tour Terminé contre Forcer le tour, fin de partie, échecs réseau, accusé perdu,
+rechargement, doubles clics ; invariants : aucune action perdue, doublée ou fantôme, monnaie conservée, un lancer
+par tour, jamais après la fin, convergence). Sur le code d'avant : 22 cas sur 50 en échec (bogues 17, 44, 59).
+`SYNC_SEEDS=N` pour un passage long.
+
+**Tests** : `tests/section308-transaction`, `-tour`, `-clics`, `-formulaires`, `-retouches`, `-sync` ;
+`audit-bug5` (scénario C) et `section250` (A, D) adaptés : l'achat non enregistré est retiré de l'appareil. Chaque
+correctif a sa contre-épreuve. **15 fichiers, 1 187 vérifications et 53 cas multi-appareils, 0 échec ; 320 cas
+multi-appareils avec `SYNC_SEEDS=40`.**
+
+**Mise en production** : demander à tous les joueurs de recharger la page (un ancien onglet reste compatible, mais
+n'a ni la file d'actions, ni la clé d'idempotence, ni l'écran « Vous êtes »).
+
+**Documentation joueurs à mettre à jour** : écran « Vous êtes » au premier accès ; confirmation de la subvention
+d'avance et de la vente REIT ; 2e confirmation « Les conditions ont changé » ; indicateur d'enregistrement et refus
+hors ligne ; messages « Ce lancer a déjà été joué », « connexion perdue », « conflits répétés », « impossible de
+savoir si votre action a été enregistrée » ; saisies et fenêtres conservées quand un autre joueur agit.

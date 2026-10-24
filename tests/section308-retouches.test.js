@@ -160,7 +160,7 @@ const FERMETURE_SANS_ANTIREBOND = src => src.replace('  if(isModalOpen()) lastMo
 const FENETRE_NEUVE_CLIQUABLE = src => src.replace("if(anyBtn && anyBtn.closest && anyBtn.closest('#modalHost') && Date.now()-lastModalOpenMs < ACTION_CLICK_DEBOUNCE_MS){", 'if(false){');
 const POINTEUR_IGNORE = src => src.replace('  if(pointerDeferRemainingMs(nowMs)>0) return true; // Section 308', '  // Section 308')
   .replace('    if(wait>0 && gameCode && lastReceivedRaw){ scheduleRemoteStateFlush(wait+5); return; }\n', '');
-const SANS_CHANGE_A_LA_SORTIE = src => src.replace("if(el.value!==el.defaultValue && typeof el.dispatchEvent==='function' && typeof Event==='function') el.dispatchEvent(new Event('change', {bubbles:true}));", '');
+const SANS_CHANGE_A_LA_SORTIE = src => src.replace("if(el.isConnected!==false && el.value!==el.defaultValue && typeof el.dispatchEvent==='function' && typeof Event==='function') el.dispatchEvent(new Event('change', {bubbles:true}));", '');
 const RENDU_OUVRE_POPUP = src => src.replace('  scheduleDeferredPopups();\n  const tabs = visibleTabs();', '  maybeShowDiceRollTurnPopup(); maybeShowCeoAnnouncementExecutionPopup();\n  const tabs = visibleTabs();');
 const VU_RECULE = src => src.replace("if(typeof seenDiceRollEventRoll!=='number' || (typeof l.seenDiceRollEventRoll==='number' && l.seenDiceRollEventRoll>=seenDiceRollEventRoll)) seenDiceRollEventRoll = l.seenDiceRollEventRoll;", 'seenDiceRollEventRoll = l.seenDiceRollEventRoll;');
 const SANS_REFUS_HORS_LIGNE = src => src.replace('  if(window.storage || firebaseConnected!==false) return false;', '  return false;');
@@ -168,6 +168,9 @@ const RELECTURE_NAIVE = src => src.replace('provenAbsent = typeof fresh.version=
 const FENETRE_RESTE_OUVERTE = src => src.replace('  if(res && res.uncertain){ closeModal(); if(res.error) alert(res.error); return res; }\n', '');
 const IMBRIQUE_WARN = src => src.replace("console.error('attemptActionWithRetry imbriqué : exécuté dans l’action en cours.');", "console.warn('attemptActionWithRetry imbriqué : exécuté dans l’action en cours.');");
 const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Date.now();\n', '  lastModalOpenMs = Date.now();\n');
+// Vérification des retouches : contre-épreuves de R4b et R7b.
+const SANS_GRACE_REPRISE = src => src.replace(' && nowMs - lastBecameVisibleMs >= OFFLINE_RESUME_GRACE_MS;', ';');
+const MARQUE_GARDEE_AU_RENDU = src => src.replace('  restoredUncommittedFields = new WeakSet(); // Section 308 — vérification des retouches', '  // Section 308 — vérification des retouches');
 
 (async () => {
   // =====================================================================================================
@@ -348,6 +351,27 @@ const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Dat
   });
 
   // =====================================================================================================
+  await scenario('R4b. Retour au premier plan avec une coupure datée d’avant la veille : pas de refus le temps que le SDK se reconnecte', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const env = await partieReseau(405, variante === 'ancien' ? SANS_GRACE_REPRISE : undefined);
+      const A = appareilReseau(env, 'Alice', env.ids[0]);
+      await env.R.pomper();
+      A.run('firebaseConnected = false; firebaseDisconnectedSinceMs = Date.now() - 600000;');   // coupure vue en arrière-plan il y a 10 min
+      A.doc.fire(A.doc.body, 'visibilitychange');                                               // l'appli revient au premier plan
+      const auRetour = A.run('isKnownOffline()');
+      env.R.temps += 4001;
+      const plusTard = A.run('isKnownOffline()');
+      console.log(`    [${variante}] au retour : refus ${auRetour} ; 4 s plus tard, toujours coupé : refus ${plusTard}`);
+      if(variante === 'corrigé'){
+        ok(auRetour === false, 'R4b : au retour au premier plan, aucune action n’est refusée « hors ligne » pendant le délai de reconnexion');
+        ok(plusTard === true, 'R4b : toujours coupé 4 s après le retour : le refus reprend');
+      } else {
+        ok(auRetour === true, 'R4b : contre-épreuve — sans délai depuis le retour au premier plan, refus immédiat au réveil du téléphone');
+      }
+    }
+  });
+
+  // =====================================================================================================
   await scenario('R5. Accusé perdu puis relecture depuis le cache local : issue incertaine, jamais « PAS enregistrée » à tort', async () => {
     for(const variante of ['corrigé', 'ancien']){
       const env = await partieReseau(505, variante === 'ancien' ? RELECTURE_NAIVE : undefined);
@@ -461,6 +485,42 @@ const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Dat
         ok(gRestaure && Math.abs(S2.settings.growthRate - 0.08) < 1e-12 && S2.version === v1, 'R7 : valeur retouchée après restauration : enregistrée par le « change » du navigateur, aucun second enregistrement à la sortie');
       } else {
         ok(restaure && Math.abs(S.settings.discountRate - taux0) < 1e-12, 'R7 : contre-épreuve — sans « change » à la sortie, 12 % reste affiché mais n’est jamais enregistré');
+      }
+    }
+  });
+
+  // =====================================================================================================
+  await scenario('R7b. Saisie poursuivie après une restauration, 2e rendu distant (Chrome émet focusout au retrait) : rien n’est enregistré en pleine saisie', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const shared = new Map();
+      const transform = variante === 'ancien' ? MARQUE_GARDEE_AU_RENDU : undefined;
+      const A = appareil(shared, { transform });
+      const ids = await A.eng.newGame(['Alice', 'Bob'], ['garp', 'garp']);
+      await A.run('saveGame({silent:true})');
+      const code = A.run('gameCode');
+      A.run(`myPlayerId = ${ESC(ids[0])}; activeTab = 'admin'; closeModal(); render()`); await A.calme();
+      const B = appareil(shared, { transform });
+      await B.run(`loadGame(${ESC(code)})`); B.run(`myPlayerId = ${ESC(ids[1])}; render()`);
+      // Comme Chrome : retirer par innerHTML le champ qui a le focus émet focusout sur l'ancien champ.
+      A.run(`(function(){ const r = render; render = function(){ const ae = document.activeElement; if(ae && ae.id==='mDiscount') noteAppFieldEvent('focusout', ae); return r.apply(this, arguments); }; })()`);
+      const taux0 = JSON.parse(shared.get('game:' + code)).settings.discountRate;
+      await A.doc.taper('#mDiscount', '12');
+      await B.run(`attemptActionWithRetry(async ()=>{ state.bank.cash -= 1; state.players[1].cash += 1; return {ok:true}; })`);
+      A.run('appTypingAtMs = Date.now() - REMOTE_DEFER_TYPING_MS - 1'); await A.sonder(); await A.calme();
+      await A.doc.taper('#mDiscount', '125');          // la saisie continue dans le champ restauré
+      await B.run(`attemptActionWithRetry(async ()=>{ state.bank.cash -= 1; state.players[1].cash += 1; return {ok:true}; })`);
+      A.run('appTypingAtMs = Date.now() - REMOTE_DEFER_TYPING_MS - 1'); await A.sonder(); await A.calme();
+      const S = JSON.parse(shared.get('game:' + code));
+      const champ = A.doc.trouver('#mDiscount');
+      const focus = A.run("document.activeElement && document.activeElement.id");
+      console.log(`    [${variante}] taux ${taux0} ; après le 2e rendu distant : champ « ${champ.value} », focus ${focus}, serveur ${S.settings.discountRate}`);
+      if(variante === 'corrigé'){
+        ok(Math.abs(S.settings.discountRate - taux0) < 1e-12 && champ.value === '125' && focus === 'mDiscount', 'R7b : 2e rendu distant en pleine saisie : rien n’est enregistré, « 125 » et le focus restent dans le champ');
+        champ.blur(); A.doc.fire(champ, 'focusout'); await A.calme();
+        const S2 = JSON.parse(shared.get('game:' + code));
+        ok(Math.abs(S2.settings.discountRate - 1.25) < 1e-12 && S2.version === S.version + 1, 'R7b : à la sortie du champ, 125 % est enregistré, une fois');
+      } else {
+        ok(Math.abs(S.settings.discountRate - 1.25) < 1e-12, 'R7b : contre-épreuve — sans remise à zéro des marques au rendu, la valeur intermédiaire est enregistrée en pleine saisie');
       }
     }
   });

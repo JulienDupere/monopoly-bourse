@@ -2510,10 +2510,20 @@ function watchFirebaseConnection(db){
     firebaseConnectedWatch = {ref, callback};
   }catch(e){ console.error('Suivi de la connexion Firebase impossible :', e); }
 }
+// Section 308 — vérification des retouches : au retour au premier plan (Android : la page tourne en arrière-plan et
+// la coupure y est datée d'avant la veille), le SDK met quelques secondes à se reconnecter ; pas de refus pendant ce
+// délai, compté depuis le dernier retour au premier plan.
+const OFFLINE_RESUME_GRACE_MS = 4000;
+let lastBecameVisibleMs = 0;
+try{
+  if(typeof document!=='undefined' && typeof document.addEventListener==='function'){
+    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') lastBecameVisibleMs = Date.now(); });
+  }
+}catch(e){}
 function isKnownOffline(nowMs){
   if(window.storage || firebaseConnected!==false) return false;
   if(nowMs===undefined) nowMs = Date.now();
-  return nowMs - firebaseDisconnectedSinceMs >= OFFLINE_REFUSE_GRACE_MS;
+  return nowMs - firebaseDisconnectedSinceMs >= OFFLINE_REFUSE_GRACE_MS && nowMs - lastBecameVisibleMs >= OFFLINE_RESUME_GRACE_MS;
 }
 function offlineActionResult(){ return {ok:false, error:OFFLINE_ACTION_MESSAGE, notSaved:true, reason:'offline'}; }
 const ACTION_STATUS_FLASH_MS = 2500;
@@ -6612,7 +6622,8 @@ function noteAppFieldEvent(type, el, key, altKey, nowMs){
     // fait AVANT focusout) : on l'émet, pour que la valeur affichée soit enregistrée.
     if(restoredUncommittedFields.has(el)){
       restoredUncommittedFields.delete(el);
-      if(el.value!==el.defaultValue && typeof el.dispatchEvent==='function' && typeof Event==='function') el.dispatchEvent(new Event('change', {bubbles:true}));
+      // Section 308 — vérification des retouches : jamais pour un champ retiré par un rendu (Chrome émet focusout au retrait).
+      if(el.isConnected!==false && el.value!==el.defaultValue && typeof el.dispatchEvent==='function' && typeof Event==='function') el.dispatchEvent(new Event('change', {bubbles:true}));
     }
   }
 }
@@ -6698,6 +6709,7 @@ function indexAppFields(){
 }
 function captureAppFormState(){
   if(typeof app==='undefined' || !app || typeof app.querySelectorAll!=='function') return null;
+  restoredUncommittedFields = new WeakSet(); // Section 308 — vérification des retouches : les champs vont être remplacés ; la restauration remarque les nouveaux.
   const get = indexAppFields();
   const fields = [];
   Array.from(app.querySelectorAll('input,select,textarea')).forEach(el=>{

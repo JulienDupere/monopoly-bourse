@@ -1097,6 +1097,7 @@ function migrateState(s){
   
   
   if(s.version===undefined) s.version = 0;
+  if(!Array.isArray(s.appliedActionIds)) s.appliedActionIds = []; // Section 308 — accusé de réception perdu : identifiants des dernières actions enregistrées
   if(!s.settings) s.settings = {};
   
   
@@ -2188,7 +2189,7 @@ async function saveGame(opts){
         if(expectedRaw===null ? (currentVal!==null && currentVal!==undefined) : (currentVal!==expectedRaw)) return undefined;
         return rawToTry;
       }, undefined, false); // Section 308 — bogue 74 : applyLocally=false, l'écouteur ne voit jamais une valeur non confirmée par le serveur.
-    }catch(e){ txResult = null; }
+    }catch(e){ txResult = null; saveFailureMaybeWritten = !/permission/i.test(String((e && (e.code || e.message)) || e)); } // Section 308 — accusé de réception perdu : « disconnect » = écrite ou non, on ne sait pas
     toggleSaveFailedWarning(txResult===null);
     if(txResult===null) return false; 
     if(txResult.committed){
@@ -2212,7 +2213,7 @@ async function saveGame(opts){
         const snap = await fbDb.ref('data/'+firebaseSafeKey('game:'+gameCode)).once('value');
         remoteRaw = (snap && snap.exists()) ? snap.val() : null;
       }catch(e){ remoteRaw = null; }
-      if(!remoteRaw){ toggleSaveFailedWarning(true); return false; }
+      if(!remoteRaw){ toggleSaveFailedWarning(true); saveFailureMaybeWritten = false; return false; } // Section 308 — transaction abandonnée sans envoi
     }
     // Section 307 — state est désormais TOUJOURS rafraîchi avant de renvoyer 'conflict'.
     state = JSON.parse(remoteRaw);
@@ -2252,7 +2253,7 @@ async function saveGame(opts){
   
   const ok = await storageSet('game:'+gameCode, raw, true);
   toggleSaveFailedWarning(ok===null);
-  if(ok===null){ state.version--; return false; } // Section 308 — rien n'est écrit : la version locale ne doit pas avancer.
+  if(ok===null){ state.version--; saveFailureMaybeWritten = true; return false; } // Section 308 — rien n'est écrit : la version locale ne doit pas avancer.
   lastSerialized = raw;
   return true;
 }
@@ -2303,7 +2304,36 @@ function actionFailureMessage(reason, attempts, detail){
   if(reason==='network') return `Connexion au serveur perdue (ou partie introuvable) — ${attempts} essai(s) d’enregistrement sans succès. ${tail} Vérifiez votre connexion puis recommencez.`;
   if(reason==='exception') return `Une erreur inattendue est survenue pendant l’action${detail ? ` (${detail})` : ''}. ${tail}`;
   if(reason==='reloaded') return `La partie a été rechargée pendant l’action. ${tail}`;
+  if(reason==='unknown') return `La connexion au serveur a été perdue pendant l’enregistrement : impossible de savoir si votre action a été enregistrée. La partie se mettra à jour au retour de la connexion ; vérifiez-la avant de recommencer.`; // Section 308 — accusé de réception perdu
   return `Conflits répétés : d’autres joueurs enregistrent en même temps — nouvel essai automatique fait ${attempts} fois sans succès. ${tail} Réessayez dans un instant.`;
+}
+// Section 308 — accusé de réception perdu : le serveur peut avoir écrit une transaction dont la réponse s'est perdue
+// (coupure, « disconnect »). Chaque action reçoit un identifiant unique (par appareil et par chargement de page),
+// enregistré dans state.appliedActionIds avec sa mutation : en conflit, si l'état frais le contient déjà, l'action
+// est réussie sans être rejouée ; avant d'annoncer un échec réseau, le serveur est relu pour le chercher.
+const ACTION_ID_PREFIX = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+const APPLIED_ACTION_IDS_MAX = 100;
+let actionIdCounter = 0;
+let saveFailureMaybeWritten = false;
+function newActionId(){ return ACTION_ID_PREFIX + '.' + (++actionIdCounter); }
+function stateHasActionId(s, id){ return !!(s && Array.isArray(s.appliedActionIds) && s.appliedActionIds.includes(id)); }
+function recordActionId(id){
+  if(!Array.isArray(state.appliedActionIds)) state.appliedActionIds = [];
+  state.appliedActionIds.push(id);
+  if(state.appliedActionIds.length > APPLIED_ACTION_IDS_MAX) state.appliedActionIds.splice(0, state.appliedActionIds.length - APPLIED_ACTION_IDS_MAX);
+}
+// Lecture de la valeur faisant foi : {ok:true, raw} ou {ok:false} si elle est impossible (hors ligne, erreur).
+async function readServerGameRaw(){
+  try{
+    if(window.storage){ const r = await window.storage.get('game:'+gameCode, true); return {ok:true, raw: r ? r.value : null}; }
+    const db = firebaseDb();
+    if(!db) return {ok:false};
+    await firebaseAuthReady();
+    // Hors ligne, le SDK répondrait avec son cache local (qui ne contient pas une écriture dont l'accusé est perdu).
+    try{ const c = await db.ref('.info/connected').once('value'); if(c && c.val()===false) return {ok:false}; }catch(e){}
+    const snap = await db.ref('data/'+firebaseSafeKey('game:'+gameCode)).once('value');
+    return {ok:true, raw: (snap && snap.exists()) ? snap.val() : null};
+  }catch(e){ return {ok:false}; }
 }
 function attemptActionWithRetry(applyFn, opts){
   if(actionApplyDepth>0){
@@ -2329,7 +2359,7 @@ function finishAction(gen, btn, res){
     const applied = (actionsInFlight===0 && lastReceivedRaw && !shouldDeferRemoteState()) ? applyRemoteStateIfNewer(lastReceivedRaw) : false;
     // Action non enregistrée : l'écran repasse tout de suite au dernier état enregistré.
     // Section 308 — bogue 72 : sans vider ce que le joueur avait saisi (il peut corriger et réessayer).
-    if(!applied && ((res && res.notSaved) || remoteAdoptedDuringAction) && gameCode && state) renderPreservingForms();
+    if(!applied && ((res && (res.notSaved || res.uncertain)) || remoteAdoptedDuringAction) && gameCode && state) renderPreservingForms();
     remoteAdoptedDuringAction = false;
     scheduleDeferredPopups(); // Section 308 — fenêtres d'information mises en attente pendant l'action
   }catch(e){ console.error('Rafraîchissement après action impossible :', e); } // le résultat de l'action reste transmis à l'appelant
@@ -2338,6 +2368,8 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
   let res = null;
   let needsReapply = true;
   let baseRaw = null, baseLocals = null, failure = null;
+  const actionId = newActionId(); // Section 308 — accusé de réception perdu
+  let maybeWritten = false;
   for(let attempt=1; attempt<=maxAttempts; attempt++){
     if(needsReapply){
       if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
@@ -2354,18 +2386,40 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
       finally{ actionApplyDepth--; }
       // {ok:false, persist:true} : refus dont le nettoyage (ex. annonce périmée retirée) doit être enregistré.
       if((!res || !res.ok) && !(res && res.persist===true)){ if(gen===actionGeneration) restoreActionBase(baseRaw, baseLocals); return res; }
+      recordActionId(actionId); // dans la même écriture que la mutation
     }
     if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
     if(label) setMyActionStatus(label, 'pending');
     const saved = await saveGame({silent:true});
     if(saved===true){ if(label) setMyActionStatus(label, 'confirmed'); return res; }
     failure = (saved==='conflict') ? 'conflict' : 'network';
+    if(saved==='conflict' && stateHasActionId(state, actionId)){ if(label) setMyActionStatus(label, 'confirmed'); return res; } // déjà écrite (accusé perdu) : pas de rejeu
+    if(saved===false && saveFailureMaybeWritten) maybeWritten = true;
     if(onRetry) onRetry(attempt, failure);
 
 
 
 
     needsReapply = (saved==='conflict');
+  }
+  // Section 308 — accusé de réception perdu : avant d'annoncer l'échec, chercher l'action sur le serveur.
+  if(failure==='network' && maybeWritten && gen===actionGeneration){
+    const read = await readServerGameRaw();
+    if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
+    if(read.ok && read.raw){
+      const fresh = JSON.parse(read.raw);
+      migrateState(fresh);
+      if(stateHasActionId(fresh, actionId)){
+        state = fresh; lastSerialized = read.raw;
+        if(label) setMyActionStatus(label, 'confirmed');
+        return res;
+      }
+    }
+    if(!read.ok){
+      if(label) setMyActionStatus(label, 'failed');
+      restoreActionBase(baseRaw, baseLocals);
+      return {ok:false, error:actionFailureMessage('unknown'), uncertain:true, reason:'unknown'};
+    }
   }
   if(label) setMyActionStatus(label, 'failed');
   // Après un conflit, saveGame a déjà remplacé state par la valeur du serveur : seules les globales locales
@@ -14078,7 +14132,7 @@ async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
     return {ok:false, error: String((e && e.message) || e)};
   }
   if(okBtn) okBtn.disabled = false;
-  if(!res || !res.ok){ if(statusEl && res && res.notSaved) statusEl.textContent = ''; if(res && res.error) alert(res.error); return res; } // Section 308
+  if(!res || !res.ok){ if(statusEl && res && (res.notSaved || res.uncertain)) statusEl.textContent = ''; if(res && res.error) alert(res.error); return res; } // Section 308
   closeModal(); render();
   return res;
 }

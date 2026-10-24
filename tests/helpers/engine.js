@@ -11,8 +11,14 @@
 // Options : loadEngine({ firebase }) installe un faux SDK Firebase et retire window.storage, pour tester la branche
 // Firebase (saveGame, transactions). loadEngine({ transform }) modifie le code du moteur avant chargement
 // (contre-épreuve). Les top-level `let` du moteur (state, gameCode…) sont visibles par run().
+// Section 308 — loadEngine({ globals }) ajoute ou remplace des globales du sandbox AVANT le chargement du moteur
+// (document, localStorage, Math, Date, alert, setTimeout, __FIREBASE_CONFIG__…) : init(), lancé au chargement, les
+// voit déjà. Utilisé par le banc multi-appareils (tests/helpers/fake-firebase.js, tests/section308-sync.test.js).
+// Le script compilé est mis en cache : charger plusieurs moteurs dans le même processus coûte peu.
 const fs = require('fs'), path = require('path'), vm = require('vm');
 
+let sourceCache = null;
+const scriptCache = new Map();
 function engineSource(){
   const html = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8').replace(/\r\n/g, '\n');
   const OPEN = '\n<script>\n', CLOSE = '\n</script>';
@@ -61,16 +67,19 @@ function loadEngine(opts = {}){
     };
   }
   sandbox.document = new Proxy({}, { get: (o, k) => (k in o ? o[k] : (k === 'querySelectorAll' ? (()=>[]) : (()=>fakeNode()))) });
+  if(opts.globals) Object.assign(sandbox, opts.globals);
   vm.createContext(sandbox);
   // opts.transform(src) permet une contre-épreuve : recharger le moteur avec un ancien comportement réintroduit,
   // pour prouver qu'un test détecte bien la régression qu'il est censé verrouiller.
-  let src = engineSource();
+  let src = sourceCache || (sourceCache = engineSource());
   if(opts.transform){
     const before = src;
     src = opts.transform(src);
     if(src === before) throw new Error('Contre-épreuve : la transformation n’a rien modifié (motif introuvable)');
   }
-  vm.runInContext(src, sandbox, {filename: 'index.html#script'});
+  let script = scriptCache.get(src);
+  if(!script){ script = new vm.Script(src, {filename: 'index.html#script'}); scriptCache.set(src, script); }
+  script.runInContext(sandbox);
   const run = (code) => vm.runInContext(code, sandbox);
   const json = (code) => JSON.parse(run(`JSON.stringify(${code})`));
 
@@ -94,4 +103,4 @@ function loadEngine(opts = {}){
 function check(cond, msg){ if(!cond) throw new Error('ÉCHEC : ' + msg); console.log('  OK', msg); }
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 
-module.exports = { loadEngine, check, near, engineSource };
+module.exports = { loadEngine, check, near, engineSource, fakeNode };

@@ -6442,6 +6442,27 @@ const REMOTE_DEFER_SELECT_MS = 30000;
 let appTypingEl = null, appTypingAtMs = 0;
 let appSelectOpenEl = null, appSelectOpenAtMs = 0;
 let userEditedFields = new WeakSet();
+// Section 308 — retouche de la revue : clic avalé. Le navigateur n'émet « click » que si mousedown et mouseup
+// touchent le MÊME élément ; un rendu de #app entre les deux (valeur reçue appliquée au focusout du champ quitté, ou
+// à la fermeture d'une liste) détache le bouton pressé et le clic est perdu (ex. Bob tape « Bob Holdings » pendant
+// qu'Alice fonde, clique « Fonder » : rien). La valeur reçue attend donc tant qu'un pointeur est enfoncé (au plus
+// REMOTE_DEFER_POINTER_MS : un pointeur jamais relâché, glissé hors de la page, ne gèle pas la synchro), puis encore
+// POINTER_RELEASE_SETTLE_MS après le relâchement, le temps que le click soit traité.
+const REMOTE_DEFER_POINTER_MS = 5000;
+const POINTER_RELEASE_SETTLE_MS = 150;
+let appPointerDown = false, appPointerDownAtMs = 0, appPointerUpAtMs = 0;
+function pointerDeferRemainingMs(nowMs){
+  if(nowMs===undefined) nowMs = Date.now();
+  if(appPointerDown) return Math.max(0, REMOTE_DEFER_POINTER_MS - (nowMs-appPointerDownAtMs));
+  if(appPointerUpAtMs) return Math.max(0, POINTER_RELEASE_SETTLE_MS - (nowMs-appPointerUpAtMs));
+  return 0;
+}
+// Section 308 — retouche de la revue : champs restaurés après un rendu. Poser .value par le code efface, pour le
+// navigateur, la modification en cours : il n'émettra pas « change » à la sortie du champ. Un champ qui enregistre
+// au « change » (ex. mDiscount, mGrowth de l'Administration) aurait affiché la valeur tapée sans jamais l'enregistrer.
+// Un champ texte restauré avec une valeur différente de celle avec laquelle il a été dessiné reçoit donc « change »
+// quand le joueur le quitte, sauf si le navigateur l'a déjà émis (le joueur a retouché la valeur).
+let restoredUncommittedFields = new WeakSet();
 function isAppField(el){
   return !!(el && typeof el.tagName==='string' && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)
     && typeof app!=='undefined' && app && typeof app.contains==='function' && app.contains(el)===true);
@@ -6456,13 +6477,22 @@ function isTextLikeField(el){
 function noteAppFieldEvent(type, el, key, altKey, nowMs){
   if(nowMs===undefined) nowMs = Date.now();
   if(type==='pointerdown' || type==='mousedown' || type==='touchstart'){
+    // Section 308 — retouche de la revue : pointeur enfoncé (sauf sur une liste, dont la fenêtre native peut garder
+    // le relâchement ; elle a son propre suivi ci-dessous).
+    const onSelect = !!(el && typeof el.tagName==='string' && /^(SELECT|OPTION)$/.test(el.tagName));
+    if(!onSelect){ appPointerDown = true; appPointerDownAtMs = nowMs; appPointerUpAtMs = 0; }
     if(appSelectOpenEl && el!==appSelectOpenEl) closeAppSelectTracking();
     if(isAppField(el) && el.tagName==='SELECT'){ appSelectOpenEl = el; appSelectOpenAtMs = nowMs; }
+    return;
+  }
+  if(type==='pointerup' || type==='mouseup' || type==='touchend' || type==='touchcancel' || type==='pointercancel'){
+    if(appPointerDown){ appPointerDown = false; appPointerUpAtMs = nowMs; scheduleRemoteStateFlush(POINTER_RELEASE_SETTLE_MS); } // Section 308 — retouche de la revue
     return;
   }
   if(!isAppField(el)) return;
   if(type==='input' || type==='change'){
     userEditedFields.add(el);
+    if(type==='change') restoredUncommittedFields.delete(el); // Section 308 — retouche de la revue : déjà émis
     if(type==='input' && isTextLikeField(el)){ appTypingEl = el; appTypingAtMs = nowMs; }
     if(type==='change' && el===appSelectOpenEl) closeAppSelectTracking();
     return;
@@ -6477,6 +6507,12 @@ function noteAppFieldEvent(type, el, key, altKey, nowMs){
   if(type==='focusout'){
     if(el===appTypingEl){ appTypingEl = null; scheduleRemoteStateFlush(); }
     if(el===appSelectOpenEl) closeAppSelectTracking();
+    // Section 308 — retouche de la revue : champ restauré quitté sans « change » du navigateur (qui, s'il l'émet, le
+    // fait AVANT focusout) : on l'émet, pour que la valeur affichée soit enregistrée.
+    if(restoredUncommittedFields.has(el)){
+      restoredUncommittedFields.delete(el);
+      if(el.value!==el.defaultValue && typeof el.dispatchEvent==='function' && typeof Event==='function') el.dispatchEvent(new Event('change', {bubbles:true}));
+    }
   }
 }
 function closeAppSelectTracking(){
@@ -6489,22 +6525,31 @@ function shouldDeferRemoteState(nowMs){
   const ae = (typeof document!=='undefined') ? document.activeElement : null;
   if(appSelectOpenEl && ae===appSelectOpenEl && isAppField(ae) && nowMs-appSelectOpenAtMs < REMOTE_DEFER_SELECT_MS) return true;
   if(appTypingEl && ae===appTypingEl && isAppField(ae) && nowMs-appTypingAtMs < REMOTE_DEFER_TYPING_MS) return true;
+  if(pointerDeferRemainingMs(nowMs)>0) return true; // Section 308 — retouche de la revue : clic en cours
   return false;
 }
 // Nom historique, gardé pour les appelants : ne regarde plus les fenêtres (section 308).
 function isLocalInputActive(){ return shouldDeferRemoteState(); }
-let remoteFlushScheduled = false;
-function scheduleRemoteStateFlush(){
-  if(remoteFlushScheduled) return;
-  remoteFlushScheduled = true;
+// Section 308 — retouche de la revue : une seule échéance à la fois, la plus proche (un relâchement du pointeur
+// avance une application prévue à la fin de la borne REMOTE_DEFER_POINTER_MS).
+let remoteFlushDueMs = 0;
+function scheduleRemoteStateFlush(delayMs){
+  const due = Date.now() + Math.max(0, delayMs||0);
+  if(remoteFlushDueMs && remoteFlushDueMs<=due) return;
+  remoteFlushDueMs = due;
   setTimeout(()=>{
-    remoteFlushScheduled = false;
+    if(remoteFlushDueMs!==due) return; // remplacée par une échéance plus proche
+    remoteFlushDueMs = 0;
+    // Section 308 — retouche de la revue : clic en cours (pointeur enfoncé ou tout juste relâché) : on réessaie à
+    // la fin de l'attente, bornée par REMOTE_DEFER_POINTER_MS.
+    const wait = pointerDeferRemainingMs();
+    if(wait>0 && gameCode && lastReceivedRaw){ scheduleRemoteStateFlush(wait+5); return; }
     try{ if(gameCode && lastReceivedRaw && !shouldDeferRemoteState()) applyRemoteStateIfNewer(lastReceivedRaw); }
     catch(e){ console.error('Application de la valeur reçue impossible :', e); }
-  }, 0);
+  }, delayMs||0);
 }
 if(typeof document!=='undefined' && document.addEventListener){
-  ['input','change','keydown','focusout','pointerdown','mousedown','touchstart'].forEach(type=>{
+  ['input','change','keydown','focusout','pointerdown','mousedown','touchstart','pointerup','mouseup','touchend','touchcancel','pointercancel'].forEach(type=>{ // Section 308 — retouche de la revue : relâchements
     document.addEventListener(type, e=>{
       try{ noteAppFieldEvent(type, e && e.target, e && e.key, e && e.altKey); }catch(err){ console.error(err); }
     }, true);
@@ -6587,7 +6632,10 @@ function restoreAppFormState(snap){
       return;
     }
     if(el.tagName==='SELECT' && !Array.from(el.options||[]).some(o=>o.value===f.value)) return; // choix disparu
-    if(el.value!==f.value){ el.value = f.value; changed.push(el); }
+    if(el.value!==f.value){
+      el.value = f.value; changed.push(el);
+      if(isTextLikeField(el)) restoredUncommittedFields.add(el); // Section 308 — retouche de la revue : « change » à la sortie
+    }
     userEditedFields.add(el);
   });
   changed.forEach(el=>{

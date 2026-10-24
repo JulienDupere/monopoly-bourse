@@ -2,6 +2,10 @@
 //
 // R1 : double clic sur « Annuler » d'un ordre en attente (onglet Portefeuille) : le libellé « Annuler » libérait le
 //      bouton de l'anti-rebond, le 2e clic annulait l'ordre suivant, remonté sous le curseur.
+// R2 : clic avalé : au focusout du champ quitté (mousedown sur un bouton), la valeur reçue mise de côté était
+//      appliquée par une minuterie de 0 ms, AVANT le mouseup : #app redessiné, bouton pressé détaché, pas de click.
+// R7 : champ qui enregistre au « change » (mDiscount) restauré après un rendu : le navigateur n'émet plus « change »
+//      à la sortie du champ (valeur posée par le code) ; la valeur affichée n'était jamais enregistrée.
 // R8 : fermer une fenêtre arme l'anti-rebond ; une fenêtre qui vient d'apparaître n'accepte aucun clic pendant
 //      500 ms ; une fenêtre qui se redessine elle-même ne relance pas l'anti-rebond.
 // (Les autres retouches sont ajoutées au fil des commits, un scénario par point.)
@@ -107,6 +111,9 @@ async function partieSolo(opts = {}){
 const ANNULER_LIBRE_PARTOUT = src => src.replace("return !!(b.closest && b.closest('#modalHost')) && /^(annuler|fermer|ok|×|✕)$/i.test((b.textContent||'').trim());", "return /^(annuler|fermer|ok|×|✕)$/i.test((b.textContent||'').trim());");
 const FERMETURE_SANS_ANTIREBOND = src => src.replace('  if(isModalOpen()) lastModalOpenMs = Date.now();\n', '');
 const FENETRE_NEUVE_CLIQUABLE = src => src.replace("if(anyBtn && anyBtn.closest && anyBtn.closest('#modalHost') && Date.now()-lastModalOpenMs < ACTION_CLICK_DEBOUNCE_MS){", 'if(false){');
+const POINTEUR_IGNORE = src => src.replace('  if(pointerDeferRemainingMs(nowMs)>0) return true; // Section 308', '  // Section 308')
+  .replace('    if(wait>0 && gameCode && lastReceivedRaw){ scheduleRemoteStateFlush(wait+5); return; }\n', '');
+const SANS_CHANGE_A_LA_SORTIE = src => src.replace("if(el.value!==el.defaultValue && typeof el.dispatchEvent==='function' && typeof Event==='function') el.dispatchEvent(new Event('change', {bubbles:true}));", '');
 const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Date.now();\n', '  lastModalOpenMs = Date.now();\n');
 
 (async () => {
@@ -132,6 +139,93 @@ const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Dat
         ok(c3.clic === 'ok' && T.serveur().players[0].pendingBids.length === 0, 'R1 : un clic voulu, 500 ms plus tard, annule b2 normalement');
       } else {
         ok(c2.clic === 'ok' && restants.length === 0, 'R1 : contre-épreuve — avec le libellé libre partout, le double clic annule les deux ordres');
+      }
+    }
+  });
+
+  // =====================================================================================================
+  await scenario('R2. Clic sur « Fonder » pendant qu’une valeur reçue attend : le bouton pressé n’est pas redessiné', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const shared = new Map();
+      const transform = variante === 'ancien' ? POINTEUR_IGNORE : undefined;
+      const A = appareil(shared, { transform });
+      await A.run(`createGame(["Alice","Bob"], 50, 1000, 'M$', {}, [])`);
+      const ids = A.json('state.players.map(p=>p.id)');
+      const B = appareil(shared, { transform });
+      await B.run(`loadGame(${ESC(A.run('gameCode'))})`); B.run('render()');
+      await B.cliquer(`[data-identity-pick="${ids[1]}"]`);
+      await B.doc.taper('#cName', 'Bob Holdings');
+      await A.run(`createCompany(${ESC(ids[0])}, 'Co Alice', '', 'garp', null, null, null)`);
+      await B.sonder();
+      const enAttente = B.run('lastReceivedRaw!==lastSerialized');
+      // Bob appuie sur « Fonder » : pointerdown/mousedown sur le bouton, puis focusout du champ (ordre du navigateur) ;
+      // le navigateur exécute les minuteries de 0 ms avant le mouseup.
+      const bouton = B.doc.trouver('#cSubmit'), champ = B.doc.trouver('#cName');
+      B.doc.fire(bouton, 'pointerdown'); B.doc.fire(bouton, 'mousedown');
+      champ.blur(); B.doc.fire(champ, 'focusout');
+      await B.minuteries(0);
+      const attache = B.doc.trouver('#cSubmit') === bouton;
+      console.log(`    [${variante}] valeur reçue en attente : ${enAttente} ; après focusout + minuterie 0 ms, bouton pressé encore attaché : ${attache}`);
+      if(variante === 'corrigé'){
+        ok(enAttente && attache, 'R2 : pointeur enfoncé : #app n’est pas redessiné, le bouton pressé reste le même (le click aura lieu)');
+        B.doc.fire(bouton, 'pointerup'); B.doc.fire(bouton, 'mouseup');
+        B.ancien(); const c = B.doc.cliquer('#cSubmit'); await c.promesse; await B.calme();
+        const S = JSON.parse(shared.get('game:' + A.run('gameCode')));
+        ok(c.clic === 'ok' && S.companies.length === 2 && S.companies.some(x => x.name === 'Bob Holdings' && x.ceoId === ids[1]), 'R2 : le click arrive : « Bob Holdings » est fondée, Co Alice est conservée (2 entreprises sur le serveur)');
+        ok(B.run("state.companies.some(c=>c.name==='Co Alice')"), 'R2 : l’appareil de Bob affiche ensuite Co Alice');
+        // Borne : un pointeur jamais relâché ne gèle pas la synchro.
+        await A.run(`attemptActionWithRetry(async ()=>{ state.bank.cash -= 1; state.players[0].cash += 1; return {ok:true}; })`);
+        B.doc.fire(B.doc.trouver('#app'), 'pointerdown');
+        await B.sonder();
+        ok(B.run('shouldDeferRemoteState()') === true && B.run('lastReceivedRaw!==lastSerialized'), 'R2 : pointeur enfoncé : la valeur reçue attend');
+        B.run('appPointerDownAtMs = Date.now() - REMOTE_DEFER_POINTER_MS - 1');
+        await B.sonder();
+        ok(B.run('lastReceivedRaw===lastSerialized'), 'R2 : borne — après 5 s sans relâchement, la valeur reçue est appliquée');
+      } else {
+        ok(enAttente && !attache, 'R2 : contre-épreuve — sans l’attente du relâchement, #app est redessiné entre mousedown et mouseup (bouton détaché : pas de click)');
+      }
+    }
+  });
+
+  // =====================================================================================================
+  await scenario('R7. Taux d’actualisation tapé, rendu distant, sortie du champ : la valeur affichée est enregistrée', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const shared = new Map();
+      const transform = variante === 'ancien' ? SANS_CHANGE_A_LA_SORTIE : undefined;
+      const A = appareil(shared, { transform });
+      const ids = await A.eng.newGame(['Alice', 'Bob'], ['garp', 'garp']);
+      await A.run('saveGame({silent:true})');
+      const code = A.run('gameCode');
+      A.run(`myPlayerId = ${ESC(ids[0])}; activeTab = 'admin'; closeModal(); render()`); await A.calme();
+      const B = appareil(shared, { transform });
+      await B.run(`loadGame(${ESC(code)})`); B.run(`myPlayerId = ${ESC(ids[1])}; render()`);
+      const taux0 = A.run('state.settings.discountRate');
+      await A.doc.taper('#mDiscount', '12');
+      await B.run(`attemptActionWithRetry(async ()=>{ state.bank.cash -= 2; state.players[1].cash += 2; return {ok:true}; })`);
+      A.run('appTypingAtMs = Date.now() - REMOTE_DEFER_TYPING_MS - 1');   // 8 s sans frappe, focus toujours dans le champ
+      await A.sonder();
+      const champ = A.doc.trouver('#mDiscount');
+      const restaure = A.run('state.players[1].cash') === JSON.parse(shared.get('game:' + code)).players[1].cash && champ.value === '12' && A.run('document.activeElement') === champ;
+      const v0 = JSON.parse(shared.get('game:' + code)).version;
+      champ.blur(); A.doc.fire(champ, 'focusout'); await A.calme();
+      const S = JSON.parse(shared.get('game:' + code));
+      console.log(`    [${variante}] taux ${taux0} ; après rendu distant : champ « ${champ.value} », focus rendu ${restaure} ; à la sortie du champ : serveur ${S.settings.discountRate} (version ${v0} → ${S.version})`);
+      if(variante === 'corrigé'){
+        ok(restaure, 'R7 : le rendu distant passe ; « 12 » et le focus sont rendus au nouveau champ');
+        ok(Math.abs(S.settings.discountRate - 0.12) < 1e-12 && S.version === v0 + 1, 'R7 : à la sortie du champ, 12 % est enregistré, une fois');
+        // Le joueur retouche la valeur après la restauration : le navigateur émet « change » lui-même, pas de doublon.
+        await A.doc.taper('#mGrowth', '7');
+        await B.run(`attemptActionWithRetry(async ()=>{ state.bank.cash -= 1; state.players[1].cash += 1; return {ok:true}; })`);
+        A.run('appTypingAtMs = Date.now() - REMOTE_DEFER_TYPING_MS - 1'); await A.sonder();
+        const g = A.doc.trouver('#mGrowth');
+        const gRestaure = g.value === '7';
+        g.value = '8'; await A.doc.fire(g, 'input'); await A.doc.fire(g, 'change'); await A.calme();
+        const v1 = JSON.parse(shared.get('game:' + code)).version;
+        g.blur(); A.doc.fire(g, 'focusout'); await A.calme();
+        const S2 = JSON.parse(shared.get('game:' + code));
+        ok(gRestaure && Math.abs(S2.settings.growthRate - 0.08) < 1e-12 && S2.version === v1, 'R7 : valeur retouchée après restauration : enregistrée par le « change » du navigateur, aucun second enregistrement à la sortie');
+      } else {
+        ok(restaure && Math.abs(S.settings.discountRate - taux0) < 1e-12, 'R7 : contre-épreuve — sans « change » à la sortie, 12 % reste affiché mais n’est jamais enregistré');
       }
     }
   });

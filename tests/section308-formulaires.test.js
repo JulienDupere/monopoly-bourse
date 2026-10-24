@@ -120,7 +120,9 @@ async function partie({ withCompanies = true, names = ['Alice', 'Bob'], transfor
 // Contre-épreuves.
 const SANS_PRESERVATION = src => src.replace('  render();\n  if(snap){ try{ restoreAppFormState(snap); }', '  render(); snap = null;\n  if(snap){ try{ restoreAppFormState(snap); }');
 const FENETRE_BLOQUE_SYNCHRO = src => src.replace('function shouldDeferRemoteState(nowMs){\n', "function shouldDeferRemoteState(nowMs){\n  { const h = document.getElementById('modalHost'); if(h && h.innerHTML && /<(input|textarea|select)[\\s>]/i.test(h.innerHTML)) return true; }\n");
-const POPUP_REMPLACE = src => src.replace('  if(isModalOpen()) return;\n  const previousSeen', '  const previousSeen');
+// Retouche de la revue : render() passe par scheduleDeferredPopups ; l'ancien comportement l'ouvrait directement.
+const POPUP_REMPLACE = src => src.replace('  if(isModalOpen()) return;\n  const previousSeen', '  const previousSeen')
+  .replace('  scheduleDeferredPopups();\n  const tabs = visibleTabs();', '  maybeShowDiceRollTurnPopup(); maybeShowCeoAnnouncementExecutionPopup();\n  const tabs = visibleTabs();');
 const SANS_2E_CONFIRMATION = src => src.replace('if(!same(shown, fresh)){ shown = fresh; changedNotice = true; paint();', 'if(false){')
   .replace('if(opts.expectedConditions && !sameConditions(opts.expectedConditions, goAdvanceConditions(companyId))) return staleConditionsResult();', '');
 const CREATEUR_IMPLICITE = src => src.replace('else if(!myPlayerId || !state.players.some(p=>p.id===myPlayerId)) myPlayerId = null;', 'else if(!myPlayerId || !state.players.some(p=>p.id===myPlayerId)) myPlayerId = state.players[0] ? state.players[0].id : null;');

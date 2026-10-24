@@ -2293,7 +2293,11 @@ function snapshotActionLocals(){
 function restoreActionLocals(l){
   if(!l) return;
   lastDiceResult = l.lastDiceResult; lastDiceResults = l.lastDiceResults;
-  lastNeutralPawnResults = l.lastNeutralPawnResults; seenDiceRollEventRoll = l.seenDiceRollEventRoll;
+  lastNeutralPawnResults = l.lastNeutralPawnResults;
+  // Section 308 — retouche de la revue : « Résultats du tour » déjà montrée (lancer enregistré) ne doit pas
+  // revenir parce qu'une action en file échoue ensuite : seenDiceRollEventRoll ne recule jamais. (Aucune fenêtre
+  // d'information ne s'ouvre pendant une action : maybeShowPendingPopups attend actionsInFlight===0.)
+  if(typeof seenDiceRollEventRoll!=='number' || (typeof l.seenDiceRollEventRoll==='number' && l.seenDiceRollEventRoll>=seenDiceRollEventRoll)) seenDiceRollEventRoll = l.seenDiceRollEventRoll;
 }
 function restoreActionBase(baseRaw, baseLocals){
   if(baseRaw!==null && JSON.stringify(state)!==baseRaw) state = JSON.parse(baseRaw);
@@ -7690,10 +7694,11 @@ function render(){
   
   
   
-  maybeShowDiceRollTurnPopup();
-  
-  
-  maybeShowCeoAnnouncementExecutionPopup();
+  // Section 308 — retouche de la revue : render() n'ouvre jamais directement une fenêtre d'information. Les appelants
+  // font « closeModal(); render() » ou « render(); showTransactionPopup(...) » : ouverte ici, « Résultats du tour »
+  // était aussitôt remplacée par la fenêtre de l'appelant tout en étant marquée vue, donc jamais montrée. Elle passe
+  // par scheduleDeferredPopups (après le gestionnaire en cours) et attend la fermeture de la fenêtre de l'appelant.
+  scheduleDeferredPopups();
   const tabs = visibleTabs();
   
   

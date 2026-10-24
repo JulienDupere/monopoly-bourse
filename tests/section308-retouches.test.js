@@ -4,6 +4,10 @@
 //      bouton de l'anti-rebond, le 2e clic annulait l'ordre suivant, remonté sous le curseur.
 // R2 : clic avalé : au focusout du champ quitté (mousedown sur un bouton), la valeur reçue mise de côté était
 //      appliquée par une minuterie de 0 ms, AVANT le mouseup : #app redessiné, bouton pressé détaché, pas de click.
+// R3 : « Résultats du tour » perdu : render() l'ouvrait directement (et la marquait vue), puis l'appelant la
+//      remplaçait par sa fenêtre de transaction (runModalActionWithRetry : closeModal(); render() ; buildHouse :
+//      render(); showTransactionPopup(...)) : jamais montrée.
+// R9 : une action en file qui échoue ne fait pas reculer seenDiceRollEventRoll (doublon de « Résultats du tour »).
 // R7 : champ qui enregistre au « change » (mDiscount) restauré après un rendu : le navigateur n'émet plus « change »
 //      à la sortie du champ (valeur posée par le code) ; la valeur affichée n'était jamais enregistrée.
 // R8 : fermer une fenêtre arme l'anti-rebond ; une fenêtre qui vient d'apparaître n'accepte aucun clic pendant
@@ -114,6 +118,8 @@ const FENETRE_NEUVE_CLIQUABLE = src => src.replace("if(anyBtn && anyBtn.closest 
 const POINTEUR_IGNORE = src => src.replace('  if(pointerDeferRemainingMs(nowMs)>0) return true; // Section 308', '  // Section 308')
   .replace('    if(wait>0 && gameCode && lastReceivedRaw){ scheduleRemoteStateFlush(wait+5); return; }\n', '');
 const SANS_CHANGE_A_LA_SORTIE = src => src.replace("if(el.value!==el.defaultValue && typeof el.dispatchEvent==='function' && typeof Event==='function') el.dispatchEvent(new Event('change', {bubbles:true}));", '');
+const RENDU_OUVRE_POPUP = src => src.replace('  scheduleDeferredPopups();\n  const tabs = visibleTabs();', '  maybeShowDiceRollTurnPopup(); maybeShowCeoAnnouncementExecutionPopup();\n  const tabs = visibleTabs();');
+const VU_RECULE = src => src.replace("if(typeof seenDiceRollEventRoll!=='number' || (typeof l.seenDiceRollEventRoll==='number' && l.seenDiceRollEventRoll>=seenDiceRollEventRoll)) seenDiceRollEventRoll = l.seenDiceRollEventRoll;", 'seenDiceRollEventRoll = l.seenDiceRollEventRoll;');
 const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Date.now();\n', '  lastModalOpenMs = Date.now();\n');
 
 (async () => {
@@ -184,6 +190,65 @@ const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Dat
       } else {
         ok(enAttente && !attache, 'R2 : contre-épreuve — sans l’attente du relâchement, #app est redessiné entre mousedown et mouseup (bouton détaché : pas de click)');
       }
+    }
+  });
+
+  // =====================================================================================================
+  await scenario('R3. Lancer reçu pendant une fenêtre d’action : « Résultats du tour » s’affiche après la fenêtre de transaction', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const shared = new Map();
+      const transform = variante === 'ancien' ? RENDU_OUVRE_POPUP : undefined;
+      const A = appareil(shared, { transform });
+      const ids = await A.eng.newGame(['Alice', 'Bob'], ['garp', 'garp']);
+      await A.run('saveGame({silent:true})');
+      const code = A.run('gameCode');
+      A.run(`myPlayerId = ${ESC(ids[0])}; closeModal(); render()`); await A.calme();
+      const B = appareil(shared, { transform });
+      await B.run(`loadGame(${ESC(code)})`); B.run(`myPlayerId = ${ESC(ids[1])}; closeModal(); render()`); await B.calme();
+      // a) Prêt de dernier recours (runModalActionWithRetry puis showTransactionPopup), lancer reçu pendant la fenêtre.
+      await A.run(`attemptActionWithRetry(async ()=>{ const c = myCompany(); state.bank.cash += c.cash + 1; c.cash = -1; return {ok:true}; })`);
+      A.run('render()'); await A.calme(); await B.sonder(); await B.calme();
+      A.run('modalLastResortLoan()');
+      await B.run('performRollForAllCompanies({auto:true})'); await B.calme();
+      await A.sonder(); await A.calme();
+      const recu = A.run('state.gameClock.rollCount') === 1 && /Prêt de dernier recours/.test(A.fenetre());
+      await A.cliquer('#mOk');
+      const apres = /Prêt de dernier recours/.test(A.fenetre()) && /Débit/.test(A.fenetre());
+      await A.cliquer('#mOk');                     // « OK » de la fenêtre de transaction
+      const tour = /Résultats du tour/.test(A.fenetre());
+      // b) « render(); showTransactionPopup(...) » (buildHouse, payBail…) avec un lancer pas encore vu.
+      A.run('closeModal()'); await A.calme();
+      await B.run('performRollForAllCompanies({auto:true})'); await B.calme();
+      A.run('actionsInFlight++'); await A.sonder(); A.run('actionsInFlight--');   // reçu pendant une action : aucun rendu
+      A.run("adoptLatestRemoteState(); closeModal(); render(); showTransactionPopup('Construction de maison', [{label:'Banque', amount:1}, {label:'Co Alice', amount:-1}])");
+      await A.calme();
+      const b1 = /Construction de maison/.test(A.fenetre());
+      await A.cliquer('#mOk');
+      const b2 = /Résultats du tour/.test(A.fenetre()) && A.run('seenDiceRollEventRoll') === A.run('state.lastDiceRollEvent.roll') && A.run('state.gameClock.rollCount') === 2;
+      console.log(`    [${variante}] a) lancer reçu, fenêtre intacte : ${recu} ; après « Confirmer » : transaction ${apres} ; après « OK » : « Résultats du tour » ${tour} | b) transaction ${b1}, puis « Résultats du tour » ${b2}`);
+      if(variante === 'corrigé'){
+        ok(recu && apres, 'R3 : la fenêtre de l’action reste en place pendant le lancer reçu, puis montre la transaction');
+        ok(tour, 'R3 : à la fermeture de la transaction, « Résultats du tour » s’affiche (lancer reçu pendant la fenêtre)');
+        ok(b1 && b2, 'R3 : « render(); showTransactionPopup(...) » : la transaction d’abord, « Résultats du tour » à sa fermeture');
+      } else {
+        ok(apres && !tour && b1 && !b2, 'R3 : contre-épreuve — ouverte par render() puis remplacée, « Résultats du tour » n’est jamais montrée');
+      }
+    }
+  });
+
+  // =====================================================================================================
+  await scenario('R9. Une action en file qui échoue ne fait pas reculer « Résultats du tour » déjà montrée', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const T = await partieSolo(variante === 'ancien' ? { transform: VU_RECULE } : {});
+      const { A } = T;
+      A.run('seenDiceRollEventRoll = 4');
+      const total0 = A.eng.cashTotal();
+      // La fenêtre du lancer 5 est montrée pendant l'action (simulé), puis l'action échoue après avoir modifié state.
+      const r = await A.run(`attemptActionWithRetry(async ()=>{ seenDiceRollEventRoll = 5; state.bank.cash -= 1; return {ok:false, error:null}; })`);
+      const vu = A.run('seenDiceRollEventRoll');
+      console.log(`    [${variante}] action refusée : ${r.ok === false} ; seenDiceRollEventRoll après restauration : ${vu}`);
+      if(variante === 'corrigé') ok(r.ok === false && vu === 5 && A.eng.cashTotal() === total0, 'R9 : l’action est annulée (monnaie intacte) mais seenDiceRollEventRoll ne recule pas (5)');
+      else ok(vu === 4, 'R9 : contre-épreuve — l’ancienne restauration ramène seenDiceRollEventRoll à 4 (la fenêtre reviendrait)');
     }
   });
 

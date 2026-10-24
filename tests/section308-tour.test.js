@@ -138,7 +138,9 @@ const REVERT_TURN = src => src
 const REVERT_74 = src => src
   .replace('}, undefined, false); // Section 308', '}); // Section 308')
   .replace('  if(actionsInFlight>0) return false;\r\n', '').replace('  if(actionsInFlight>0) return false;\n', '')
-  .replace('function restoreActionLocals(l){', 'function restoreActionLocals(l){ return;');
+  .replace('function restoreActionLocals(l){', 'function restoreActionLocals(l){ return;')
+  // Retouche de la revue : render() n'ouvre plus la fenêtre directement (scheduleDeferredPopups) ; ancien comportement.
+  .replace('  scheduleDeferredPopups();\n  const tabs = visibleTabs();', '  maybeShowDiceRollTurnPopup(); maybeShowCeoAnnouncementExecutionPopup();\n  const tabs = visibleTabs();');
 
 const failures = [];
 async function scenario(title, fn){
@@ -307,6 +309,7 @@ async function race17(T){
       seedRandom(74);
       await T.B.eng.run(`markCompanyReady(${JSON.stringify(coB)}, 0)`);
       await T.server.settle();
+      T.B.eng.run('maybeShowPendingPopups()'); // fenêtres différées (retouche de la revue) : minuteries inactives dans ce banc
       const S = T.S();
       const real = S.companies.find(c => c.id === coB);
       const pops = T.B.eng.json('__popups');

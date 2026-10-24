@@ -2079,7 +2079,9 @@ async function loadGame(code){
   lastDiceResults = null;
   const mp = await storageGet('mychar:'+code, false);
   if(mp && state.players.some(p=>p.id===mp)) myPlayerId = mp;
-  else if(!myPlayerId || !state.players.some(p=>p.id===myPlayerId)) myPlayerId = state.players[0] ? state.players[0].id : null;
+  // Section 308 — C4 (décision de Julien) : plus de rôle de créateur implicite. Sans identité mémorisée sur cet
+  // appareil, myPlayerId reste vide et render() impose l'écran « Vous êtes » avant tout autre écran.
+  else if(!myPlayerId || !state.players.some(p=>p.id===myPlayerId)) myPlayerId = null;
   lastSerialized = raw;
   
   
@@ -2324,9 +2326,12 @@ function finishAction(gen, btn, res){
   actionsInFlight = Math.max(0, actionsInFlight-1);
   lastActionEndMs = Date.now();
   try{
-    const applied = (actionsInFlight===0 && lastReceivedRaw && !isLocalInputActive()) ? applyRemoteStateIfNewer(lastReceivedRaw) : false;
+    const applied = (actionsInFlight===0 && lastReceivedRaw && !shouldDeferRemoteState()) ? applyRemoteStateIfNewer(lastReceivedRaw) : false;
     // Action non enregistrée : l'écran repasse tout de suite au dernier état enregistré.
-    if(!applied && res && res.notSaved && gameCode && state) render();
+    // Section 308 — bogue 72 : sans vider ce que le joueur avait saisi (il peut corriger et réessayer).
+    if(!applied && ((res && res.notSaved) || remoteAdoptedDuringAction) && gameCode && state) renderPreservingForms();
+    remoteAdoptedDuringAction = false;
+    scheduleDeferredPopups(); // Section 308 — fenêtres d'information mises en attente pendant l'action
   }catch(e){ console.error('Rafraîchissement après action impossible :', e); } // le résultat de l'action reste transmis à l'appelant
 }
 async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen){
@@ -2336,6 +2341,7 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
   for(let attempt=1; attempt<=maxAttempts; attempt++){
     if(needsReapply){
       if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
+      if(attempt===1) adoptReceivedStateBeforeAction(); // Section 308 — C2 : revérifiée sur l'état à jour
       if(baseLocals) restoreActionLocals(baseLocals);
       baseRaw = JSON.stringify(state);
       baseLocals = snapshotActionLocals();
@@ -6220,8 +6226,13 @@ function renderProduitsMatrice(){
 }
 
 
+// Section 308 — bogue 72 : logo choisi pendant la fondation, gardé hors du DOM (un champ fichier ne se restaure
+// pas) pour survivre aux rendus déclenchés par les autres joueurs. Clé : partie + joueur.
+let companySetupLogoDraft = null;
 function renderCompanySetupGate(me){
   const totalShares = state.settings.companyTotalShares;
+  const logoDraftKey = gameCode+':'+me.id; // Section 308 — bogue 72
+  const logoDraft = (companySetupLogoDraft && companySetupLogoDraft.key===logoDraftKey) ? companySetupLogoDraft.dataUrl : null;
   
   
   const ceoStartPct = state.settings.companyCeoStartPct;
@@ -6255,7 +6266,7 @@ function renderCompanySetupGate(me){
       <label>Description</label>
       <textarea id="cDesc" rows="3" placeholder="Description de l'entreprise (optionnel)"></textarea>
       <label>Type</label>
-      <select id="cType">${COMPANY_TYPES.map(t=>`<option value="${t.key}">${esc(t.label)}</option>`).join('')}</select>
+      <select id="cType" data-restore-sync>${COMPANY_TYPES.map(t=>`<option value="${t.key}">${esc(t.label)}</option>`).join('')}</select>
       <div class="small" id="cTypeGuideline" style="margin-top:6px;padding:8px 10px;background:var(--bg-alt,rgba(127,127,127,0.08));border-radius:6px;">${esc(COMPANY_TYPE_GUIDELINES[COMPANY_TYPES[0].key])}</div>
       <div class="small" style="margin-top:6px;font-style:italic;">${esc(COMPANY_TYPE_GUIDELINE_UNIVERSAL)}</div>
       <!-- Nouvelle section (voir RESUME_ET_REGLES.md) — promesse de dividende à la fondation, affichée
@@ -6284,7 +6295,7 @@ function renderCompanySetupGate(me){
            présentation de l'entreprise — jamais ailleurs (voir tvSlideCompanyShowcase). -->
       <label>Logo (optionnel — visible uniquement sur l'écran spectateur lors de la présentation de l'entreprise)</label>
       <input type="file" id="cLogo" accept="image/*">
-      <div id="cLogoPreview" style="margin-top:6px;"></div>
+      <div id="cLogoPreview" style="margin-top:6px;">${logoDraft?`<img src="${logoDraft}" alt="Logo" style="max-height:80px;max-width:200px;border-radius:6px;border:1px solid var(--line);">`:''}</div>
       <div class="small" style="margin-top:10px;">Montant investi (fixe, identique pour tous): <b>${fmt(amount)}</b> — achète ${ceoShares}/${totalShares} parts (${ceoStartPctLabel}% du total) à ${fmtPrice(priceShare)}/part. Votre encaisse: ${fmt(me.cash)}.</div>
       ${insufficient?`<div class="small" style="color:var(--brick,#C0392B);margin-top:6px;">Encaisse insuffisante pour ce montant fixe — contactez le créateur de la partie pour ajuster votre encaisse (onglet Administration) avant de fonder votre entreprise.</div>`:''}
       <div class="modal-actions" style="margin-top:14px;">
@@ -6324,17 +6335,19 @@ function renderCompanySetupGate(me){
   
   
   
-  let cLogoDataUrl = null;
+  let cLogoDataUrl = logoDraft; // Section 308 — bogue 72 : logo déjà choisi avant un rendu distant
   const cLogoInput = document.getElementById('cLogo');
   if(cLogoInput) cLogoInput.addEventListener('change', async ()=>{
     const file = cLogoInput.files && cLogoInput.files[0];
     const previewEl = document.getElementById('cLogoPreview');
-    if(!file){ cLogoDataUrl = null; if(previewEl) previewEl.innerHTML = ''; return; }
+    if(!file){ cLogoDataUrl = null; companySetupLogoDraft = null; if(previewEl) previewEl.innerHTML = ''; return; }
     try{
       cLogoDataUrl = await resizeImageFileToDataUrl(file, 240);
-      if(previewEl) previewEl.innerHTML = `<img src="${cLogoDataUrl}" alt="Logo" style="max-height:80px;max-width:200px;border-radius:6px;border:1px solid var(--line);">`;
+      companySetupLogoDraft = {key: logoDraftKey, dataUrl: cLogoDataUrl}; // Section 308 — bogue 72
+      const livePreview = document.getElementById('cLogoPreview'); // Section 308 — le formulaire a pu être redessiné pendant la lecture
+      if(livePreview) livePreview.innerHTML = `<img src="${cLogoDataUrl}" alt="Logo" style="max-height:80px;max-width:200px;border-radius:6px;border:1px solid var(--line);">`;
     }catch(err){
-      cLogoDataUrl = null;
+      cLogoDataUrl = null; companySetupLogoDraft = null;
       if(previewEl) previewEl.innerHTML = `<div class="small" style="color:var(--brick,#C0392B);">Impossible de charger cette image.</div>`;
     }
   });
@@ -6354,42 +6367,212 @@ function renderCompanySetupGate(me){
     
     
     const croissanceTier = type==='croissance' ? document.getElementById('cCroissanceTier').value : undefined;
-    await createCompany(me.id, finalName, desc, type, dividendPct, croissanceTier, cLogoDataUrl);
+    // Section 308 — bogue 72 : le logo vient du brouillon (survit à un rendu pendant la lecture du fichier).
+    const logo = (companySetupLogoDraft && companySetupLogoDraft.key===logoDraftKey) ? companySetupLogoDraft.dataUrl : cLogoDataUrl;
+    await createCompany(me.id, finalName, desc, type, dividendPct, croissanceTier, logo);
   });
 }
 
 
-function isLocalInputActive(){
-  const modalHost = document.getElementById('modalHost');
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  if(modalHost && modalHost.innerHTML && /<(input|textarea|select)[\s>]/i.test(modalHost.innerHTML)) return true;
-  const ae = document.activeElement;
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  if(ae && ae.tagName && ['INPUT','TEXTAREA'].includes(ae.tagName) && ae.id !== 'whoami') return true;
+// Section 308 — bogue 72 : une mise à jour venue d'un autre appareil ne ferme ni ne vide jamais ce que le joueur
+// est en train de faire.
+// - Une fenêtre ouverte (#modalHost, hors de #app) ne bloque plus la synchro : la valeur reçue est appliquée et
+//   l'onglet est redessiné dessous ; la fenêtre reste intacte et son action est revérifiée sur l'état à jour à la
+//   confirmation (applyFn ; confirmWithFreshConditions pour les conditions affichées).
+// - Le rendu d'une valeur reçue préserve les champs de #app modifiés par le joueur (renderPreservingForms).
+// - Il n'est différé que pendant une vraie interaction avec un champ de #app : frappe en cours (au plus
+//   REMOTE_DEFER_TYPING_MS après la dernière frappe) ou liste <select> ouverte (au plus REMOTE_DEFER_SELECT_MS).
+//   Jamais indéfiniment : un <select> garde le focus après le choix, ce qui bloquait la synchro (section 187bis).
+const REMOTE_DEFER_TYPING_MS = 8000;
+const REMOTE_DEFER_SELECT_MS = 30000;
+let appTypingEl = null, appTypingAtMs = 0;
+let appSelectOpenEl = null, appSelectOpenAtMs = 0;
+let userEditedFields = new WeakSet();
+function isAppField(el){
+  return !!(el && typeof el.tagName==='string' && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)
+    && typeof app!=='undefined' && app && typeof app.contains==='function' && app.contains(el)===true);
+}
+function isTextLikeField(el){
+  if(!el || typeof el.tagName!=='string') return false;
+  if(el.tagName==='TEXTAREA') return true;
+  if(el.tagName!=='INPUT') return false;
+  return ['text','number','search','email','tel','url','password',''].includes(String(el.type||'text').toLowerCase());
+}
+// Suivi des interactions (appelé par les écouteurs du document, en phase de capture).
+function noteAppFieldEvent(type, el, key, altKey, nowMs){
+  if(nowMs===undefined) nowMs = Date.now();
+  if(type==='pointerdown' || type==='mousedown' || type==='touchstart'){
+    if(appSelectOpenEl && el!==appSelectOpenEl) closeAppSelectTracking();
+    if(isAppField(el) && el.tagName==='SELECT'){ appSelectOpenEl = el; appSelectOpenAtMs = nowMs; }
+    return;
+  }
+  if(!isAppField(el)) return;
+  if(type==='input' || type==='change'){
+    userEditedFields.add(el);
+    if(type==='input' && isTextLikeField(el)){ appTypingEl = el; appTypingAtMs = nowMs; }
+    if(type==='change' && el===appSelectOpenEl) closeAppSelectTracking();
+    return;
+  }
+  if(type==='keydown'){
+    if(el.tagName==='SELECT'){
+      if(el===appSelectOpenEl){ if(['Escape','Enter','Tab'].includes(key)) closeAppSelectTracking(); }
+      else if([' ','Enter','F4'].includes(key) || (altKey && /^Arrow(Down|Up)$/.test(key||''))){ appSelectOpenEl = el; appSelectOpenAtMs = nowMs; }
+    } else if(isTextLikeField(el)){ appTypingEl = el; appTypingAtMs = nowMs; }
+    return;
+  }
+  if(type==='focusout'){
+    if(el===appTypingEl){ appTypingEl = null; scheduleRemoteStateFlush(); }
+    if(el===appSelectOpenEl) closeAppSelectTracking();
+  }
+}
+function closeAppSelectTracking(){
+  appSelectOpenEl = null; appSelectOpenAtMs = 0;
+  scheduleRemoteStateFlush();
+}
+// Vrai tant que le joueur interagit vraiment avec un champ de #app : la valeur reçue attend (bornée dans le temps).
+function shouldDeferRemoteState(nowMs){
+  if(nowMs===undefined) nowMs = Date.now();
+  const ae = (typeof document!=='undefined') ? document.activeElement : null;
+  if(appSelectOpenEl && ae===appSelectOpenEl && isAppField(ae) && nowMs-appSelectOpenAtMs < REMOTE_DEFER_SELECT_MS) return true;
+  if(appTypingEl && ae===appTypingEl && isAppField(ae) && nowMs-appTypingAtMs < REMOTE_DEFER_TYPING_MS) return true;
   return false;
+}
+// Nom historique, gardé pour les appelants : ne regarde plus les fenêtres (section 308).
+function isLocalInputActive(){ return shouldDeferRemoteState(); }
+let remoteFlushScheduled = false;
+function scheduleRemoteStateFlush(){
+  if(remoteFlushScheduled) return;
+  remoteFlushScheduled = true;
+  setTimeout(()=>{
+    remoteFlushScheduled = false;
+    try{ if(gameCode && lastReceivedRaw && !shouldDeferRemoteState()) applyRemoteStateIfNewer(lastReceivedRaw); }
+    catch(e){ console.error('Application de la valeur reçue impossible :', e); }
+  }, 0);
+}
+if(typeof document!=='undefined' && document.addEventListener){
+  ['input','change','keydown','focusout','pointerdown','mousedown','touchstart'].forEach(type=>{
+    document.addEventListener(type, e=>{
+      try{ noteAppFieldEvent(type, e && e.target, e && e.key, e && e.altKey); }catch(err){ console.error(err); }
+    }, true);
+  });
+}
+
+// Section 308 — bogue 72 : préservation des champs de #app autour d'un rendu.
+// Un champ est préservé s'il a été modifié par le joueur (événement input/change) ET que sa valeur diffère de
+// celle avec laquelle il a été dessiné (defaultValue / defaultSelected / defaultChecked) : une valeur déjà
+// enregistrée (réglage validé) ou posée par le code n'écrase jamais la valeur à jour. Clé : id, sinon name,
+// sinon les attributs data-* ; une clé absente ou en double n'est pas restaurée (jamais dans le mauvais champ).
+// Sont aussi préservés : le focus, la sélection et le curseur, les menus ouverts (classe « open » ou
+// aria-expanded="true", avec un id), le défilement (éléments avec un id, et la page).
+// Un champ restauré qui porte data-restore-sync reçoit un événement « change » (pour ses affichages dépendants).
+function formFieldKey(el){
+  if(!el || typeof el.tagName!=='string') return null;
+  if(el.id) return '#'+el.id;
+  const name = el.getAttribute ? el.getAttribute('name') : null;
+  if(name) return el.tagName+'[name='+name+']'+(String(el.type).toLowerCase()==='radio' ? ':'+el.value : '');
+  const ds = el.dataset ? Object.keys(el.dataset).sort().map(k=>k+'='+el.dataset[k]).join('&') : '';
+  return ds ? el.tagName+'['+ds+']' : null;
+}
+function formFieldDirty(el){
+  const type = String(el.type||'').toLowerCase();
+  if(el.tagName==='SELECT'){
+    const opts = Array.from(el.options||[]);
+    if(!opts.length) return false;
+    let def = opts.findIndex(o=>o.defaultSelected);
+    if(def<0) def = 0;
+    return el.selectedIndex!==def;
+  }
+  if(type==='checkbox' || type==='radio') return !!el.checked!==!!el.defaultChecked;
+  if(type==='file') return false;
+  return el.value!==el.defaultValue;
+}
+function indexAppFields(){
+  const byKey = new Map(), dup = new Set();
+  Array.from(app.querySelectorAll('input,select,textarea')).forEach(el=>{
+    const k = formFieldKey(el);
+    if(!k) return;
+    if(byKey.has(k)) dup.add(k);
+    byKey.set(k, el);
+  });
+  return k => (dup.has(k) ? null : (byKey.get(k)||null));
+}
+function captureAppFormState(){
+  if(typeof app==='undefined' || !app || typeof app.querySelectorAll!=='function') return null;
+  const get = indexAppFields();
+  const fields = [];
+  Array.from(app.querySelectorAll('input,select,textarea')).forEach(el=>{
+    const k = formFieldKey(el);
+    if(!k || get(k)!==el) return;
+    if(!userEditedFields.has(el) || !formFieldDirty(el)) return;
+    fields.push({key:k, tag:el.tagName, type:String(el.type||'').toLowerCase(), value:el.value, checked:!!el.checked});
+  });
+  let focus = null;
+  const ae = document.activeElement;
+  if(isAppField(ae)){
+    const k = formFieldKey(ae);
+    if(k && get(k)===ae){
+      focus = {key:k};
+      try{ if(isTextLikeField(ae) && typeof ae.selectionStart==='number'){ focus.start = ae.selectionStart; focus.end = ae.selectionEnd; focus.dir = ae.selectionDirection; } }catch(e){}
+    }
+  }
+  const open = Array.from(app.querySelectorAll('.open[id], [aria-expanded="true"][id]')).map(el=>({
+    id: el.id, cls: !!(el.classList && el.classList.contains('open')), aria: el.getAttribute && el.getAttribute('aria-expanded')==='true'}));
+  const scroll = Array.from(app.querySelectorAll('[id]')).filter(el=>el.scrollTop || el.scrollLeft).map(el=>({id:el.id, top:el.scrollTop, left:el.scrollLeft}));
+  return {fields, focus, open, scroll, winX: window.scrollX||0, winY: window.scrollY||0};
+}
+function restoreAppFormState(snap){
+  if(!snap || typeof app==='undefined' || !app || typeof app.querySelectorAll!=='function') return {restored:0};
+  const get = indexAppFields();
+  const changed = [];
+  snap.fields.forEach(f=>{
+    const el = get(f.key);
+    if(!el || el.tagName!==f.tag) return;
+    if(f.type==='checkbox' || f.type==='radio'){
+      if(!!el.checked!==f.checked){ el.checked = f.checked; changed.push(el); }
+      userEditedFields.add(el);
+      return;
+    }
+    if(el.tagName==='SELECT' && !Array.from(el.options||[]).some(o=>o.value===f.value)) return; // choix disparu
+    if(el.value!==f.value){ el.value = f.value; changed.push(el); }
+    userEditedFields.add(el);
+  });
+  changed.forEach(el=>{
+    if(el.hasAttribute && el.hasAttribute('data-restore-sync') && typeof el.dispatchEvent==='function' && typeof Event==='function') el.dispatchEvent(new Event('change'));
+  });
+  const modalHost = document.getElementById('modalHost');
+  const ae = document.activeElement;
+  const focusInModal = !!(ae && modalHost && typeof modalHost.contains==='function' && modalHost.contains(ae)===true);
+  if(snap.focus && !focusInModal){
+    const el = get(snap.focus.key);
+    if(el && ae!==el && typeof el.focus==='function'){
+      try{ el.focus({preventScroll:true}); }catch(e){ el.focus(); }
+      if(snap.focus.start!==undefined && typeof el.setSelectionRange==='function'){
+        try{ el.setSelectionRange(snap.focus.start, snap.focus.end, snap.focus.dir||'none'); }catch(e){}
+      }
+    }
+  }
+  snap.open.forEach(o=>{
+    const el = document.getElementById(o.id);
+    if(!el || typeof app.contains!=='function' || app.contains(el)!==true) return;
+    if(o.cls && el.classList) el.classList.add('open');
+    if(o.aria && el.setAttribute) el.setAttribute('aria-expanded', 'true');
+  });
+  snap.scroll.forEach(s=>{
+    const el = document.getElementById(s.id);
+    if(!el || typeof app.contains!=='function' || app.contains(el)!==true) return;
+    el.scrollTop = s.top; el.scrollLeft = s.left;
+  });
+  if(((window.scrollX||0)!==snap.winX || (window.scrollY||0)!==snap.winY) && typeof window.scrollTo==='function') window.scrollTo(snap.winX, snap.winY);
+  return {restored: changed.length};
+}
+// Rendu déclenché par une valeur reçue (ou après un échec d'action) : l'onglet suit l'état à jour, mais ce que le
+// joueur avait saisi ou ouvert reste en place. Les rendus provoqués par le joueur lui-même (action réussie,
+// changement d'onglet) gardent le comportement habituel (formulaire neuf).
+function renderPreservingForms(){
+  let snap = null;
+  try{ snap = captureAppFormState(); }catch(e){ console.error('Capture des champs impossible :', e); }
+  render();
+  if(snap){ try{ restoreAppFormState(snap); }catch(e){ console.error('Restauration des champs impossible :', e); } }
 }
 
 // Section 308 — version d'une valeur sérialisée (mise en cache : lastSerialized change peu souvent).
@@ -6403,23 +6586,36 @@ function rawGameVersion(raw){
   }
   return rawVersionCache.version;
 }
+// Section 308 — adopte une valeur reçue du serveur, sans rendu ; faux si elle n'apporte rien de nouveau.
+function adoptRemoteRaw(raw){
+  if(!raw || raw===lastSerialized) return false;
+  const incoming = JSON.parse(raw);
+  // Section 308 — une valeur reçue AVANT notre dernière écriture (version plus basse) ne doit pas
+  // ramener l'appareil en arrière : l'écouteur livrera la valeur à jour.
+  const confirmedVersion = rawGameVersion(lastSerialized);
+  if(typeof incoming.version==='number' && confirmedVersion!==null && incoming.version<confirmedVersion) return false;
+  state = incoming;
+  migrateState(state);
+  lastSerialized = raw;
+  return true;
+}
 function applyRemoteStateIfNewer(raw){
   // Section 308 — pendant une action de cet appareil, la valeur reçue attend la fin de l'action
   // (finishAction l'applique) : state n'est jamais remplacé au milieu d'un calcul ou d'une sauvegarde.
   if(actionsInFlight>0) return false;
-  if(raw && raw !== lastSerialized){
-    const incoming = JSON.parse(raw);
-    // Section 308 — une valeur reçue AVANT notre dernière écriture (version plus basse) ne doit pas
-    // ramener l'appareil en arrière : l'écouteur livrera la valeur à jour.
-    const confirmedVersion = rawGameVersion(lastSerialized);
-    if(typeof incoming.version==='number' && confirmedVersion!==null && incoming.version<confirmedVersion) return false;
-    state = incoming;
-    migrateState(state);
-    lastSerialized = raw;
-    render();
-    return true;
-  }
-  return false;
+  if(!adoptRemoteRaw(raw)) return false;
+  renderPreservingForms(); // Section 308 — bogue 72 : formulaires, focus et menus du joueur conservés
+  return true;
+}
+// Section 308 — C2 : au début d'une action, la dernière valeur reçue (mise de côté pendant une saisie ou une
+// action précédente) est adoptée : l'action se calcule sur l'état à jour plutôt que d'attendre un conflit.
+// Sans rendu (le calcul va commencer) ; finishAction redessine si l'action n'a pas abouti.
+let remoteAdoptedDuringAction = false;
+function adoptReceivedStateBeforeAction(){
+  let adopted = false;
+  try{ adopted = adoptRemoteRaw(lastReceivedRaw); }catch(e){ adopted = false; }
+  if(adopted) remoteAdoptedDuringAction = true;
+  return adopted;
 }
 
 function startPolling(){
@@ -6428,8 +6624,9 @@ function startPolling(){
   if(!db){
     pollTimer = setInterval(async ()=>{
       if(!gameCode) return;
-      if(isLocalInputActive()) return; 
       const raw = await storageGet('game:'+gameCode, true);
+      if(raw) lastReceivedRaw = raw; // Section 308 — comme l'écouteur Firebase : appliquée plus tard si différée
+      if(shouldDeferRemoteState()) return; // Section 308 — bogue 72 : seulement pendant une vraie interaction
       applyRemoteStateIfNewer(raw);
     }, 3000);
     return;
@@ -6440,7 +6637,7 @@ function startPolling(){
     const ref = db.ref('data/'+firebaseSafeKey('game:'+gameCode));
     const callback = (snap)=>{
       lastReceivedRaw = snap.exists() ? snap.val() : null;
-      if(isLocalInputActive()) return;
+      if(shouldDeferRemoteState()) return; // Section 308 — bogue 72 : une fenêtre ouverte ne bloque plus la synchro
       applyRemoteStateIfNewer(lastReceivedRaw);
     };
     const onCancel = (err)=>{
@@ -6451,7 +6648,7 @@ function startPolling(){
     firebaseListenerHandle = {ref, callback};
   });
   syncRetryTimer = setInterval(()=>{
-    if(!gameCode || isLocalInputActive()) return;
+    if(!gameCode || shouldDeferRemoteState()) return; // Section 308
     applyRemoteStateIfNewer(lastReceivedRaw);
   }, 3000);
 }
@@ -7022,6 +7219,29 @@ function maybeResolveEtfAuctions(){
 // Section 308 — bogue 57 : opts.expectedHeld = parts du vendeur affichées au moment du clic. Si elles ont changé
 // (la même vente vient d'être enregistrée — double clic —, ou un autre appareil a modifié la détention), la
 // vente est refusée au lieu d'être rejouée.
+// Section 308 — C2 (bogue 72, variante « 1 % pour 0 $ » du bogue 57) : « Vendre » ouvre une confirmation qui
+// récapitule la vente (pourcentage, acheteur, prix — signalé s'il est nul) ; la détention est revérifiée sur
+// l'état à jour à la confirmation, avec 2e confirmation si elle a changé.
+function etfSaleConditions(etfId, sellerId, buyerId, pct, price){
+  const seller = companyById(sellerId), buyer = companyById(buyerId);
+  if(!seller) return {unavailable:'Votre entreprise est introuvable.'};
+  if(!buyer) return {unavailable:'L’entreprise acheteuse n’existe plus.'};
+  return {etfLabel: etfLabel(etfId), sellerName: seller.name, buyerName: buyer.name, held: seller.etfHoldings[etfId]||0, pct, price};
+}
+function modalConfirmEtfSale(etfId, sellerId, buyerId, pct, price, displayedHeld){
+  const initial = etfSaleConditions(etfId, sellerId, buyerId, pct, price);
+  if(!initial.unavailable && typeof displayedHeld==='number') initial.held = displayedHeld; // détention affichée sur le bouton
+  return confirmWithFreshConditions({
+    title: 'Vendre des parts de REIT',
+    initial,
+    compute: ()=>etfSaleConditions(etfId, sellerId, buyerId, pct, price),
+    describe: c=>`<div class="small" style="margin-bottom:10px;">${esc(c.sellerName)} vend <b>${c.pct}%</b> du ${esc(c.etfLabel)} à <b>${esc(c.buyerName)}</b> pour <b>${fmt(c.price)}</b>. ${esc(c.sellerName)} détient actuellement ${c.held}% de ce REIT${c.pct>0 && c.pct<=c.held ? ` (il lui en restera ${+(c.held-c.pct).toFixed(4)}%)` : ''}.</div>
+      ${!(c.price>0) ? `<div class="small" style="margin-bottom:10px;color:var(--brick,#C0392B);">⚠️ Prix nul : les parts seraient cédées gratuitement.</div>` : ''}
+      ${!(c.pct>0) || c.pct>c.held ? `<div class="small" style="margin-bottom:10px;color:var(--brick,#C0392B);">⚠️ Pourcentage invalide (supérieur à la détention ou nul) : la vente sera refusée.</div>` : ''}`,
+    okLabel: c=>`Vendre ${c.pct}% pour ${fmt(c.price)}`,
+    run: c=>sellEtfUnits(etfId, sellerId, buyerId, pct, price, {expectedHeld: c.held, expectedConditions: c, fromConfirm: true}),
+  });
+}
 async function sellEtfUnits(etfId, sellerId, buyerId, pct, price, opts){
   opts = opts || {};
   
@@ -7034,6 +7254,8 @@ async function sellEtfUnits(etfId, sellerId, buyerId, pct, price, opts){
     if(!seller || !buyer) return {ok:false, error:'Entreprise invalide.'};
     const held = seller.etfHoldings[etfId]||0;
     if(typeof opts.expectedHeld==='number' && Math.abs(held-opts.expectedHeld)>1e-9) return {ok:false, error:`${seller.name} détient maintenant ${held}% du ${etfLabel(etfId)} (et non plus ${opts.expectedHeld}%) — la vente a peut-être déjà été enregistrée ; rien n'a été vendu, vérifiez avant de recommencer.`, code:'stale-etf-holding'};
+    // Section 308 — C2 : conditions confirmées par le joueur, revérifiées sur l'état frais (et après un conflit).
+    if(opts.expectedConditions && !sameConditions(opts.expectedConditions, etfSaleConditions(etfId, sellerId, buyerId, pct, price))) return staleConditionsResult();
     if(!(pct>0) || pct>held) return {ok:false, error:'Pourcentage invalide.'};
     seller.etfHoldings[etfId] = held-pct;
     buyer.etfHoldings[etfId] = (buyer.etfHoldings[etfId]||0) + pct;
@@ -7050,7 +7272,7 @@ async function sellEtfUnits(etfId, sellerId, buyerId, pct, price, opts){
       [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:`${seller.name} (vente ${pct}%)`, amount:price}]);
     return {ok:true};
   }, {label:'Vente de parts REIT'});
-  if(!res.ok){ if(res.error) alert(res.error); return res; }
+  if(!res.ok){ if(res.error && !opts.fromConfirm) alert(res.error); return res; } // Section 308 — C2 : la fenêtre de confirmation affiche le refus
   render();
   return res;
 }
@@ -7354,6 +7576,8 @@ function modalQuitGame(){
 function render(){
   updateStockTicker();
   if(!gameCode || !state){ renderSetup(); return; }
+  // Section 308 — C4 : un appareil sans identité choisit qui il est avant tout autre écran (spectateur exempté).
+  if(!isSpectator && !state.players.some(p=>p.id===myPlayerId)){ renderIdentityGate(); return; }
   if(state.gameEndedReason && !__gameEndedReviewMode){ renderGameEndedScreen(); return; }
   if(isSpectator){ renderSpectatorView(); return; }
   const me = state.players.find(p=>p.id===myPlayerId);
@@ -7473,6 +7697,43 @@ function render(){
   document.getElementById('leaveGame').addEventListener('click', modalQuitGame);
   document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click', ()=>{ activeTab = t.dataset.tab; render(); }));
   bindTabEvents(activeTab);
+}
+
+// Section 308 — C4 (décision de Julien : « imposer le choix Vous êtes dès le premier accès ») : écran affiché à un
+// appareil qui rejoint une partie sans identité mémorisée (mychar:CODE). Le choix est mémorisé sur l'appareil ;
+// le créateur, dont l'identité est mémorisée à la création, et les appareils déjà identifiés ne le voient jamais.
+function renderIdentityGate(){
+  app.innerHTML = `
+  <div class="setup-grid">
+    <div class="card pad" style="max-width:560px;margin:40px auto;">
+      <div class="section-title">Partie <span class="codebox">${esc(gameCode)}</span> — Vous êtes :</div>
+      <div class="small" style="margin-bottom:12px;">Cet appareil ne sait pas encore quel joueur vous êtes. Choisissez votre nom pour continuer ; ce choix est mémorisé sur cet appareil (vous pourrez le changer ensuite avec « Vous êtes » en haut de l'écran).</div>
+      ${state.players.map(p=>{
+        const co = p.companyId ? companyById(p.companyId) : null;
+        return `<button class="btn btn-ghost" data-free-click data-identity-pick="${esc(p.id)}" style="display:block;width:100%;text-align:left;margin-top:8px;">${esc(p.name)}${co?` <span class="small">— CEO de ${esc(co.name)}</span>`:''}${p.id===state.creatorId?' <span class="small">(créateur de la partie)</span>':''}</button>`;
+      }).join('')}
+      <div class="small" style="margin-top:16px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <span style="cursor:pointer;text-decoration:underline;" id="identitySpectator">Regarder en spectateur (écran TV)</span>
+        <span style="cursor:pointer;text-decoration:underline;" id="leaveGameIdentity">quitter la partie</span>
+      </div>
+    </div>
+  </div>`;
+  document.querySelectorAll('[data-identity-pick]').forEach(b=>b.addEventListener('click', ()=>chooseIdentity(b.dataset.identityPick)));
+  const spec = document.getElementById('identitySpectator');
+  if(spec) spec.addEventListener('click', async ()=>{
+    isSpectator = true;
+    await storageSet('lastspectator', '1', false);
+    render();
+  });
+  const leave = document.getElementById('leaveGameIdentity');
+  if(leave) leave.addEventListener('click', modalQuitGame);
+}
+async function chooseIdentity(playerId){
+  if(!state || !state.players.some(p=>p.id===playerId)) return false;
+  myPlayerId = playerId;
+  await storageSet('mychar:'+gameCode, playerId, false);
+  render();
+  return true;
 }
 
 function tabLabel(t){
@@ -12548,22 +12809,28 @@ function goAdvanceAmount(rank, company){
 // Section 308 — bogue 58 (décision de Julien) : la subvention d'avance n'est vendue qu'après une confirmation
 // explicite. La fenêtre fige le nombre de subventions dues à l'ouverture : une 2e confirmation (double clic, 2e
 // appareil) trouve un autre nombre et est refusée au lieu de vendre une 2e subvention.
+// Section 308 — C2 : conditions de la prochaine subvention d'avance, recalculées sur l'état courant (le montant
+// et le taux dépendent du cours de l'action, qui peut bouger pendant que la fenêtre est ouverte).
+function goAdvanceConditions(companyId){
+  const co = companyById(companyId);
+  if(!co) return {unavailable:'Cette entreprise n’existe plus.'};
+  const owed = co.goAdvancesOwed||0;
+  if(state.settings.goAdvanceMax>0 && owed>=state.settings.goAdvanceMax) return {unavailable:`${co.name} a déjà atteint le nombre maximal de subventions d'avance simultanées autorisé pour cette partie (${state.settings.goAdvanceMax}).`};
+  const rank = owed + 1;
+  return {companyName: co.name, owed, rank, amount: goAdvanceAmount(rank, co), rate: riskAdjustedRate(state.settings.goAdvanceRate, co)};
+}
 function modalConfirmGoAdvance(companyId){
   const co = companyById(companyId);
   if(!co) return;
-  const owed = co.goAdvancesOwed||0;
-  const rank = owed + 1;
-  const amount = goAdvanceAmount(rank, co);
-  const rate = riskAdjustedRate(state.settings.goAdvanceRate, co);
-  openModal(`
-    <h3>💸 Subvention d'avance — ${esc(co.name)}</h3>
-    <div class="small" style="margin-bottom:10px;">${esc(co.name)} vend sa ${rank}${rank===1?'re':'e'} subvention d'avance : elle reçoit <b>${fmt(amount)}</b> de la banque maintenant (taux ${(rate*100).toFixed(1)}%), et son ${rank}${rank===1?'er':'e'} passage sur GO futur ne lui versera aucun salaire. Des cubes rouges sont ajoutés à son action. Cette vente ne peut pas être annulée.</div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" id="mCancel">Annuler</button>
-      <button class="btn btn-primary" id="mOk">Vendre la subvention (${fmt(amount)})</button>
-    </div>`);
-  document.getElementById('mCancel').addEventListener('click', closeModal);
-  document.getElementById('mOk').addEventListener('click', ()=>{ closeModal(); takeGoAdvance(companyId, {expectedOwed: owed}); });
+  // Section 308 — C2 : à la confirmation, conditions revérifiées sur l'état à jour ; si le montant ou le rang a
+  // changé, la fenêtre montre les nouvelles conditions et demande une 2e confirmation.
+  return confirmWithFreshConditions({
+    title: `💸 Subvention d'avance — ${co.name}`,
+    compute: ()=>goAdvanceConditions(companyId),
+    describe: c=>`<div class="small" style="margin-bottom:10px;">${esc(c.companyName)} vend sa ${c.rank}${c.rank===1?'re':'e'} subvention d'avance : elle reçoit <b>${fmt(c.amount)}</b> de la banque maintenant (taux ${(c.rate*100).toFixed(1)}%), et son ${c.rank}${c.rank===1?'er':'e'} passage sur GO futur ne lui versera aucun salaire. Des cubes rouges sont ajoutés à son action. Cette vente ne peut pas être annulée.</div>`,
+    okLabel: c=>`Vendre la subvention (${fmt(c.amount)})`,
+    run: c=>takeGoAdvance(companyId, {expectedOwed: c.owed, expectedConditions: c, fromConfirm: true}),
+  });
 }
 async function takeGoAdvance(companyId, opts){
   opts = opts || {};
@@ -12576,6 +12843,8 @@ async function takeGoAdvance(companyId, opts){
     if(state.settings.goAdvanceMax>0 && co.goAdvancesOwed>=state.settings.goAdvanceMax){
       return {ok:false, error:`${co.name} a déjà atteint le nombre maximal de subventions d'avance simultanées autorisé pour cette partie (${state.settings.goAdvanceMax}) — au moins un passage sur GO doit d'abord rembourser une subvention existante.`};
     }
+    // Section 308 — C2 : montant et taux confirmés par le joueur, revérifiés sur l'état frais (et après un conflit).
+    if(opts.expectedConditions && !sameConditions(opts.expectedConditions, goAdvanceConditions(companyId))) return staleConditionsResult();
     const rank = co.goAdvancesOwed + 1;
     
     
@@ -12590,7 +12859,7 @@ async function takeGoAdvance(companyId, opts){
       [{label:`${co.name} (subvention d'avance)`, amount:amount}, {label:'Banque', amount:-amount}]);
     return {ok:true};
   }, {label:'Subvention d\'avance GO'});
-  if(!res.ok){ if(res.error) alert(res.error); return res; }
+  if(!res.ok){ if(res.error && !opts.fromConfirm) alert(res.error); return res; } // Section 308 — C2 : la fenêtre de confirmation affiche le refus
   render();
   return res;
 }
@@ -13080,10 +13349,39 @@ function maybeShowDiceRollTurnPopup(){
   if(!state || !state.lastDiceRollEvent || isSpectator) return;
   const roll = state.lastDiceRollEvent.roll;
   if(roll===seenDiceRollEventRoll) return;
+  // Section 308 — C1 : une fenêtre d'information déclenchée par une mise à jour ne remplace jamais une fenêtre
+  // ouverte ; elle attend sa fermeture (closeModal la relance) sans être marquée « vue », donc ni perdue ni doublée.
+  if(isModalOpen()) return;
+  const previousSeen = seenDiceRollEventRoll;
   seenDiceRollEventRoll = roll; 
   const co = myCompany();
   if(!co) return; 
-  showDiceRollTurnPopup(co, roll);
+  // Section 308 — si d'autres lancers ont eu lieu pendant l'attente, la fenêtre (faite pour le dernier lancer :
+  // variations du portefeuille, mises de l'année) le signale au lieu de les taire.
+  const skipped = (typeof previousSeen==='number' && roll-previousSeen>1) ? roll-previousSeen-1 : 0;
+  showDiceRollTurnPopup(co, roll, skipped);
+}
+// Section 308 — C1 : une fenêtre est-elle ouverte (#modalHost non vide) ?
+function isModalOpen(){
+  const host = (typeof document!=='undefined') ? document.getElementById('modalHost') : null;
+  return !!(host && typeof host.innerHTML==='string' && host.innerHTML.trim()!=='');
+}
+// Section 308 — C1 : fenêtres d'information en attente (résultats du tour, annonce CEO exécutée), montrées dès
+// qu'aucune fenêtre n'est ouverte, avec les mêmes conditions que dans render().
+function maybeShowPendingPopups(){
+  if(!gameCode || !state || isSpectator || actionsInFlight>0 || isModalOpen()) return;
+  if(state.gameEndedReason && !__gameEndedReviewMode) return;
+  const me = state.players.find(p=>p.id===myPlayerId);
+  if(!me || !me.companyId) return;
+  maybeShowDiceRollTurnPopup();
+  maybeShowCeoAnnouncementExecutionPopup();
+}
+let deferredPopupsScheduled = false;
+function scheduleDeferredPopups(){
+  if(deferredPopupsScheduled) return;
+  deferredPopupsScheduled = true;
+  // Après le gestionnaire en cours : « closeModal(); openModal(suivante) » garde la priorité.
+  setTimeout(()=>{ deferredPopupsScheduled = false; try{ maybeShowPendingPopups(); }catch(e){ console.error('Fenêtre en attente impossible à afficher :', e); } }, 0);
 }
 
 function maybeShowCeoAnnouncementExecutionPopup(){
@@ -13108,7 +13406,7 @@ function maybeShowCeoAnnouncementExecutionPopup(){
   if(exec.ok===false){ alert(`Votre annonce CEO (${dirLabel.toLowerCase()} de ${fmt(exec.amount)} sur ${co?co.name:'?'}, faite il y a 1 an) est arrivée à échéance mais N'A PAS PU s'exécuter : ${exec.error||'raison inconnue'}`); return; }
   showTransactionPopup(`Annonce CEO exécutée — ${dirLabel} — ${co ? co.name : ''}`, exec.entries);
 }
-function showDiceRollTurnPopup(co, roll){
+function showDiceRollTurnPopup(co, roll, skippedRolls){
   const ledgerThisRoll = state.finLedger.filter(e=>e.companyId===co.id && e.roll===roll);
   const gained = ledgerThisRoll.filter(e=>e.category==='rent_revenue').reduce((s,e)=>s+e.amount, 0);
   
@@ -13287,6 +13585,7 @@ function showDiceRollTurnPopup(co, roll){
     </table>` : '';
   openModal(`
     <h3>🎲 Résultats du tour — ${esc(co.name)}</h3>
+    ${skippedRolls>0 ? `<div class="small" style="margin-bottom:8px;">${skippedRolls} autre(s) lancer(s) ont eu lieu pendant qu'une fenêtre était ouverte sur cet appareil : leur détail est au journal.</div>` : ''}
     ${portefeuilleSectionHtml}
     ${entrepriseSectionHtml}
     ${terrainLotSectionHtml}
@@ -16070,7 +16369,91 @@ function openModal(html){
   const openedMs = lastModalOpenMs = Date.now(); // Section 308
   document.getElementById('modalBg').addEventListener('click', e=>{ if(e.target.id==='modalBg' && Date.now()-openedMs>=ACTION_CLICK_DEBOUNCE_MS) closeModal(); });
 }
-function closeModal(){ const host = document.getElementById('modalHost'); if(host) host.innerHTML=''; }
+function closeModal(){
+  const host = document.getElementById('modalHost'); if(host) host.innerHTML='';
+  scheduleDeferredPopups(); // Section 308 — C1 : les fenêtres d'information en attente s'affichent maintenant
+}
+// Section 308 — C2 : confirmation sur des conditions revérifiées à l'état à jour (utilitaire générique).
+//
+// Pour toute fenêtre qui affiche des conditions calculées à l'ouverture (montant, taux, prime, détention…).
+// Mode d'emploi :
+//   confirmWithFreshConditions({
+//     title:    'Titre de la fenêtre' (texte brut, échappé ici),
+//     compute:  () => conditions recalculées sur `state` COURANT : objet simple (nombres, textes, booléens,
+//               tableaux) ; ou {unavailable:'message'} si l'action n'est plus possible,
+//     initial:  (facultatif) conditions déjà montrées à l'écran avant l'ouverture (ex. détention affichée sur
+//               le bouton) ; sinon compute() à l'ouverture,
+//     describe: (cond) => HTML du corps de la fenêtre (valeurs échappées par l'appelant),
+//     okLabel:  (cond) => texte du bouton de confirmation,
+//     run:      async (cond) => {ok, error, code} : lance l'action avec les conditions CONFIRMÉES. Son applyFn
+//               recalcule les conditions sur l'état frais et, si !sameConditions(cond, frais), renvoie
+//               staleConditionsResult() : rien n'est fait. run ne doit pas afficher d'alerte (l'utilitaire s'en
+//               charge) ni fermer la fenêtre,
+//     same:     (facultatif) (a, b) => bool ; défaut sameConditions (égalité profonde, nombres à 1e-9 près),
+//     onDone:   (facultatif) (res) => appelé après un succès, fenêtre fermée.
+//   })
+// Déroulé à la confirmation :
+//   1. la dernière valeur reçue du serveur est appliquée (adoptLatestRemoteState) ;
+//   2. les conditions sont recalculées ; si elles diffèrent de celles affichées, la fenêtre montre les nouvelles
+//      avec un avertissement et demande une 2e confirmation : rien n'est exécuté ;
+//   3. sinon l'action part avec ces conditions ; si son applyFn constate à son tour un changement (sauvegarde
+//      concurrente, code 'stale-conditions'), même 2e confirmation ;
+//   4. succès : la fenêtre se ferme ; autre refus ou échec : message, la fenêtre reste ouverte.
+// Renvoie {repaint} (redessine la fenêtre avec des conditions recalculées) pour les tests et les appelants.
+function sameConditions(a, b){
+  if(typeof a==='number' && typeof b==='number') return Math.abs(a-b)<=1e-9 || (Number.isNaN(a) && Number.isNaN(b));
+  if(a===b) return true;
+  if(!a || !b || typeof a!=='object' || typeof b!=='object' || Array.isArray(a)!==Array.isArray(b)) return false;
+  const ka = Object.keys(a).filter(k=>a[k]!==undefined), kb = Object.keys(b).filter(k=>b[k]!==undefined);
+  if(ka.length!==kb.length) return false;
+  return ka.every(k=>Object.prototype.hasOwnProperty.call(b, k) && sameConditions(a[k], b[k]));
+}
+function staleConditionsResult(){
+  return {ok:false, code:'stale-conditions', error:'Les conditions ont changé entre-temps (action d’un autre joueur) — rien n’a été fait ; vérifiez les nouvelles conditions puis confirmez à nouveau.'};
+}
+function adoptLatestRemoteState(){
+  if(actionsInFlight>0 || !lastReceivedRaw) return false;
+  try{ return applyRemoteStateIfNewer(lastReceivedRaw); }catch(e){ console.error('Valeur reçue illisible :', e); return false; }
+}
+function confirmWithFreshConditions(o){
+  const same = o.same || sameConditions;
+  let shown = (o.initial!==undefined) ? o.initial : o.compute();
+  let changedNotice = false;
+  const paint = ()=>{
+    const unavailable = !!(shown && shown.unavailable);
+    openModal(`
+      <h3>${esc(o.title)}</h3>
+      ${changedNotice ? `<div class="small" id="mFreshNotice" style="margin-bottom:10px;padding:8px 10px;border-radius:6px;border:1px solid var(--brick,#C0392B);color:var(--brick,#C0392B);">⚠️ Les conditions ont changé depuis l'ouverture de cette fenêtre (action d'un autre joueur). Vérifiez les nouvelles conditions ci-dessous${unavailable?'':', puis confirmez à nouveau'}.</div>` : ''}
+      <div id="mFreshBody">${unavailable ? `<div class="small">${esc(shown.unavailable)}</div>` : o.describe(shown)}</div>
+      <div class="small" id="mRetryStatus"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="mCancel">${unavailable?'Fermer':'Annuler'}</button>
+        ${unavailable ? '' : `<button class="btn btn-primary" id="mOk">${esc(o.okLabel(shown))}</button>`}
+      </div>`);
+    document.getElementById('mCancel').addEventListener('click', closeModal);
+    const okBtn = document.getElementById('mOk');
+    if(okBtn && !unavailable) okBtn.addEventListener('click', onOk);
+  };
+  const repaint = ()=>{ shown = o.compute(); changedNotice = true; paint(); };
+  async function onOk(){
+    adoptLatestRemoteState();
+    const fresh = o.compute();
+    if(!same(shown, fresh)){ shown = fresh; changedNotice = true; paint(); return {ok:false, code:'stale-conditions', shown:true}; }
+    const okBtn = document.getElementById('mOk');
+    if(okBtn) okBtn.disabled = true;
+    let res;
+    try{ res = await o.run(fresh); }
+    catch(e){ console.error('confirmWithFreshConditions — exception :', e); res = {ok:false, error:`Une erreur inattendue est survenue (${e && e.message ? e.message : e}).`}; }
+    if(res && res.ok){ closeModal(); if(o.onDone) o.onDone(res); return res; }
+    if(res && res.code==='stale-conditions'){ repaint(); return res; }
+    const b = document.getElementById('mOk');
+    if(b) b.disabled = false;
+    if(res && res.error) alert(res.error);
+    return res;
+  }
+  paint();
+  return {repaint};
+}
 
 
 function bindTabEvents(t){
@@ -16677,7 +17060,7 @@ function bindTabEvents(t){
       const pct = parseFloat(document.getElementById('etfSellPct_'+id).value)||0;
       const price = parseFloat(document.getElementById('etfSellPrice_'+id).value)||0;
       const expectedHeld = parseFloat(b.dataset.etfHeld); // Section 308 — bogue 57 : détention affichée au moment du clic
-      sellEtfUnits(id, myCo.id, buyerId, pct, price, Number.isFinite(expectedHeld) ? {expectedHeld} : {});
+      modalConfirmEtfSale(id, myCo.id, buyerId, pct, price, Number.isFinite(expectedHeld) ? expectedHeld : null); // Section 308 — C2
     }));
   }
   

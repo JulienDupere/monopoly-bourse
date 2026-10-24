@@ -34,7 +34,9 @@ const compose = (...fs) => src => fs.reduce((s, f) => f(s), src);
 const NO_DEBOUNCE = src => src.replace('function shouldIgnoreActionClick(nowMs, busy, lastBlockingMs, isActionTarget){', 'function shouldIgnoreActionClick(nowMs, busy, lastBlockingMs, isActionTarget){ return false;');
 const NO_JAIL_CHECK = src => src.replace(/    if\(co\.inJail\) return \{ok:false, error:`\$\{co\.name\} fait déjà[^\n]*\n/, '');
 const NO_ETF_CHECK = src => src.replace(/    if\(typeof opts\.expectedHeld==='number'[^\n]*\n/, '');
-const NO_GO_CHECK = src => src.replace("if(Number.isInteger(opts.expectedOwed) && (co.goAdvancesOwed||0)!==opts.expectedOwed){", 'if(false){');
+// Lot 1c : la confirmation revérifie aussi les conditions (rang, montant) ; la contre-épreuve retire les deux gardes.
+const NO_GO_CHECK = src => src.replace("if(Number.isInteger(opts.expectedOwed) && (co.goAdvancesOwed||0)!==opts.expectedOwed){", 'if(false){')
+  .replace("if(opts.expectedConditions && !sameConditions(opts.expectedConditions, goAdvanceConditions(companyId))) return staleConditionsResult();", '');
 
 // Bouton factice (élément <button> vu par le gestionnaire de clics).
 function button(opts){
@@ -165,7 +167,7 @@ async function game3(engineOpts){
       }
     }
     const src = engineSource();
-    ok(/data-etf-sell="\$\{etf\.id\}" data-etf-held="\$\{myHeld\}"/.test(src) && /sellEtfUnits\(id, myCo\.id, buyerId, pct, price, Number\.isFinite\(expectedHeld\) \? \{expectedHeld\} : \{\}\)/.test(src), 'D : le bouton « Vendre » transmet la détention affichée au moment du clic');
+    ok(/data-etf-sell="\$\{etf\.id\}" data-etf-held="\$\{myHeld\}"/.test(src) && /modalConfirmEtfSale\(id, myCo\.id, buyerId, pct, price, Number\.isFinite\(expectedHeld\) \? expectedHeld : null\)/.test(src) && /sellEtfUnits\(etfId, sellerId, buyerId, pct, price, \{expectedHeld: c\.held, expectedConditions: c, fromConfirm: true\}\)/.test(src), 'D : le bouton « Vendre » transmet la détention affichée au moment du clic (lot 1c : via la fenêtre de confirmation)');
   });
 
   // =====================================================================================================

@@ -2185,7 +2185,7 @@ async function saveGame(opts){
         
         if(expectedRaw===null ? (currentVal!==null && currentVal!==undefined) : (currentVal!==expectedRaw)) return undefined;
         return rawToTry;
-      });
+      }, undefined, false); // Section 308 — bogue 74 : applyLocally=false, l'écouteur ne voit jamais une valeur non confirmée par le serveur.
     }catch(e){ txResult = null; }
     toggleSaveFailedWarning(txResult===null);
     if(txResult===null) return false; 
@@ -4497,8 +4497,8 @@ function renderEntreprise(){
   const readyActionHtml = company.inJail
     ? `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`
     : (company.ready
-        ? `<button class="btn btn-ghost btn-sm" data-cancel-ready="${company.id}">🔄 Annuler Tour Terminé</button>`
-        : (blockReadyForNegativeCash ? '' : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}">✅ Tour Terminé</button>`));
+        ? `<button class="btn btn-ghost btn-sm" data-cancel-ready="${company.id}" data-roll="${state.gameClock.rollCount}">🔄 Annuler Tour Terminé</button>`
+        : (blockReadyForNegativeCash ? '' : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}" data-roll="${state.gameClock.rollCount}">✅ Tour Terminé</button>`)); // Section 308 — data-roll : lancer affiché au moment du clic
 
   
   
@@ -12844,6 +12844,7 @@ async function rollDiceAndMove(companyId){
   
   let result = null;
   const res = await attemptActionWithRetry(async ()=>{
+    if(state.gameEndedReason) return {ok:false, error:gameEndedRollMessage(), code:'game-ended'}; // Section 308 — bogue 17 : revérifié sur l'état frais
     const co = companyById(companyId);
     if(!co) return {ok:false};
     
@@ -12891,17 +12892,29 @@ async function rollDiceAndMove(companyId){
   return result;
 }
 
-async function performRollForAllCompanies(){
-  
-  
+// Section 308 — bogues 17 et 59 : chaque action de tour porte le numéro du lancer qu'elle vise (celui affiché au
+// moment du clic) ; sans numéro, c'est le lancer courant au moment de l'appel.
+function turnExpectedRoll(v){ return Number.isInteger(v) ? v : state.gameClock.rollCount; }
+function gameEndedRollMessage(){
+  const r = state.gameEndedReason;
+  return r.reason==='maxDuration'
+    ? `La partie est terminée (durée maximale atteinte) — plus aucun lancer de dés n'est possible.`
+    : `La partie est terminée (${r.companyName} ${r.reason==='bankOwnsAll' ? `la banque possède désormais 100% de ses parts` : `a atteint 0 en bourse`}) — plus aucun lancer de dés n'est possible.`;
+}
+// Refus commun aux actions de tour, évalué DANS l'applyFn, donc sur l'état frais (et de nouveau après un conflit).
+function turnActionRefusal(expectedRoll){
+  if(state.gameEndedReason) return {ok:false, error:gameEndedRollMessage(), code:'game-ended'};
+  if(state.gameClock.rollCount!==expectedRoll) return {ok:false, error:'Ce lancer a déjà été joué — la partie est passée au tour suivant. Vérifiez l’écran avant d’agir à nouveau.', code:'stale-roll'};
+  return null;
+}
+// opts (Section 308) : expectedRoll (lancer visé), requireAllReady (lancer déclenché par le dernier « Tour Terminé » :
+// revérifie que toutes les entreprises qui lancent sont prêtes), auto (refus « déjà joué » / « pas toutes prêtes »
+// sans alerte), logLine (ligne de journal écrite dans la même action, ex. « Forcer le tour »).
+async function performRollForAllCompanies(opts){
+  opts = opts || {};
+  const expectedRoll = turnExpectedRoll(opts.expectedRoll);
   if(state.gameEndedReason){
-    const r = state.gameEndedReason;
-    
-    
-    const alertMsg = r.reason==='maxDuration'
-      ? `La partie est terminée (durée maximale atteinte) — plus aucun lancer de dés n'est possible.`
-      : `La partie est terminée (${r.companyName} ${r.reason==='bankOwnsAll' ? `la banque possède désormais 100% de ses parts` : `a atteint 0 en bourse`}) — plus aucun lancer de dés n'est possible.`;
-    alert(alertMsg);
+    if(!opts.auto) alert(gameEndedRollMessage());
     return null;
   }
   
@@ -12922,10 +12935,13 @@ async function performRollForAllCompanies(){
   
   let results = [], neutralPawnResults = [];
   const res = await attemptActionWithRetry(async ()=>{
-    
-    
-    
-    
+    const refusal = turnActionRefusal(expectedRoll); // Section 308 — bogue 17
+    if(refusal) return refusal;
+    if(opts.requireAllReady){
+      const mustBeReady = activeCompanies().filter(c=>!c.inJail);
+      if(mustBeReady.length===0 || !mustBeReady.every(c=>c.ready)) return {ok:false, error:'Toutes les entreprises ne sont plus prêtes — le lancer attend leur « Tour Terminé ».', code:'not-all-ready'};
+    }
+    if(opts.logLine) log(opts.logLine);
     const alreadyJailedBeforeThisTurn = activeCompanies().filter(c=>c.inJail);
     const rollers = activeCompanies().filter(c=>!c.inJail);
     
@@ -13018,7 +13034,11 @@ async function performRollForAllCompanies(){
     results = localResults; neutralPawnResults = localNeutralPawnResults;
     return {ok:true};
   }, {label:'Lancer les dés pour tous'});
-  if(!res.ok){ if(res.error) alert(res.error); return null; }
+  if(!res.ok){
+    const quiet = opts.auto && (res.code==='stale-roll' || res.code==='not-all-ready'); // Section 308 — un autre appareil a déjà lancé
+    if(res.error && !quiet) alert(res.error);
+    return null;
+  }
   render();
   return results;
 }
@@ -13272,6 +13292,7 @@ function showDiceRollTurnPopup(co, roll){
 }
 
 function modalForceNextTurn(){
+  const expectedRoll = state.gameClock.rollCount; // Section 308 — bogue 17 : lancer affiché à l'ouverture de la fenêtre
   openModal(`
     <h3>Forcer le prochain tour</h3>
     <div class="small" style="margin-bottom:10px;">Forcer le lancer de dés pour toutes les entreprises maintenant, même si certaines n'ont pas encore cliqué sur « Prêt » ? Le statut « Prêt » de toutes les entreprises sera quand même réinitialisé après ce lancer, comme pour un tour normal.</div>
@@ -13283,8 +13304,8 @@ function modalForceNextTurn(){
   document.getElementById('mOk').addEventListener('click', async ()=>{
     closeModal();
     try{
-      log(`⏩ L'administrateur force le lancer de dés pour toutes les entreprises (sans attendre que toutes soient « Prêtes »).`);
-      const results = await performRollForAllCompanies();
+      // Section 308 — bogue 17 : la ligne de journal est écrite dans l'action du lancer (plus hors enveloppe).
+      const results = await performRollForAllCompanies({expectedRoll, logLine:`⏩ L'administrateur force le lancer de dés pour toutes les entreprises (sans attendre que toutes soient « Prêtes »).`});
       if(results && results.length>0){
         const summary = results.map(r=>`${r.companyName}: ${r.d1}+${r.d2}=${r.total} (case ${r.oldPos}→${r.jailed?30:r.newPos}${r.jailed?', enquête AMF':''}${r.passedGo?', passe par GO':''})`).join('\n');
         alert(`Tour forcé — ${results.length} entreprise(s) ont lancé les dés :\n\n${summary}`);
@@ -13299,11 +13320,14 @@ async function rollDiceForAll(){
   return performRollForAllCompanies();
 }
 
-async function checkAllCompaniesReady(){
+// Section 308 — bogues 17 et 59 : expectedRoll = lancer visé par l'action qui déclenche ; le lancer revérifie sur
+// l'état frais que toutes les entreprises sont prêtes et que ce lancer n'a pas déjà été joué. Renvoie true si le
+// lancer a eu lieu (sinon l'appelant redessine).
+async function checkAllCompaniesReady(expectedRoll){
   const rollers = activeCompanies().filter(c=>!c.inJail);
   if(rollers.length===0 || !rollers.every(c=>c.ready)) return false;
-  await performRollForAllCompanies();
-  return true;
+  const results = await performRollForAllCompanies({expectedRoll: turnExpectedRoll(expectedRoll), requireAllReady:true, auto:true});
+  return results!==null;
 }
 
 
@@ -13321,10 +13345,16 @@ async function checkAllCompaniesReady(){
 
 
 
-async function markCompanyReady(companyId){
+// Section 308 — bogues 17 et 59 : expectedRoll = lancer affiché au moment du clic (data-roll). Refus si ce lancer a
+// déjà été joué ou si la partie est finie ; un 2e « Tour Terminé » sur une entreprise déjà prête est ignoré sans
+// rien enregistrer. Renvoie le résultat de l'action ({ok, error, code, triggered}).
+async function markCompanyReady(companyId, expectedRoll){
+  expectedRoll = turnExpectedRoll(expectedRoll);
   const res = await attemptActionWithRetry(async ()=>{
     const co = companyById(companyId);
     if(!co) return {ok:false, error:'Entreprise introuvable.'};
+    const refusal = turnActionRefusal(expectedRoll);
+    if(refusal) return refusal;
     if(myPlayerId!==co.ceoId) return {ok:false, error:`Seul le CEO de ${co.name} peut la déclarer prête pour le lancer de dés pour tous.`};
     if(co.inJail) return {ok:false, error:`${co.name} est enquêtée par l'AMF — elle ne participe pas au lancer de dés pour tous ce tour-ci.`};
     
@@ -13336,19 +13366,24 @@ async function markCompanyReady(companyId){
     
     
     if(co.cash<0 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`};
+    if(co.ready) return {ok:false, error:null, code:'already-ready'};
     co.ready = true;
     log(`${co.name} est prête pour le prochain lancer de dés pour tous.`);
     return {ok:true};
   }, {label:'Prêt pour le lancer de dés'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error) alert(res.error); if(res.code) render(); return res; }
   
   
   
-  const triggered = await checkAllCompaniesReady();
+  const triggered = await checkAllCompaniesReady(expectedRoll);
   if(!triggered) render();
+  return {ok:true, triggered};
 }
 
-async function cancelCompanyReady(companyId){
+// Section 308 — bogue 17 : l'annulation vise le lancer affiché ; refusée s'il a déjà été joué (le statut « prête »
+// a alors déjà servi) ou si la partie est finie.
+async function cancelCompanyReady(companyId, expectedRoll){
+  expectedRoll = turnExpectedRoll(expectedRoll);
   const co0 = companyById(companyId);
   if(!co0){ alert('Entreprise introuvable.'); return; }
   if(myPlayerId!==co0.ceoId){ alert(`Seul le CEO de ${co0.name} peut annuler son statut « prête ».`); return; }
@@ -13357,13 +13392,16 @@ async function cancelCompanyReady(companyId){
     const co = companyById(companyId);
     if(!co) return {ok:false, error:'Entreprise introuvable.'};
     if(myPlayerId!==co.ceoId) return {ok:false, error:`Seul le CEO de ${co.name} peut annuler son statut « prête ».`};
-    if(!co.ready) return {ok:true}; 
+    const refusal = turnActionRefusal(expectedRoll);
+    if(refusal) return refusal;
+    if(!co.ready) return {ok:false, error:null, code:'not-ready'}; // déjà annulé : rien à enregistrer
     co.ready = false;
     log(`${co.name} annule son statut « prête » pour le lancer de dés pour tous.`);
     return {ok:true};
   }, {label:'Annuler prêt'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error) alert(res.error); render(); return res; }
   render();
+  return res;
 }
 
 
@@ -16065,8 +16103,9 @@ function bindTabEvents(t){
     
     
     
-    document.querySelectorAll('[data-mark-ready]').forEach(b=>b.addEventListener('click', ()=>markCompanyReady(b.dataset.markReady)));
-    document.querySelectorAll('[data-cancel-ready]').forEach(b=>b.addEventListener('click', ()=>cancelCompanyReady(b.dataset.cancelReady)));
+    // Section 308 — bogues 17 et 59 : le clic porte le numéro du lancer affiché.
+    document.querySelectorAll('[data-mark-ready]').forEach(b=>b.addEventListener('click', ()=>markCompanyReady(b.dataset.markReady, parseInt(b.dataset.roll,10))));
+    document.querySelectorAll('[data-cancel-ready]').forEach(b=>b.addEventListener('click', ()=>cancelCompanyReady(b.dataset.cancelReady, parseInt(b.dataset.roll,10))));
     
     
     

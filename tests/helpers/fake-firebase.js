@@ -37,6 +37,8 @@
 //    écrite ou non. Les transactions lancées pendant la coupure attendent la reconnexion. À la reconnexion, le
 //    client renvoie d'abord ses écoutes (le serveur répond par la valeur courante), puis ses lectures et écritures
 //    simples (set) sans réponse, à l'identique.
+//  - Accusé perdu (couperApresProchaineEcriture) : coupure déclenchée juste après l'écriture de la prochaine
+//    transaction du client.
 //  - Échec de transaction (echouerTransactions) : le serveur refuse les n prochaines transactions du client sans
 //    rien écrire (erreur « permission_denied », comme un jeton d'authentification expiré) → la promesse est rejetée.
 //  - Fermeture de page (fermer) : comme une coupure, mais le client ne revient jamais ; ses promesses en attente ne
@@ -236,6 +238,10 @@ class Reseau {
           this.noter(`${client.nom} : transaction #${q.tx.num} ÉCRITE (${resume(q.valeur)})`);
           repondre({ type: 'txOk', valeur: q.valeur });
           pousserAuxAutres(q.chemin, q.valeur);
+          if(client.coupureApresEcriture){                // accusé de réception perdu (voir couperApresProchaineEcriture)
+            const d = client.coupureApresEcriture; client.coupureApresEcriture = 0;
+            this.couper(client, d);
+          }
         } else {
           this.stats.perimes++; client.stats.perimes++;
           this.noter(`${client.nom} : transaction #${q.tx.num} périmée (base ${resume(q.base)} ≠ serveur ${resume(actuel)})`);
@@ -400,6 +406,9 @@ class Reseau {
     return arrives;
   }
   echouerTransactions(client, n = 1){ client.echecsAVenir += n; }
+  // La connexion du client tombe juste après que le serveur a écrit sa prochaine transaction : l'écriture est faite,
+  // l'accusé est perdu, le SDK rejette la transaction (« disconnect »).
+  couperApresProchaineEcriture(client, dureeMs){ client.coupureApresEcriture = Math.max(1, dureeMs); }
 
   // ---------- minuteries en temps virtuel ----------
   planifier(client, fn, ms, intervalle){

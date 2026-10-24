@@ -231,12 +231,13 @@ function creerDocument({ html = coquille() } = {}){
       }
     };
     appeler(ecouteursDoc, doc, true);
+    const bloque = arret;                                        // arrêté en phase de capture (garde anti-double-clic)
     if(!arret){
       let p = el;
       while(p && !arret){ appeler(p.__cible._ecouteurs, p, p === el ? null : false); p = p.__cible._parent; }
     }
     if(!arret) appeler(ecouteursDoc, doc, false);
-    return { clic: 'ok', promesse: Promise.all(resultats.map(r => Promise.resolve(r))) };
+    return { clic: bloque ? 'bloqué' : 'ok', promesse: Promise.all(resultats.map(r => Promise.resolve(r))) };
   }
 
   const racine = element('body', [], null);

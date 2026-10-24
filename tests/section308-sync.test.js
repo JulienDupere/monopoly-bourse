@@ -85,13 +85,17 @@ const INSTALLER_TRACAGE = `(function(){
   const origTenter = attemptActionWithRetry;
   attemptActionWithRetry = function(applyFn, o){
     const ctx = __banc.contexte();
-    if(!ctx) return origTenter.apply(this, arguments);
+    // Hors action du banc, ou appel imbriqué depuis une applyFn (il s'exécute dans l'action englobante, dont le
+    // marqueur couvre déjà les mutations) : pas de traçage séparé.
+    if(!ctx || ctx.dansApply > 0) return origTenter.apply(this, arguments);
     const i = ++ctx.nAppels;
     const t = ctx.tag + '/' + i;
     ctx.appels[i] = 'en cours';
     const enveloppe = async function(){
       const r0 = (state && state.gameClock) ? state.gameClock.rollCount : null;
-      const res = await applyFn.apply(this, arguments);
+      let res;
+      ctx.dansApply = (ctx.dansApply || 0) + 1;
+      try{ res = await applyFn.apply(this, arguments); } finally { ctx.dansApply--; }
       if(res && res.ok){ if(!Array.isArray(state.__banc)) state.__banc = []; state.__banc.push({t: t, r: r0}); }
       return res;
     };
@@ -153,9 +157,13 @@ const societeDe = (app) => app.eng.run('(myCompany()||{}).id || null');
 // (ouvrir la fenêtre, remplir les champs) et renvoie false si l'action ne peut pas commencer (fenêtre refusée) ;
 // cliquer() fait le clic et renvoie la promesse du gestionnaire. ctx.attendu = rollCount affiché au moment du clic,
 // pour les actions liées au tour (pour le 2e clic d'un double clic, celui du 1er : même intention, même tour vu).
-// APRÈS LA FUSION AVEC 1a : si markCompanyReady / cancelCompanyReady / le gestionnaire de « Forcer le tour » /
-// performRollForAllCompanies reçoivent le numéro de lancer attendu, ou si les boutons d'onglet passent par une
-// garde anti-double-clic, c'est ICI (et seulement ici) qu'il faut l'appeler. ctx.attendu contient déjà la valeur.
+// État après la fusion avec le lot 1a (API section 308) : rien à appeler directement. Les boutons « Tour Terminé »
+// et « Annuler » portent data-roll et leurs écouteurs (bindTabEvents) passent ce numéro à markCompanyReady /
+// cancelCompanyReady ; la fenêtre « Forcer le tour » appelle performRollForAllCompanies({expectedRoll, logLine}) ;
+// la garde anti-double-clic est un écouteur du document en phase de capture (le mini-DOM l'exécute : un clic
+// qu'elle arrête est noté « bloqué »). Un double clic = deux clics sur le même bouton, donc avec le même data-roll ;
+// ctx.attendu (même valeur pour les deux clics) sert seulement aux invariants. Si l'interface change encore
+// (sélecteurs, identifiants de champs), c'est ICI et seulement ici qu'il faut l'adapter.
 // =====================================================================================================================
 function ouvrirFenetre(app, ouverture, champs){
   app.eng.run(ouverture);
@@ -236,7 +244,9 @@ async function executerAction(env, app, action){
     try{ pret = def.preparer(app, action.params || {}); }
     catch(e){ ctx1.etat = 'exception'; ctx1.erreur = String(e && e.message || e); return; }
     if(!pret){ ctx1.etat = 'terminé'; ctx1.clic = 'impossible'; return; }
-    await env.R.delai(env.R.entier(action.saisieMs === undefined ? 1500 : action.saisieMs));   // l'utilisateur remplit
+    // L'utilisateur lit, remplit et confirme : au moins 600 ms (un humain ne confirme pas une fenêtre en moins d'une
+    // demi-seconde ; l'interface ignore d'ailleurs les clics d'action moins de 500 ms après l'ouverture d'une fenêtre).
+    await env.R.delai(600 + env.R.entier(action.saisieMs === undefined ? 1500 : action.saisieMs));
     if(!app.vivant) return;
     promesses.push(suivre(ctx1, def.cliquer(app, action.params || {}, ctx1)));
     if(action.double){
@@ -454,6 +464,14 @@ const SCENARIOS = [
         };
       });
     } },
+  { code: 'S3b', titre: 'Accusé de réception perdu : la connexion tombe juste après l’écriture sur le serveur', graines: [81, 82, 83], variante: 'base',
+    plan(env){
+      appareil(env, 'Alice').plan = [{ type: 'investirBons', params: { montant: 1.5 } }];
+      appareil(env, 'Bob').plan = [{ type: 'acheter', params: { societeId: env.initial.companies.find(c => c.name === 'Co Alice').id, montant: 0.7 }, saisieMs: 3000 }];
+      // La première transaction écrite d'Alice perd son accusé : la connexion tombe juste après l'écriture.
+      env.R.couperApresProchaineEcriture(appareil(env, 'Alice').client, 500 + env.R.entier(2000));
+      env.evenements.push('la connexion d’Alice tombera juste après l’écriture de sa prochaine transaction');
+    } },
   { code: 'S4', titre: 'Rechargement d’un appareil en plein envoi', graines: [51, 52, 53, 54, 55, 56, 57, 58], variante: 'base',
     plan(env){
       for(const nom of ['Alice', 'Bob', 'Chloé']) appareil(env, nom).plan = planAleatoire(env, nom, 5);
@@ -477,7 +495,7 @@ const SCENARIOS = [
 // Exécution
 // =====================================================================================================================
 const AUDIT = {
-  PERDUE: '44', FANTÔME: '44', FANTÔME_LOCAL: '44', DOUBLÉE: '44 / 59', LANCER_EN_TROP: '17 / 59', LANCER_APRÈS_FIN: '17',
+  PERDUE: '44', FANTÔME: '44 (ou accusé perdu, voir S3b)', FANTÔME_LOCAL: '44', DOUBLÉE: '44 / 59', LANCER_EN_TROP: '17 / 59', LANCER_APRÈS_FIN: '17',
   TOUR_DÉCALÉ: '17 / 59', DIVERGENCE: '(synchro)', MONNAIE: '(monnaie)', NON_TERMINÉE: '(blocage)', EXCEPTION: '(exception)', HORLOGE: '(horloge)',
 };
 function graines(sc){

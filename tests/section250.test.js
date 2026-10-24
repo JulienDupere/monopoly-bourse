@@ -127,7 +127,8 @@ async function scenarioA(T, label){
     ok(r.applyCalls === 1, `A : l’achat n’est appliqué qu’UNE fois malgré 5 échecs (appliqué ${r.applyCalls} fois)`);
     ok(r.res && r.res.ok === false, 'A : l’action est signalée en échec');
     ok(T.alerts.length === 1, 'A : un seul message d’échec affiché');
-    ok(near(r.L.cash, r.before.cash - 2) && r.L.buys === 1, `A : sur l’appareil, au plus UN débit de 2 M$ (encaisse ${r.before.cash.toFixed(2)} → ${r.L.cash.toFixed(2)})`);
+    // Section 308 : l'achat non enregistré est retiré de l'appareil (avant : il y restait, appliqué une fois).
+    ok(near(r.L.cash, r.before.cash) && r.L.buys === 0, `A : sur l’appareil, l’achat non enregistré est retiré (encaisse ${r.before.cash.toFixed(2)} → ${r.L.cash.toFixed(2)})`);
     ok(near(r.S.cash, r.before.cash) && r.S.buys === 0 && r.S.version === r.before.version, 'A : le serveur n’a rien reçu');
     // Le réseau revient : la prochaine sauvegarde enregistre UN seul achat, jamais cinq.
     const saved = await T.eng.run('saveGame({silent:true})');
@@ -181,7 +182,8 @@ async function scenarioA(T, label){
     const r = await scenarioA(T);
     console.log('    ancien comportement : action appliquée', r.applyCalls, 'fois, encaisse', r.before.cash.toFixed(2), '→', r.L.cash.toFixed(2));
     ok(r.applyCalls === 5, `D : sans le correctif, l’achat est appliqué 5 fois (${r.applyCalls}) — le scénario A l’aurait détecté`);
-    ok(near(r.L.cash, r.before.cash - 10), `D : sans le correctif, 10 M$ sont débités au lieu de 2 (${r.L.cash.toFixed(2)})`);
+    // Section 308 : l'enveloppe retire la dernière application non enregistrée ; il en reste quatre (8 M$).
+    ok(near(r.L.cash, r.before.cash - 8), `D : sans le correctif, l’appareil garde 4 achats non enregistrés, 8 M$ débités (${r.L.cash.toFixed(2)})`);
   }
 
   console.log(`\n${n} vérifications OK`);

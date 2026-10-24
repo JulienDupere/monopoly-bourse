@@ -216,7 +216,8 @@ async function scenario(title, fn){
     ok(res && res.ok === false, 'C : l’action échoue');
     ok(T.eng.run('__applyCalls') === 1, `C : l’action n’est JAMAIS réappliquée (applyFn appelée ${T.eng.run('__applyCalls')} fois, attendu 1)`);
     const L = T.bob(T.local());
-    ok(near(L.cash, before.cash - 2) && L.buys === 1, `C : l’état local porte au plus UNE application (encaisse ${L.cash.toFixed(2)}, ${L.buys} achat)`);
+    // Section 308 : l'action non enregistrée est retirée de l'appareil (avant : elle y restait, appliquée une fois).
+    ok(near(L.cash, before.cash) && L.buys === 0, `C : l’état local revient au dernier état enregistré, l’achat non enregistré est retiré (encaisse ${L.cash.toFixed(2)}, ${L.buys} achat)`);
     ok(!T.fb.server.has(T.path), 'C : la partie supprimée n’est pas recréée sur le serveur');
   });
 

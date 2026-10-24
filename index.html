@@ -2052,6 +2052,7 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
   pushHistorySnapshot(0); 
   await storageSet('game:'+code, JSON.stringify(s), true);
   gameCode = code; state = s;
+  resetActionQueue(); // Section 308
   await storageSet('mychar:'+code, players[0].id, false);
   await storageSet('lastcode', code, false);
   myPlayerId = players[0].id;
@@ -2073,6 +2074,7 @@ async function loadGame(code){
   state = JSON.parse(raw);
   migrateState(state);
   gameCode = code;
+  resetActionQueue(); // Section 308 — une partie (re)chargée repart avec une file d'actions vide.
   lastDiceResult = null; 
   lastDiceResults = null;
   const mp = await storageGet('mychar:'+code, false);
@@ -2160,7 +2162,9 @@ async function saveGame(opts){
   
   
   
-  const fbDb = firebaseDb();
+  // Section 308 — bogue 71 : en mode local (window.storage : tests, mode hors ligne), la sauvegarde ne passe
+  // JAMAIS par Firebase, même si le SDK est chargé (comme storageGet/storageSet et startPolling).
+  const fbDb = window.storage ? null : firebaseDb();
   if(gameCode && fbDb){
     await firebaseAuthReady(); // Section 305
     if(state.version===undefined) state.version = 0;
@@ -2246,7 +2250,7 @@ async function saveGame(opts){
   
   const ok = await storageSet('game:'+gameCode, raw, true);
   toggleSaveFailedWarning(ok===null);
-  if(ok===null) return false; 
+  if(ok===null){ state.version--; return false; } // Section 308 — rien n'est écrit : la version locale ne doit pas avancer.
   lastSerialized = raw;
   return true;
 }
@@ -2260,28 +2264,108 @@ function toggleSaveFailedWarning(show){
 
 
 
-async function attemptActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}={}){
+// Section 308 — enveloppe transactionnelle (bogues 44, 73, 74) :
+// - une seule action à la fois sur cet appareil : les appels suivants attendent leur tour dans une file
+//   (ex. plusieurs mises REIT d'une même fenêtre), aucun n'est perdu ;
+// - pendant une action, les valeurs reçues du serveur sont mises de côté (applyRemoteStateIfNewer) et
+//   appliquées à la fin : state n'est jamais remplacé en cours de calcul ;
+// - une action n'est adoptée que si sa sauvegarde réussit ; sur tout échec (applyFn refuse après avoir déjà
+//   modifié state, exception, réseau, conflits répétés), state revient à l'état d'avant l'application — le
+//   dernier état confirmé par le serveur (état local entre deux actions, ou valeur fraîche du serveur après
+//   un conflit) — et les globales locales du lancer sont restaurées.
+let actionQueueTail = Promise.resolve();
+let actionsInFlight = 0;
+let actionApplyDepth = 0;
+let actionGeneration = 0;
+let lastActionEndMs = 0;
+function resetActionQueue(){
+  actionGeneration++;
+  actionQueueTail = Promise.resolve();
+  actionsInFlight = 0;
+  actionApplyDepth = 0;
+}
+function snapshotActionLocals(){
+  return {lastDiceResult, lastDiceResults, lastNeutralPawnResults, seenDiceRollEventRoll};
+}
+function restoreActionLocals(l){
+  if(!l) return;
+  lastDiceResult = l.lastDiceResult; lastDiceResults = l.lastDiceResults;
+  lastNeutralPawnResults = l.lastNeutralPawnResults; seenDiceRollEventRoll = l.seenDiceRollEventRoll;
+}
+function restoreActionBase(baseRaw, baseLocals){
+  if(baseRaw!==null && JSON.stringify(state)!==baseRaw) state = JSON.parse(baseRaw);
+  restoreActionLocals(baseLocals);
+}
+function actionFailureMessage(reason, attempts, detail){
+  const tail = 'Votre action n’a PAS été enregistrée ; la partie affiche le dernier état enregistré.';
+  if(reason==='network') return `Connexion au serveur perdue (ou partie introuvable) — ${attempts} essai(s) d’enregistrement sans succès. ${tail} Vérifiez votre connexion puis recommencez.`;
+  if(reason==='exception') return `Une erreur inattendue est survenue pendant l’action${detail ? ` (${detail})` : ''}. ${tail}`;
+  if(reason==='reloaded') return `La partie a été rechargée pendant l’action. ${tail}`;
+  return `Conflits répétés : d’autres joueurs enregistrent en même temps — nouvel essai automatique fait ${attempts} fois sans succès. ${tail} Réessayez dans un instant.`;
+}
+function attemptActionWithRetry(applyFn, opts){
+  if(actionApplyDepth>0){
+    // Appel imbriqué (une applyFn qui appelle une autre action) : il fait partie de l'action englobante,
+    // qui sauvegarde le tout ; le mettre en file bloquerait les deux.
+    console.warn('attemptActionWithRetry imbriqué : exécuté dans l’action en cours.');
+    return Promise.resolve().then(()=>applyFn());
+  }
+  const gen = actionGeneration;
+  actionsInFlight++;
+  const btn = takeClickedActionButton();
+  if(btn) btn.disabled = true;
+  const run = actionQueueTail.then(()=>runActionWithRetry(applyFn, opts||{}, gen));
+  actionQueueTail = run.catch(()=>{});
+  return run.then(res=>{ finishAction(gen, btn, res); return res; }, err=>{ finishAction(gen, btn, null); throw err; });
+}
+function finishAction(gen, btn, res){
+  if(btn) btn.disabled = false;
+  if(gen!==actionGeneration) return;
+  actionsInFlight = Math.max(0, actionsInFlight-1);
+  lastActionEndMs = Date.now();
+  const applied = (actionsInFlight===0 && lastReceivedRaw && !isLocalInputActive()) ? applyRemoteStateIfNewer(lastReceivedRaw) : false;
+  // Action non enregistrée : l'écran repasse tout de suite au dernier état enregistré.
+  if(!applied && res && res.notSaved && gameCode && state) render();
+}
+async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen){
   let res = null;
   let needsReapply = true;
+  let baseRaw = null, baseLocals = null, failure = null;
   for(let attempt=1; attempt<=maxAttempts; attempt++){
     if(needsReapply){
-      
-      
-      res = await applyFn();
-      if(!res || !res.ok) return res; 
+      if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
+      if(baseLocals) restoreActionLocals(baseLocals);
+      baseRaw = JSON.stringify(state);
+      baseLocals = snapshotActionLocals();
+      actionApplyDepth++;
+      try{ res = await applyFn(); }
+      catch(e){
+        console.error('Action interrompue par une exception — rien n’est enregistré :', e);
+        res = {ok:false, error:actionFailureMessage('exception', attempt, e && e.message ? e.message : String(e)), notSaved:true, reason:'exception'};
+      }
+      finally{ actionApplyDepth--; }
+      // {ok:false, persist:true} : refus dont le nettoyage (ex. annonce périmée retirée) doit être enregistré.
+      if((!res || !res.ok) && !(res && res.persist===true)){ if(gen===actionGeneration) restoreActionBase(baseRaw, baseLocals); return res; }
     }
+    if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
     if(label) setMyActionStatus(label, 'pending');
     const saved = await saveGame({silent:true});
-    if(saved===true){ if(label) setMyActionStatus(label, 'confirmed'); return res; } 
-    if(onRetry) onRetry(attempt);
-    
-    
-    
-    
+    if(saved===true){ if(label) setMyActionStatus(label, 'confirmed'); return res; }
+    failure = (saved==='conflict') ? 'conflict' : 'network';
+    if(onRetry) onRetry(attempt, failure);
+
+
+
+
     needsReapply = (saved==='conflict');
   }
   if(label) setMyActionStatus(label, 'failed');
-  return {ok:false, error:`Un autre appareil sauvegarde en continu — nouvel essai automatique fait ${maxAttempts} fois sans succès. Réessaie dans un instant.`};
+  // Après un conflit, saveGame a déjà remplacé state par la valeur du serveur : seules les globales locales
+  // sont à restaurer. Après un échec réseau, state porte encore l'action non enregistrée : on la retire.
+  if(gen===actionGeneration){
+    if(failure==='conflict') restoreActionLocals(baseLocals); else restoreActionBase(baseRaw, baseLocals);
+  }
+  return {ok:false, error:actionFailureMessage(failure, maxAttempts), notSaved:true, reason:failure};
 }
 
 
@@ -6306,9 +6390,28 @@ function isLocalInputActive(){
   return false;
 }
 
+// Section 308 — version d'une valeur sérialisée (mise en cache : lastSerialized change peu souvent).
+let rawVersionCache = {raw:null, version:null};
+function rawGameVersion(raw){
+  if(!raw) return null;
+  if(rawVersionCache.raw!==raw){
+    let v = null;
+    try{ v = JSON.parse(raw).version; }catch(e){ v = null; }
+    rawVersionCache = {raw, version: typeof v==='number' ? v : null};
+  }
+  return rawVersionCache.version;
+}
 function applyRemoteStateIfNewer(raw){
+  // Section 308 — pendant une action de cet appareil, la valeur reçue attend la fin de l'action
+  // (finishAction l'applique) : state n'est jamais remplacé au milieu d'un calcul ou d'une sauvegarde.
+  if(actionsInFlight>0) return false;
   if(raw && raw !== lastSerialized){
-    state = JSON.parse(raw);
+    const incoming = JSON.parse(raw);
+    // Section 308 — une valeur reçue AVANT notre dernière écriture (version plus basse) ne doit pas
+    // ramener l'appareil en arrière : l'écouteur livrera la valeur à jour.
+    const confirmedVersion = rawGameVersion(lastSerialized);
+    if(typeof incoming.version==='number' && confirmedVersion!==null && incoming.version<confirmedVersion) return false;
+    state = incoming;
     migrateState(state);
     lastSerialized = raw;
     render();
@@ -6940,8 +7043,9 @@ async function sellEtfUnits(etfId, sellerId, buyerId, pct, price){
       [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:`${seller.name} (vente ${pct}%)`, amount:price}]);
     return {ok:true};
   }, {label:'Vente de parts REIT'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
   render();
+  return res;
 }
 
 function processEtfLap(){
@@ -11300,7 +11404,7 @@ async function buyPreferredSharesFromListing(listingId, buyerId, qty, opts){
   const sellerQty = (seller && sellerHolder) ? Math.max(0, sellerHolder.qty) : 0;
   if(!(sellerQty>1e-9)){
     state.preferredMarketListings = state.preferredMarketListings.filter(l=>l.id!==listingId);
-    return {ok:false, error:`${seller?seller.name:'Le vendeur'} ne détient plus aucune part de cette émission (rachetées ou déjà vendues) — l'annonce est retirée, aucun achat n'a eu lieu.`};
+    return {ok:false, persist:true, error:`${seller?seller.name:'Le vendeur'} ne détient plus aucune part de cette émission (rachetées ou déjà vendues) — l'annonce est retirée, aucun achat n'a eu lieu.`}; // Section 308 — persist : le retrait de l'annonce est enregistré malgré le refus.
   }
   if(!(qty>0) || qty>listing.qty+1e-9) return {ok:false, error:'Quantité invalide.'};
   // Section 307 — quantité transférée plafonnée à la détention réelle du vendeur ; l'acheteur ne paie que
@@ -12455,8 +12559,9 @@ async function takeGoAdvance(companyId){
       [{label:`${co.name} (subvention d'avance)`, amount:amount}, {label:'Banque', amount:-amount}]);
     return {ok:true};
   }, {label:'Subvention d\'avance GO'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
   render();
+  return res;
 }
 
 function jailedCompanyIds(){
@@ -13594,7 +13699,7 @@ async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
     res = await attemptActionWithRetry(applyFn, {
       maxAttempts,
       label,
-      onRetry: (attempt)=>{ if(statusEl) statusEl.textContent = `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; },
+      onRetry: (attempt, failure)=>{ if(statusEl) statusEl.textContent = failure==='network' ? `Connexion au serveur perdue — nouvel essai d’enregistrement (${attempt})...` : `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; }, // Section 308
     });
   } catch(e){
     if(okBtn) okBtn.disabled = false;
@@ -13603,7 +13708,7 @@ async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
     return {ok:false, error: String((e && e.message) || e)};
   }
   if(okBtn) okBtn.disabled = false;
-  if(!res || !res.ok){ if(res && res.error) alert(res.error); return res; }
+  if(!res || !res.ok){ if(statusEl && res && res.notSaved) statusEl.textContent = ''; if(res && res.error) alert(res.error); return res; } // Section 308
   closeModal(); render();
   return res;
 }
@@ -15848,11 +15953,51 @@ function renderSpectatorView(){
 
 
 
+// Section 308 — anti-rebond des boutons d'action (bogues 32, 57, 58, 59, 60) : un clic sur un bouton d'action
+// est ignoré pendant qu'une action de cet appareil est en cours, et pendant ACTION_CLICK_DEBOUNCE_MS après la
+// fin d'une action ou l'ouverture d'une fenêtre (le 2e clic d'un double clic ne tombe jamais sur la ligne
+// remontée ni sur le bouton de confirmation). Onglets, menus, listes et boutons Annuler/Fermer restent libres.
+const ACTION_CLICK_DEBOUNCE_MS = 500;
+let lastModalOpenMs = 0;
+let lastClickedActionButton = null;
+function shouldIgnoreActionClick(nowMs, busy, lastBlockingMs, isActionTarget){
+  if(!isActionTarget) return false;
+  if(busy) return true;
+  return (nowMs - (lastBlockingMs||0)) < ACTION_CLICK_DEBOUNCE_MS;
+}
+function isFreeClickButton(b){
+  if(!b) return true;
+  if(['mCancel','mChainClose','mRentTurnOk','entActionsMenuBtn','whoami','leaveGame'].includes(b.id)) return true;
+  if(b.hasAttribute && (b.hasAttribute('aria-expanded') || b.hasAttribute('data-free-click'))) return true;
+  if(b.closest && b.closest('.tabs, summary')) return true;
+  return /^(annuler|fermer|ok|×|✕)$/i.test((b.textContent||'').trim());
+}
+function actionClickTarget(el){
+  const b = (el && el.closest) ? el.closest('button') : null;
+  return (b && !isFreeClickButton(b)) ? b : null;
+}
+function takeClickedActionButton(){
+  const c = lastClickedActionButton;
+  lastClickedActionButton = null;
+  return (c && Date.now()-c.ms < 1000) ? c.el : null;
+}
+if(typeof document!=='undefined' && document.addEventListener){
+  document.addEventListener('click', e=>{
+    const b = actionClickTarget(e.target);
+    if(!b) return;
+    if(shouldIgnoreActionClick(Date.now(), actionsInFlight>0, Math.max(lastActionEndMs, lastModalOpenMs), true)){
+      e.stopPropagation(); e.preventDefault();
+      return;
+    }
+    lastClickedActionButton = {el:b, ms:Date.now()};
+  }, true);
+}
 function openModal(html){
   const host = document.getElementById('modalHost');
   if(!host) return;
   host.innerHTML = `<div class="modal-bg" id="modalBg"><div class="modal">${html}</div></div>`;
-  document.getElementById('modalBg').addEventListener('click', e=>{ if(e.target.id==='modalBg') closeModal(); });
+  const openedMs = lastModalOpenMs = Date.now(); // Section 308
+  document.getElementById('modalBg').addEventListener('click', e=>{ if(e.target.id==='modalBg' && Date.now()-openedMs>=ACTION_CLICK_DEBOUNCE_MS) closeModal(); });
 }
 function closeModal(){ const host = document.getElementById('modalHost'); if(host) host.innerHTML=''; }
 

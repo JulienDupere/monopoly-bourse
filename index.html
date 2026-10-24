@@ -2361,7 +2361,11 @@ function attemptActionWithRetry(applyFn, opts){
   }
   // Section 308 — retouche de la revue : connexion connue comme coupée : l'action n'est pas lancée (sinon elle
   // attendrait la reconnexion sans limite, tous les boutons d'action ignorés). Rien n'est modifié.
-  if(isKnownOffline()) return Promise.resolve(offlineActionResult());
+  if(isKnownOffline()){
+    takeClickedActionButton(); // le bouton cliqué n'est pas désactivé : rien n'est parti
+    flashActionStatus(OFFLINE_ACTION_MESSAGE); // visible même si l'appelant n'affiche pas l'erreur
+    return Promise.resolve(offlineActionResult());
+  }
   const gen = actionGeneration;
   actionsInFlight++;
   const btn = takeClickedActionButton();

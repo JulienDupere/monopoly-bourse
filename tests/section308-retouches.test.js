@@ -326,12 +326,14 @@ const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Dat
       const p2 = A.run(`globalThis.__r2 = null; attemptActionWithRetry(async ()=>{ state.players[0].cash += 5; state.bank.cash -= 5; return {ok:true}; }).then(r=>{ __r2 = r; return r; })`);
       await tick(10);
       const r2 = A.json('__r2'); const enVol = A.run('actionsInFlight'); const cashLocal = A.run('state.players[0].cash');
+      const ind3 = indicateur(A);
       console.log(`    [${variante}] en ligne ${enLigne}, coupé ${coupe} ; action 1 en vol : indicateur « ${ind1.texte} » (visible ${ind1.visible}, rouge ${ind1.horsLigne}) ; clic : ${c.clic}, « ${ind2.texte} » ; action 2 : ${JSON.stringify(r2)}, actions en vol ${enVol}`);
       if(variante === 'corrigé'){
         ok(enLigne && coupe, 'R4 : « .info/connected » suivi (vrai en ligne, faux pendant la coupure)');
         ok(ind1.visible && ind1.horsLigne && /en attente du réseau/.test(ind1.texte) && /Virement test/.test(ind1.texte), 'R4 : action en vol hors ligne : indicateur visible « ⏳ Enregistrement en attente du réseau (Virement test)… »');
         ok(c.clic === 'bloqué' && /déjà en cours d’enregistrement/.test(ind2.texte), 'R4 : clic ignoré pendant l’envoi : signalé dans l’indicateur');
         ok(r2 && r2.ok === false && r2.reason === 'offline' && /Pas de connexion au serveur : action non envoyée/.test(r2.error) && enVol === 1 && cashLocal === cash0 + 1, 'R4 : connexion coupée depuis plus de 2 s : action refusée tout de suite, message clair, rien de modifié ni mis en file');
+        ok(ind3.visible && /Pas de connexion au serveur/.test(ind3.texte), 'R4 : le refus est aussi affiché dans l’indicateur (même si l’appelant n’affiche pas l’erreur)');
         const r1 = await env.R.attendrePromesse(p1); await env.R.pomper();
         const S = env.serveur();
         ok(r1.ok === true && S.players[0].cash === cash0 + 1 && A.run('firebaseConnected') === true && !indicateur(A).visible, 'R4 : à la reconnexion, l’action en vol s’enregistre une fois (+1), l’action refusée est absente (pas +5) ; indicateur masqué');

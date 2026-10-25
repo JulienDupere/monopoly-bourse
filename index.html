@@ -10641,11 +10641,22 @@ function companyDebtRatio(company){
   
   
   
-  const grossAssets = companyValue(company) + debt; 
-  return grossAssets>0 ? debt/grossAssets : 0;
+  // Section 312 — bogue 10 : une encaisse négative compte comme une dette (découvert), et non comme un actif
+  // négatif. Avant : actifs = valeur + dette, si bien qu'une encaisse négative supérieure aux autres actifs donnait
+  // des actifs ≤ 0 et un ratio de 0 (cote AA, taux de base, pas de spirale) pour l'entreprise la plus insolvable.
+  // Ratio = (dettes + découvert) / actifs positifs ; le seuil d'insolvabilité (ratio ≥ 1 ⇔ valeur comptable ≤ 0)
+  // est inchangé. Sans aucun actif positif mais avec une dette : ratio au plafond DEBT_RATIO_MAX (fini).
+  const overdraft = Math.max(0, -(company.cash||0));
+  const totalDebt = debt + overdraft;
+  const positiveAssets = companyValue(company) + debt + overdraft;
+  if(totalDebt<=1e-9) return 0;
+  return positiveAssets>1e-9 ? Math.min(DEBT_RATIO_MAX, totalDebt/positiveAssets) : DEBT_RATIO_MAX;
 }
+const DEBT_RATIO_MAX = 1000; // Section 312 — bogue 10 : plafond technique (ni Infinity ni NaN dans les calculs)
 function riskAdjustedRate(baseRate, company){
-  return baseRate + companyDebtRatio(company) * state.settings.debtSpreadFactor;
+  // Section 312 — bogue 65 (décision de Julien) : le taux final ne dépasse jamais le maximum choisi à la création,
+  // taux de base + prime max « si 100 % endetté » : le ratio est plafonné à 1 dans la prime (avant : jusqu'à 15 035 %).
+  return baseRate + Math.min(1, companyDebtRatio(company)) * state.settings.debtSpreadFactor;
 }
 
 function companyCreditRatingInfo(company){

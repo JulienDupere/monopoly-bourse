@@ -9614,6 +9614,11 @@ function advanceGameClock(){
         co.typeReserve = sign>0
           ? {green:0, red:colorQty, white:whiteQty}
           : {green:colorQty, red:0, white:whiteQty};
+      } else if(co.type==='garp' && bookPerShare0!==null){
+        // Section 315 — bogue 66 : équité nulle ou négative = le cours est forcément au-dessus de la valeur comptable,
+        // au-delà de tout écart → sac type à 20 rouges. Avant : la mise à jour était sautée et le sac pouvait rester
+        // vert en pleine faillite.
+        co.typeReserve = {green:0, red:20, white:0};
       }
       
       
@@ -11333,8 +11338,12 @@ function croissanceMarginPercentile(coId, netMarginById){
   const ids = Object.keys(netMarginById);
   if(ids.length<2) return null;
   const val = netMarginById[coId];
-  const countLE = ids.filter(id=>netMarginById[id]<=val).length;
-  return (countLE/ids.length)*100;
+  // Section 315 — bogue 41 : percentile = part des AUTRES entreprises que celle-ci dépasse (une égalité compte pour
+  // moitié) ; l'entreprise ne se compte plus elle-même. Avant : countLE/N, elle-même incluse, si bien qu'avec un
+  // nombre pair d'entreprises celle juste sous la médiane obtenait 50 (« bonne »), et la pire de 2 toujours 50.
+  const others = ids.filter(id=>id!==coId);
+  const beaten = others.reduce((s,id)=>s + (netMarginById[id]<val ? 1 : (netMarginById[id]===val ? 0.5 : 0)), 0);
+  return (beaten/others.length)*100;
 }
 
 function croissanceMarginAxis(percentile, tier){
@@ -12568,9 +12577,12 @@ function drawStockCubes(company, n){
   const toBorrowType = Math.min(Math.round(fundamentalTotal * slicePct.type/slicePct.fundamental), typeTotalAvailable);
   let pGreen = 0, pRed = 0, pWhite = 0;
   if(toBorrowType>0 && typeTotalAvailable>0){
-    pGreen = Math.round(toBorrowType * tp.green/typeTotalAvailable);
-    pRed = Math.round(toBorrowType * tp.red/typeTotalAvailable);
-    pWhite = toBorrowType - pGreen - pRed; 
+    // Section 315 — bogue 68 : la tranche empruntée au sac type garde EXACTEMENT ses proportions (poids non arrondis).
+    // Avant : verts et rouges arrondis séparément, blancs = reste, qui pouvait être négatif (10V/10R, tranche de 7 :
+    // 4V/4R/−1B) et faussait les probabilités (blanc 18,9 % au lieu de 21,6 %).
+    pGreen = toBorrowType * tp.green/typeTotalAvailable;
+    pRed = toBorrowType * tp.red/typeTotalAvailable;
+    pWhite = toBorrowType * tp.white/typeTotalAvailable;
   }
   let consumedTradingGreen = 0, consumedTradingRed = 0;
   for(let i=0;i<n;i++){
@@ -12685,8 +12697,11 @@ function pressPublicCeoStatement(company){
     company.publicStatementUsed = true;
     return {success:false, redBefore, redAfter:redBefore, whiteBonusAdded:0};
   }
-  r.red = Math.max(Math.ceil(r.red*STOCK_CEO_STATEMENT_RED_CUT), r.green);
-  tr.red = Math.max(Math.ceil(tr.red*STOCK_CEO_STATEMENT_RED_CUT), tr.green);
+  // Section 315 — bogue 26 : la sortie divise les rouges de chaque réserve par deux sans descendre sous ses verts
+  // (« se calme sans s'inverser »), mais n'en AJOUTE jamais. Avant : une réserve qui avait plus de verts que de
+  // rouges voyait ses rouges remonter au niveau de ses verts (25V/10R → 25V/25R).
+  r.red = Math.min(r.red, Math.max(Math.ceil(r.red*STOCK_CEO_STATEMENT_RED_CUT), r.green));
+  tr.red = Math.min(tr.red, Math.max(Math.ceil(tr.red*STOCK_CEO_STATEMENT_RED_CUT), tr.green));
   r.white += STOCK_CEO_STATEMENT_WHITE_BONUS;
   company.whiteBonusRemaining = (company.whiteBonusRemaining||0) + STOCK_CEO_STATEMENT_WHITE_BONUS;
   company.publicStatementUsed = true;

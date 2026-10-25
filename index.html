@@ -12021,6 +12021,7 @@ function fillPendingBid(player, company, bid){
 
 
   const bondsNeeded = Math.min(bondsAvail, Math.max(0, amount-cashAvail));
+  const cumBondInterestBefore = player.cumBondInterest; // Section 310-317 — intégration : restauré avec les bons si l'achat échoue (bogue 86 × bogue 36)
   if(bondsNeeded>1e-9){
     player.bondBalance -= bondsNeeded;
     capBondInterestStat(player); // Section 317 — bogue 86
@@ -12031,7 +12032,7 @@ function fillPendingBid(player, company, bid){
   if(!r.ok){
     
     
-    if(bondsNeeded>1e-9){ player.bondBalance += bondsNeeded; player.cash -= bondsNeeded; state.bank.cash += bondsNeeded; }
+    if(bondsNeeded>1e-9){ player.bondBalance += bondsNeeded; player.cash -= bondsNeeded; state.bank.cash += bondsNeeded; player.cumBondInterest = cumBondInterestBefore; } // Section 310-317 — intégration : la statistique plafonnée (bogue 86) revient avec les bons
     return {filled:0};
   }
   if(bondsNeeded>1e-9) absorbCashRoundingResidueWithBonds(player); // Section 314 — retouche de la revue : jamais −1e-17 d'encaisse

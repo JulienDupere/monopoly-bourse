@@ -4711,7 +4711,9 @@ function renderEntreprise(){
   
   const blockReadyForNegativeCash = company.cash<0 && tradingWindowOpen();
   const readyActionHtml = company.inJail
-    ? `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`
+    ? (noCompanyCanRoll() // Section 315 — bogue 43 : toutes enquêtées, le tour passe tout seul ; bouton de secours si la partie attend
+        ? `<div class="small">Toutes les entreprises sont enquêtées par l'AMF : personne ne lance, le tour passe tout seul.</div><button class="btn btn-ghost btn-sm" data-pass-all-jailed="1" data-roll="${state.gameClock.rollCount}">⏭️ Faire passer le tour</button>`
+        : `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`)
     : (company.ready
         ? `<button class="btn btn-ghost btn-sm" data-cancel-ready="${company.id}" data-roll="${state.gameClock.rollCount}">🔄 Annuler Tour Terminé</button>`
         : (blockReadyForNegativeCash ? '' : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}" data-roll="${state.gameClock.rollCount}">✅ Tour Terminé</button>`)); // Section 308 — data-roll : lancer affiché au moment du clic
@@ -13494,7 +13496,10 @@ async function passGo(companyId){
 
 
 
-async function corePerformDiceRoll(co){
+// Section 315 — bogue 69 : opts.deferJail (lancer pour tous) : l'entreprise qui tombe sur « Allez en prison » va en
+// case 10, mais l'effet AMF (enquête, cubes rouges, loyers suspendus) est appliqué par l'appelant APRÈS tous les
+// déplacements du tour, pour que le résultat ne dépende pas de l'ordre de création des entreprises.
+async function corePerformDiceRoll(co, opts){
   const d1 = 1 + Math.floor(Math.random()*6);
   const d2 = 1 + Math.floor(Math.random()*6);
   const total = d1 + d2;
@@ -13507,8 +13512,8 @@ async function corePerformDiceRoll(co){
   let jailed = false;
   const sq = SPECIAL_SQUARES[co.position];
   if(sq && sq.kind==='gotojail'){
-    co.position = 10; 
-    applySendToJailEffect(co);
+    co.position = 10;
+    if(!(opts && opts.deferJail)) applySendToJailEffect(co); // Section 315 — bogue 69 : sinon appliqué après tous les déplacements
     jailed = true;
   }
   log(`${co.name} lance les dés: ${d1} + ${d2} = ${total}. Déplacement case ${oldPos} → case ${jailed?30:co.position}${passedGo?' (passe par GO)':''}${jailed?", mise sous enquête de l'AMF":''}.`);
@@ -13770,7 +13775,10 @@ async function performRollForAllCompanies(opts){
     if(refusal) return refusal;
     if(opts.requireAllReady){
       const mustBeReady = activeCompanies().filter(c=>!c.inJail);
-      if(mustBeReady.length===0 || !mustBeReady.every(c=>c.ready)) return {ok:false, error:'Toutes les entreprises ne sont plus prêtes — le lancer attend leur « Tour Terminé ».', code:'not-all-ready'};
+      // Section 315 — bogue 43 : aucune entreprise libre mais au moins une enquêtée = personne ne peut lancer ni
+      // valider : le tour passe (les comptes à rebours AMF descendent). Avant : refusé, partie figée.
+      const nobodyCanRoll = mustBeReady.length===0 && activeCompanies().some(c=>c.inJail);
+      if(nobodyCanRoll ? false : (mustBeReady.length===0 || !mustBeReady.every(c=>c.ready))) return {ok:false, error:'Toutes les entreprises ne sont plus prêtes — le lancer attend leur « Tour Terminé ».', code:'not-all-ready'};
     }
     if(opts.logLine) log(opts.logLine);
     const alreadyJailedBeforeThisTurn = activeCompanies().filter(c=>c.inJail);
@@ -13797,7 +13805,7 @@ async function performRollForAllCompanies(opts){
     maybeResolveRevenueSwapListings();
     const localResults = [];
     for(const co of rollers){
-      const r = await corePerformDiceRoll(co);
+      const r = await corePerformDiceRoll(co, {deferJail:true}); // Section 315 — bogue 69
       localResults.push(Object.assign({companyId: co.id, companyName: co.name}, r));
     }
     const localNeutralPawnResults = [];
@@ -13805,6 +13813,10 @@ async function performRollForAllCompanies(opts){
       const r = await corePerformNeutralPawnRoll(pw);
       localNeutralPawnResults.push(Object.assign({neutralPawnId: pw.id, neutralPawnName: pw.name}, r));
     }
+    // Section 315 — bogue 69 : lancer simultané — les enquêtes AMF ouvertes à ce tour prennent effet après TOUS les
+    // déplacements (entreprises et pions neutres) : une entreprise envoyée en enquête touche les loyers de ce tour,
+    // quel que soit son rang de création. Avant : seulement si elle jouait après le visiteur.
+    localResults.forEach(r=>{ if(r.jailed){ const jc = companyById(r.companyId); if(jc) applySendToJailEffect(jc); } });
     
     
     
@@ -14167,6 +14179,7 @@ function modalForceNextTurn(){
     try{
       // Section 308 — bogue 17 : la ligne de journal est écrite dans l'action du lancer (plus hors enveloppe).
       const results = await performRollForAllCompanies({expectedRoll, logLine:`⏩ L'administrateur force le lancer de dés pour toutes les entreprises (sans attendre que toutes soient « Prêtes »).`});
+      if(results!==null && noCompanyCanRoll()) await checkAllCompaniesReady(); // Section 315 — bogue 43 : toutes enquêtées après ce lancer
       if(results && results.length>0){
         const summary = results.map(r=>`${r.companyName}: ${r.d1}+${r.d2}=${r.total} (case ${r.oldPos}→${r.jailed?30:r.newPos}${r.jailed?', enquête AMF':''}${r.passedGo?', passe par GO':''})`).join('\n');
         alert(`Tour forcé — ${results.length} entreprise(s) ont lancé les dés :\n\n${summary}`);
@@ -14184,11 +14197,35 @@ async function rollDiceForAll(){
 // Section 308 — bogues 17 et 59 : expectedRoll = lancer visé par l'action qui déclenche ; le lancer revérifie sur
 // l'état frais que toutes les entreprises sont prêtes et que ce lancer n'a pas déjà été joué. Renvoie true si le
 // lancer a eu lieu (sinon l'appelant redessine).
+// Section 315 — bogue 43 : si AUCUNE entreprise ne peut lancer (toutes sous enquête AMF), personne n'a de « Tour
+// Terminé » à cliquer : le tour passe tout seul, un lancer à la fois (numéro de lancer attendu, section 308), et
+// recommence tant que toutes restent enquêtées (au plus le plus petit compte à rebours). Dès qu'une entreprise est
+// libre, la règle normale reprend (elle doit valider son tour).
+function noCompanyCanRoll(){
+  const actives = activeCompanies();
+  return actives.length>0 && actives.every(c=>c.inJail);
+}
+// Bouton de secours « Faire passer le tour » (entreprise enquêtée, toutes enquêtées) : partie chargée dans cet état, ou
+// enchaînement automatique interrompu (réseau). Même lancer que le déclenchement automatique, lié au lancer affiché.
+async function passTurnAllJailed(expectedRoll){
+  if(!noCompanyCanRoll()){ render(); return false; }
+  const triggered = await checkAllCompaniesReady(turnExpectedRoll(expectedRoll));
+  if(!triggered) render();
+  return triggered;
+}
 async function checkAllCompaniesReady(expectedRoll){
-  const rollers = activeCompanies().filter(c=>!c.inJail);
-  if(rollers.length===0 || !rollers.every(c=>c.ready)) return false;
-  const results = await performRollForAllCompanies({expectedRoll: turnExpectedRoll(expectedRoll), requireAllReady:true, auto:true});
-  return results!==null;
+  let triggered = false;
+  for(let guard=0; guard<50; guard++){ // Section 315 — bogue 43 : borne de sûreté
+    const rollers = activeCompanies().filter(c=>!c.inJail);
+    const allJailed = noCompanyCanRoll();
+    if(!allJailed && (rollers.length===0 || !rollers.every(c=>c.ready))) return triggered;
+    if(state.gameEndedReason) return triggered;
+    const results = await performRollForAllCompanies({expectedRoll: turnExpectedRoll(guard===0 ? expectedRoll : undefined), requireAllReady:true, auto:true});
+    if(results===null) return triggered;
+    triggered = true;
+    if(!noCompanyCanRoll()) return triggered;
+  }
+  return triggered;
 }
 
 
@@ -17837,6 +17874,7 @@ function bindTabEvents(t){
     // Section 308 — bogues 17 et 59 : le clic porte le numéro du lancer affiché.
     document.querySelectorAll('[data-mark-ready]').forEach(b=>b.addEventListener('click', ()=>markCompanyReady(b.dataset.markReady, parseInt(b.dataset.roll,10))));
     document.querySelectorAll('[data-cancel-ready]').forEach(b=>b.addEventListener('click', ()=>cancelCompanyReady(b.dataset.cancelReady, parseInt(b.dataset.roll,10))));
+    document.querySelectorAll('[data-pass-all-jailed]').forEach(b=>b.addEventListener('click', ()=>passTurnAllJailed(parseInt(b.dataset.roll,10)))); // Section 315 — bogue 43
     
     
     

@@ -54,8 +54,8 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
   77–79, 82–91, 93–99, 101 (section 317, affichage et saisie). Tous les moyens et faibles du périmètre sont traités,
   sauf 12, 45, 51, 53, 61, 62 (écartés par Julien) et 64 (voulu).
 - `docs/cahiers/` : neuf cahiers PDF de formation des joueurs et un aide-mémoire (index : `README.md`). Si une
-  livraison change une mécanique qu'ils décrivent, le signaler à Julien (mises à jour en attente : rubriques
-  « Changements visibles pour les joueurs » des sections 307 à 317).
+  livraison change une mécanique qu'ils décrivent, le signaler à Julien (à jour des sections 307 à 317 au 2026-10-25 :
+  corrections en place et page « Mise à jour » à la fin de chaque cahier, voir `README.md`).
 
 ## Repères dans le code (par nom)
 

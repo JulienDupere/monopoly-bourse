@@ -4709,7 +4709,9 @@ function renderEntreprise(){
   
   
   
-  const blockReadyForNegativeCash = company.cash<0 && tradingWindowOpen();
+  const ceoPlayerForReady = state.players.find(p=>p.id===company.ceoId); // Section 314 — bogue 37 : encaisse personnelle du CEO aussi
+  const ceoCashNegativeForReady = !!(ceoPlayerForReady && (ceoPlayerForReady.cash||0)<0);
+  const blockReadyForNegativeCash = (company.cash<0 || ceoCashNegativeForReady) && tradingWindowOpen();
   const readyActionHtml = company.inJail
     ? `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`
     : (company.ready
@@ -5595,9 +5597,14 @@ function renderEntreprise(){
   
   
   
-  const negativeCashBannerHtml = company.cash < 0
+  const negativeCashBannerHtml = (company.cash < 0
     ? `<div style="background:var(--brick);color:#fff;padding:8px 14px;border-radius:var(--radius-md);margin-bottom:12px;font-weight:600;">⚠️ Encaisse négative (${fmt(company.cash)}) — remédiez à la situation dès que possible.</div>`
-    : '';
+    : '')
+    // Section 314 — bogue 37 : « Tour Terminé » disparaît aussi au semestre quand l'encaisse PERSONNELLE du CEO est
+    // négative ; ce bandeau en donne la raison.
+    + (ceoCashNegativeForReady
+    ? `<div style="background:var(--brick);color:#fff;padding:8px 14px;border-radius:var(--radius-md);margin-bottom:12px;font-weight:600;">⚠️ Votre encaisse personnelle est négative (${fmt(ceoPlayerForReady.cash)}) — au semestre, « Tour Terminé » reste bloqué tant qu'elle n'est pas ≥ 0.</div>`
+    : '');
 
   
   
@@ -7149,10 +7156,16 @@ function netWorth(player){
 
 function marginableNetWorth(player){
   let total = netWorth(player) - absHoldingsValueOf('player', player.id); // Section 311 — retouche de la revue : titre ABS non liquide, exclu de la marge
+  // Section 314 — bogue 31 : netWorth retire déjà la garantie des prêts garantis (plafonnée à la valeur des parts de
+  // CEO) ; ici les parts de CEO sont exclues EN ENTIER. La garantie, qui repose sur ces mêmes parts, est donc rendue :
+  // sans cela elle était retirée deux fois (avec les parts, puis de la valeur nette) et déclenchait à tort un appel de
+  // marge. Résultat : parts de CEO exclues une seule fois, garantie comprise.
+  const secured = securedLoanGuaranteeInfo();
   state.companies.forEach(co=>{
     if(co.ceoId!==player.id) return;
     const stake = co.shareholders.find(s=>s.playerId===player.id);
     if(stake && stake.shares>0) total -= stake.shares * (co.stockPrice||0);
+    total += secured.ceoDeductionByCompanyId[co.id]||0; // Section 314 — bogue 31
   });
   return total;
 }
@@ -11558,6 +11571,9 @@ function placeBid(player, company, price, qty){
   if(companyPendingIpoShares(company)>0) return {ok:false, error:`${company.name} n'a pas encore terminé son introduction en bourse (IPO) — pas encore tradable.`};
   if(!(price>0)) return {ok:false, error:'Le prix limite doit être positif.'};
   if(!(qty>0)) return {ok:false, error:'La quantité doit être positive.'};
+  // Section 314 — bogue 11 : prix ou quantité non fini refusé (Infinity devenait null à la sauvegarde : ordre fantôme,
+  // jamais exécutable).
+  if(!Number.isFinite(price) || !Number.isFinite(qty)) return {ok:false, error:'Prix limite ou quantité invalide : saisissez des nombres finis.'};
   if(!player.pendingBids) player.pendingBids = [];
   player.pendingBids.push({id:uid(), companyId:company.id, price, qty, createdAt:nowLabel(), roll:state.gameClock.rollCount});
   return {ok:true};
@@ -11569,6 +11585,7 @@ function placeAsk(player, company, price, qty){
   if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
   if(!(price>0)) return {ok:false, error:'Le prix limite doit être positif.'};
   if(!(qty>0)) return {ok:false, error:'La quantité doit être positive.'};
+  if(!Number.isFinite(price) || !Number.isFinite(qty)) return {ok:false, error:'Prix limite ou quantité invalide : saisissez des nombres finis.'}; // Section 314 — bogue 11
   const myEntry = company.shareholders.find(s=>s.playerId===player.id);
   const myShares = myEntry ? myEntry.shares : 0;
   if(qty>myShares+1e-9) return {ok:false, error:'Vous ne détenez pas assez de parts pour cet ask.'};
@@ -12201,6 +12218,10 @@ function openShortPosition(company, player, amount){
   
   if(!tradingWindowOpen()) return {ok:false, error:`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`};
   if(!(amount>0)) return {ok:false, error:'Le montant doit être positif.'};
+  // Section 314 — bogue 11 : un montant non fini (saisie « 1e309 » = Infinity) est refusé d'emblée. Avant, il n'était
+  // arrêté que par accident (comparaisons NaN de la marge initiale) ; un nombre de parts infini ne se sauvegarde pas
+  // (JSON → null) : la dette du découvert disparaissait au rechargement, l'encaisse restait.
+  if(!Number.isFinite(amount)) return {ok:false, error:'Montant invalide : saisissez un nombre fini.'};
   if(player.id===company.ceoId) return {ok:false, error:`Le CEO de ${company.name} ne peut pas vendre à découvert ses propres parts — délit d'initié intégré au jeu.`};
   if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
   
@@ -12214,6 +12235,7 @@ function openShortPosition(company, player, amount){
   const price = company.stockPrice||0;
   if(!(price>0)) return {ok:false, error:'Le prix de l’action est invalide pour le moment.'};
   const qty = amount/price;
+  if(!Number.isFinite(qty)) return {ok:false, error:'Montant invalide : le nombre de parts correspondant n’est pas un nombre fini.'}; // Section 314 — bogue 11
   // Section 307 — marge initiale : le découvert ne s'ouvre que si la marge de maintien reste respectée APRÈS l'opération
   // (sinon l'appel de marge le refermait au lancer suivant en laissant une dette gratuite face aux bons).
   const marginSim = initialMarginCheck(player, p=>{
@@ -12263,6 +12285,7 @@ function closeShortPosition(company, player, amount, _bypassTradingWindow){
   
   if(!_bypassTradingWindow && !tradingWindowOpen()) return {ok:false, error:`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`};
   if(!(amount>0)) return {ok:false, error:'Le montant doit être positif.'};
+  if(!Number.isFinite(amount)) return {ok:false, error:'Montant invalide : saisissez un nombre fini.'}; // Section 314 — bogue 11 (l'appel de marge passe Number.MAX_SAFE_INTEGER, fini)
   if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
   const pos = player.shortPositions && player.shortPositions[company.id];
   if(!pos || pos.shares<=1e-9) return {ok:false, error:`Aucune position à découvert ouverte sur ${company.name} — rien à racheter.`};
@@ -14183,6 +14206,11 @@ async function markCompanyReady(companyId, expectedRoll){
     
     
     if(co.cash<0 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`};
+    // Section 314 — bogue 37 : la règle vaut aussi pour l'encaisse PERSONNELLE du CEO (demande de Julien, archive
+    // 227-300 : « l'encaisse négatives des joueurs et des entreprises ne permet pas de passer au tour suivant seulement
+    // aux semestres »). Revérifiée ici, sur l'état frais (action de tour de la section 308 : refus sans sauvegarde).
+    const ceoPlayer = state.players.find(p=>p.id===co.ceoId);
+    if(ceoPlayer && (ceoPlayer.cash||0)<0 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse personnelle ≥ 0$ pour continuer — votre encaisse personnelle est actuellement de ${fmt(ceoPlayer.cash)}. Retirez des bons gouvernementaux ou vendez des actifs, puis réessayez.`};
     if(co.ready) return {ok:false, error:null, code:'already-ready'};
     co.ready = true;
     log(`${co.name} est prête pour le prochain lancer de dés pour tous.`);

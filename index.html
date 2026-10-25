@@ -1874,14 +1874,14 @@ function lastActionEntryForPlayer(playerId){
   return state.log.find(e=>e.actorPlayerId===playerId) || null;
 }
 
-function showTransactionPopup(title, entries){
+function showTransactionPopup(title, entries, balanceNote){ // Section 317 — bogue 84 : balanceNote = explication d'une somme non nulle voulue (ex. dividende immobilisé)
   if(!entries || entries.length===0) return;
   const total = entries.reduce((s,e)=>s+e.amount,0);
   const rows = entries.map(e=>`<tr><td>${esc(e.label)}</td><td class="money" style="color:${e.amount<0?'var(--brick)':'#047857'};">${e.amount>=0?'+':''}${e.amount.toFixed(2)}</td></tr>`).join('');
   openModal(`
     <h3>${esc(title)}</h3>
     <table><tr><th>Compte</th><th>Débit / Crédit</th></tr>${rows}</table>
-    <div class="small" style="margin-top:8px;">Somme des mouvements: ${total.toFixed(4)} ${Math.abs(total)<0.005?'(équilibré)':'(écart d\u2019arrondi)'}</div>
+    <div class="small" style="margin-top:8px;">Somme des mouvements: ${total.toFixed(4)} ${Math.abs(total)<0.005?'(équilibré)':Math.abs(total)>=0.01?(balanceNote?'('+esc(balanceNote)+')':''):'(écart d\u2019arrondi)'}</div>
     <div class="modal-actions"><button class="btn btn-primary" id="mOk">OK</button></div>
   `);
   const btn = document.getElementById('mOk');
@@ -4201,7 +4201,7 @@ function renderPortefeuilleFinancials(){
   <div style="overflow-x:auto;">
   <table ${tableStyle}>
     ${headerRow}
-    <tr><td>Capitalisation boursière <span class="small">(excl. part de la banque)</span></td>${ratioRows.map(r=>`<td>${moneyRatioCell(r.marketCap)}</td>`).join('')}</tr>
+    <tr><td>Capitalisation boursière <span class="small">(toutes les parts émises, part de la banque comprise)</span></td>${ratioRows.map(r=>`<td>${moneyRatioCell(r.marketCap)}</td>`).join('')}</tr>
     <tr><td>Ratio C/B (P/E)</td>${ratioRows.map(r=>`<td>${multCell(r.pe)}</td>`).join('')}</tr>
     <tr><td>Prix/Ventes (Price/Sales)</td>${ratioRows.map(r=>`<td>${multCell(r.ps)}</td>`).join('')}</tr>
     <tr><td>Prix/Équité (Price/Equity)</td>${ratioRows.map(r=>`<td>${multCell(r.pEquity)}</td>`).join('')}</tr>
@@ -4436,7 +4436,7 @@ function renderEntrepriseFinancials(company){
   <div style="overflow-x:auto;">
   <table ${tableStyle}>
     ${headerRow}
-    <tr><td>Capitalisation boursière <span class="small">(excl. part de la banque)</span></td>${ratioRows.map(r=>`<td>${moneyRatioCell(r.marketCap)}</td>`).join('')}</tr>
+    <tr><td>Capitalisation boursière <span class="small">(toutes les parts émises, part de la banque comprise)</span></td>${ratioRows.map(r=>`<td>${moneyRatioCell(r.marketCap)}</td>`).join('')}</tr>
     <tr><td>Ratio C/B (P/E)</td>${ratioRows.map(r=>`<td>${multCell(r.pe)}</td>`).join('')}</tr>
     <tr><td>Prix/Ventes (Price/Sales)</td>${ratioRows.map(r=>`<td>${multCell(r.ps)}</td>`).join('')}</tr>
     <tr><td>Prix/Équité (Price/Equity)</td>${ratioRows.map(r=>`<td>${multCell(r.pEquity)}</td>`).join('')}</tr>
@@ -4515,7 +4515,7 @@ function renderEntreprise(){
         const exp = netIncomeExpectation.expected;
         const expColor = exp<0 ? 'var(--brick)' : '#047857';
         const expSigned = (exp>=0?'+':'') + fmt(exp);
-        return `<span class="money" style="font-size:16px;font-weight:700;color:${expColor};">${expSigned}</span> <span class="small">(moyenne des ${netIncomeExpectation.semestersUsed} dernier(s) semestre(s) clos)</span>`;
+        return `<span class="money" style="font-size:16px;font-weight:700;color:${expColor};">${expSigned}</span> <span class="small">(${netIncomeExpectation.bootstrap ? (netIncomeExpectation.semestersUsed===0 ? "attente de départ : aucun semestre clos encore pour l'entreprise" : "attente fixe de départ pour le 2e semestre de l'entreprise, sans lien avec ses résultats") : (netIncomeExpectation.semestersUsed===1 ? 'résultat net du dernier semestre clos' : 'moyenne des '+netIncomeExpectation.semestersUsed+' derniers semestres clos')})</span>`; // Section 317 — bogue 90 : l'attente fixe de départ n'est plus présentée comme une moyenne de résultats réels
       })()
     : `<span class="small">Pas encore assez d'historique pour former une attente.</span>`;
 
@@ -4931,7 +4931,7 @@ function renderEntreprise(){
   const loanCapExhausted = state.settings.loanMaxPrincipal>0 && loanCapLeft<=1e-9;
   const issueLoanTooltip = openLoanRequest
     ? `Demande d'emprunt ouverte (${fmt(openLoanRequest.principal)}) — ${openRequestOfferCount} offre(s) reçue(s) des joueurs. Cliquez pour consulter/accepter.`
-    : `Publier une demande d'emprunt (jusqu'à ${fmt(loanCapLeft)} encore disponible sur un maximum de ${fmt(state.settings.loanMaxPrincipal)}${loanCapUsed>0?`, ${fmt(loanCapUsed)} déjà emprunté sur ${activeLoansForCo.length} prêt${activeLoansForCo.length===1?'':'s'} actif${activeLoansForCo.length===1?'':'s'}`:''}) — les joueurs pourront proposer leurs conditions.`;
+    : `Publier une demande d'emprunt (${isFinite(loanCapLeft) ? `jusqu'à ${fmt(loanCapLeft)} encore disponible sur un maximum de ${fmt(state.settings.loanMaxPrincipal)}` : "capacité d'emprunt illimitée, aucun maximum fixé pour cette partie"}${loanCapUsed>0?`, ${fmt(loanCapUsed)} déjà emprunté sur ${activeLoansForCo.length} prêt${activeLoansForCo.length===1?'':'s'} actif${activeLoansForCo.length===1?'':'s'}`:''}) — les joueurs pourront proposer leurs conditions.`;
   
   
   
@@ -5789,7 +5789,7 @@ function renderEntreprise(){
       return `<tr><td>${statusLabel}</td><td>${fmtShares(i.qty)}</td><td class="money">${fmtPrice(i.issuePrice)}</td><td>${(i.dividendRate*100).toFixed(2)}%/an</td><td class="money">${fmtPrice(i.callPrice)}</td><td>${fmtShares(i.qtyOutstanding)}</td><td>${callBtn}</td></tr>`;
     }).join('');
     const dueHtml = company.preferredDividendDueThisYear
-      ? `<div class="small" style="margin-bottom:6px;">Dividende préférentiel dû (année financière ${company.preferredDividendDueThisYear.year}): <b class="money">${fmt(company.preferredDividendDueThisYear.amount)}</b> <button class="btn btn-pale-success btn-sm" data-pay-preferred-due="${company.id}">Payer maintenant</button></div>`
+      ? `<div class="small" style="margin-bottom:6px;">Dividende préférentiel dû (année financière ${displayGameYear(company.preferredDividendDueThisYear.year)}): <b class="money">${fmt(company.preferredDividendDueThisYear.amount)}</b> <button class="btn btn-pale-success btn-sm" data-pay-preferred-due="${company.id}">Payer maintenant</button></div>`
       : '';
     const arrearsHtml = (company.preferredDividendArrears>0)
       ? `<div class="small" style="margin-bottom:6px;color:var(--brick,#C0392B);">⚠️ Arriérage de dividende préférentiel: <b>${fmt(company.preferredDividendArrears)}</b> — le dividende ordinaire est bloqué tant qu'il n'est pas réglé. <button class="btn btn-brick btn-sm" data-pay-preferred-arrears="${company.id}">Payer l'arriérage</button></div>`
@@ -7351,7 +7351,9 @@ function recentExecutionEntriesForPlayer(player, limit){
     if(!asBorrower && !asLender) return;
     const borrowerCo = companyById(l.borrowerId);
     entries.push({roll: l.roll||0, ok: true,
-      text: `Offre de prêt acceptée — ${loanLenderLabel(l)} prête ${fmt(l.principal)} à ${borrowerCo?borrowerCo.name:'?'} (${l.secured?'garanti':'non garanti'}, ${Math.round(l.withholdingPct*100)}% des loyers retenu, ${l.multiple}× le capital).`});
+      text: l.lastResort // Section 317 — bogue 94 : le prêt de dernier recours n'est pas une offre acceptée
+        ? `Prêt de dernier recours — ${loanLenderLabel(l)} prête ${fmt(l.principal)} à ${borrowerCo?borrowerCo.name:'?'} (${Math.round(l.withholdingPct*100)}% des loyers retenu, ${l.multiple}× le capital).`
+        : `Offre de prêt acceptée — ${loanLenderLabel(l)} prête ${fmt(l.principal)} à ${borrowerCo?borrowerCo.name:'?'} (${l.secured?'garanti':'non garanti'}, ${Math.round(l.withholdingPct*100)}% des loyers retenu, ${l.multiple}× le capital).`});
   });
   
   
@@ -7580,7 +7582,7 @@ function applyEtfBids(companyId, bids){
   clamped.forEach(({etf, price})=>{
     etf.bids = (etf.bids||[]).filter(b=>b.companyId!==companyId);
     if(price>=ETF_MIN_BID) etf.bids.push({companyId, price});
-    log(`${co.name} soumet une mise pour le ${etfLabel(etf.id)} de l'année ${currentGameYear()}: ${price>=ETF_MIN_BID?fmt(price):'aucune mise (pas intéressée)'}.`);
+    log(`${co.name} soumet une mise pour le ${etfLabel(etf.id)} de l'année ${displayGameYear()}: ${price>=ETF_MIN_BID?fmt(price):'aucune mise (pas intéressée)'}.`);
   });
   return {ok:true};
 }
@@ -7677,7 +7679,7 @@ function resolveEtfAuction(etf, year){
   if(!etf.priceHistory) etf.priceHistory = [];
   etf.priceHistory.push({roll: state.gameClock.rollCount, year, price: winner.price});
   if(etf.priceHistory.length>500) etf.priceHistory.shift();
-  log(`${winnerCo.name} remporte l'enchère du ${etfLabel(etf.id)} de l'année ${year} à ${fmt(winner.price)} pour l'ensemble du lot.${winnerPriorPct>1e-9 ? ` ${winnerCo.name} détenait déjà ${+winnerPriorPct.toFixed(4)}% du lot, non payés : cette part garde sa valeur précédente${otherCompanyPctTotal>1e-9?' et la part rachetée aux autres entreprises est valorisée au plus à cette valeur précédente':''} ; le lot est valorisé à ${fmt(valuationPrice)}.` : ''}`, entries); // Section 310 — bogue 29
+  log(`${winnerCo.name} remporte l'enchère du ${etfLabel(etf.id)} de l'année ${displayGameYear(year)} à ${fmt(winner.price)} pour l'ensemble du lot.${winnerPriorPct>1e-9 ? ` ${winnerCo.name} détenait déjà ${+winnerPriorPct.toFixed(4)}% du lot, non payés : cette part garde sa valeur précédente${otherCompanyPctTotal>1e-9?' et la part rachetée aux autres entreprises est valorisée au plus à cette valeur précédente':''} ; le lot est valorisé à ${fmt(valuationPrice)}.` : ''}`, entries); // Section 310 — bogue 29
 }
 
 // Section 310 — retouche de la revue (bogue 28) : ordre de résolution au lancer qui suit la fenêtre de mise : le lot
@@ -8180,7 +8182,7 @@ function render(){
         ${state.players.map(p=>`<option value="${p.id}" ${p.id===myPlayerId?'selected':''}>${esc(p.name)}</option>`).join('')}
       </select>
     </div>
-    <div>Banque: <b>${fmt(state.bank.cash)}</b> &nbsp;|&nbsp; Année : <b>${currentGameYear()}</b> (semestre ${currentSemesterInYear()}/2 — ${rollsInCurrentSemester()}/3)${readyHeaderHtml}${gameEndedHeaderHtml}${bankGraceHeaderHtml} &nbsp;|&nbsp; <span style="cursor:pointer;text-decoration:underline;" id="leaveGame">quitter la partie</span></div>
+    <div>Banque: <b>${fmt(state.bank.cash)}</b> &nbsp;|&nbsp; Année : <b>${displayGameYear()}</b> (semestre ${currentSemesterInYear()}/2 — ${rollsInCurrentSemester()}/3 lancers faits)${readyHeaderHtml}${gameEndedHeaderHtml}${bankGraceHeaderHtml} &nbsp;|&nbsp; <span style="cursor:pointer;text-decoration:underline;" id="leaveGame">quitter la partie</span></div>
   </div>
   ${actionStatusRowHtml}
   ${periodEndBannerHtml}
@@ -9376,6 +9378,8 @@ function pushHistorySnapshot(roll, year){
 
 
 function currentGameYear(){ return Math.floor(state.gameClock.rollCount/6); } 
+// Section 317 — bogue 95 : currentGameYear() reste l'indice interne (0 = première année ; il sert de clé aux enchères, au plafond de vente CEO, à la durée cachée de la partie) ; tout ce que le joueur LIT passe par displayGameYear() : année 1 = première année, comme dans les états financiers.
+function displayGameYear(y){ return (y===undefined || y===null ? currentGameYear() : y) + 1; }
 function currentSemesterInYear(){ return Math.floor((state.gameClock.rollCount%6)/3) + 1; } 
 function rollsInCurrentSemester(){ return state.gameClock.rollCount % 3; } 
 
@@ -9448,7 +9452,7 @@ async function submitTerrainLotBid(companyId, price, loyer, numSquares){
     // fin limite (dépôt)
     state.terrainLot.bids = state.terrainLot.bids.filter(b=>b.companyId!==companyId);
     state.terrainLot.bids.push({companyId, price: clampedPrice, loyer: clampedLoyer, numSquares: clampedSquares});
-    log(`${co.name} soumet une mise pour le lot commercial de l'année ${currentGameYear()}: prix ${fmt(clampedPrice)}, loyer ${fmt(clampedLoyer)}/case, ${clampedSquares} case(s).`);
+    log(`${co.name} soumet une mise pour le lot commercial de l'année ${displayGameYear()}: prix ${fmt(clampedPrice)}, loyer ${fmt(clampedLoyer)}/case, ${clampedSquares} case(s).`);
     return {ok:true};
   }, {label:'Mise — lot commercial'});
   if(!res.ok){ if(res.error) alert(res.error); return; }
@@ -9475,7 +9479,7 @@ function resolveTerrainLotAuction(year){
   const squares = TERRAIN_LOT_CANDIDATE_POSITIONS.slice(0, winner.numSquares);
   state.terrainLot.active = {companyId: winner.companyId, price: winner.price, loyer: winner.loyer, numSquares: winner.numSquares, squares, accrued: 0, year};
   const co = companyById(winner.companyId);
-  log(`${co?co.name:'?'} remporte l'enchère du lot commercial de l'année ${year}: prix ${fmt(winner.price)}, loyer ${fmt(winner.loyer)}/case, ${winner.numSquares} case(s) (positions ${squares.join(', ')}).`);
+  log(`${co?co.name:'?'} remporte l'enchère du lot commercial de l'année ${displayGameYear(year)}: prix ${fmt(winner.price)}, loyer ${fmt(winner.loyer)}/case, ${winner.numSquares} case(s) (positions ${squares.join(', ')}).`);
 }
 
 function maybeResolveTerrainLotAuction(){
@@ -9497,7 +9501,7 @@ function settleTerrainLotYearEnd(endedYear, roll){
   const balance = active.accrued - active.price;
   state.terrainLot.lastResult = {year: endedYear, companyId: active.companyId, price: active.price, loyer: active.loyer, numSquares: active.numSquares, squares: active.squares, accrued: active.accrued, balance};
   if(!winner || others.length===0 || Math.abs(balance)<1e-9){
-    log(`Lot commercial de l'année ${endedYear} réglé: solde nul ou aucune autre entreprise active — aucun mouvement.`);
+    log(`Lot commercial de l'année ${displayGameYear(endedYear)} réglé: solde nul ou aucune autre entreprise active — aucun mouvement.`);
     return;
   }
   const share = Math.abs(balance) / others.length;
@@ -9510,7 +9514,7 @@ function settleTerrainLotYearEnd(endedYear, roll){
     logFin(winner.id, 'terrain_lot_revenue', share*others.length, roll);
     addTerrainLotRevenue(winner.id, share*others.length);
     entries.push({label:`${winner.name} (lot commercial — profit encaissé)`, amount: share*others.length});
-    log(`Lot commercial de l'année ${endedYear} réglé: ${winner.name} empoche un profit de ${fmt(balance)} (prix ${fmt(active.price)}, loyers commerciaux accumulés ${fmt(active.accrued)}) — financé à parts égales de ${fmt(share)} par ${others.map(o=>o.name).join(', ')}.`, entries);
+    log(`Lot commercial de l'année ${displayGameYear(endedYear)} réglé: ${winner.name} empoche un profit de ${fmt(balance)} (prix ${fmt(active.price)}, loyers commerciaux accumulés ${fmt(active.accrued)}) — financé à parts égales de ${fmt(share)} par ${others.map(o=>o.name).join(', ')}.`, entries);
   } else {
     
     
@@ -9519,7 +9523,7 @@ function settleTerrainLotYearEnd(endedYear, roll){
     addTerrainLotCapex(winner.id, share*others.length);
     entries.push({label:`${winner.name} (lot commercial — pari raté, versé aux autres)`, amount: -share*others.length});
     others.forEach(o=>{ o.cash += share; logFin(o.id, 'terrain_lot_revenue', share, roll); addTerrainLotRevenue(o.id, share); entries.push({label:`${o.name} (lot commercial — part reçue)`, amount: share}); });
-    log(`Lot commercial de l'année ${endedYear} réglé: ${winner.name} rate son pari de ${fmt(Math.abs(balance))} (prix ${fmt(active.price)}, loyers commerciaux accumulés ${fmt(active.accrued)}) — verse ${fmt(share)} chacun à ${others.map(o=>o.name).join(', ')}.`, entries);
+    log(`Lot commercial de l'année ${displayGameYear(endedYear)} réglé: ${winner.name} rate son pari de ${fmt(Math.abs(balance))} (prix ${fmt(active.price)}, loyers commerciaux accumulés ${fmt(active.accrued)}) — verse ${fmt(share)} chacun à ${others.map(o=>o.name).join(', ')}.`, entries);
   }
 }
 
@@ -9570,7 +9574,7 @@ function processYearEnd(year){
   
   
   resolvePreferredDividendsYearEnd(year);
-  log(`L'année financière ${year} commence (2 semestres de 3 lancers de dés complétés) — intérêts hypothécaires, dividendes REIT, accords de compensation de loyer (réglés puis clôturés) et contrats d'assurance normale (expirés) traités.`);
+  log(`L'année financière ${displayGameYear(year)} commence (2 semestres de 3 lancers de dés complétés) — intérêts hypothécaires, dividendes REIT, accords de compensation de loyer (réglés puis clôturés) et contrats d'assurance normale (expirés) traités.`);
 }
 
 // Section 307 — dividende ORDINAIRE (annoncé ou auto-versé) quand la banque a une position NÉGATIVE (elle a vendu au-delà
@@ -9781,12 +9785,15 @@ function advanceGameClock(){
         
       });
       const unclaimed = ann.amount - paidTotal;
+      // Section 317 — bogue 83 : la part non versée se compose de la part de la banque (jamais porteuse « réelle ») et, le cas échéant, de celle des actionnaires ayant vendu depuis l'annonce ; texte et lignes seulement, aucun montant ne change.
+      const soldPart = ann.recordHolders.reduce((t,rec)=>{ const ce = co.shareholders.find(s=>s.playerId===rec.playerId); return t + perShare*Math.max(0, rec.shares - Math.min(ce?ce.shares:0, rec.shares)); }, 0);
+      const bankPart = Math.max(0, unclaimed - soldPart);
       if(unclaimed > 1e-9){
         co.cash += unclaimed;
         // Section 315 — bogue 81 et décision de Julien (ratio sans la part de la banque) : la part non versée revient
         // au semestre clos, celui de l'annonce, comme pour l'auto-versement (avant : au nouveau semestre).
         logFin(co.id, 'dividend_forfeited_return', unclaimed, state.gameClock.rollCount-1);
-        entries.push({label:`${co.name} (portion de dividende non réclamée — retour trésorerie)`, amount:unclaimed});
+        entries.push({label:`${co.name} (portion de dividende non versée — part de la banque${soldPart>1e-9?" ou d'actionnaires ayant vendu":''} — retour trésorerie)`, amount:unclaimed}); // Section 317 — bogue 83
       }
       const bankPaid = settleBankDividendExcess(co, paidTotal, ann.amount, entries); // Section 307 — la banque paie sa position négative
       const dividendPerShare = perShare; // Section 307 — les découverts paient au même taux par part que les porteurs
@@ -9796,9 +9803,10 @@ function advanceGameClock(){
           const owed = dividendPerShare*shortPos.shares;
           pl.cash -= owed; state.bank.cash += owed;
           entries.push({label:`${pl.name} (paiement compensatoire — position à découvert sur ${co.name})`, amount:-owed});
+          entries.push({label:`Banque (paiement reçu du vendeur à découvert ${pl.name} — ${co.name})`, amount:owed}); // Section 317 — bogue 83 : la banque encaisse, elle apparaît au journal
         }
       });
-      log(`${co.name} verse son dividende annoncé de ${fmt(ann.amount)} (annoncé au lancer #${ann.announcedAtRoll}) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non réclamé (actionnaire(s) ayant vendu depuis l'annonce)`:''}${bankPaid>1e-9?`, dont ${fmt(bankPaid)} payé par la banque (position négative sur ${co.name})`:''}.`, entries); // Section 307 — mention du paiement de la banque
+      log(`${co.name} verse son dividende annoncé de ${fmt(ann.amount)} (annoncé au lancer #${ann.announcedAtRoll}) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non versé, rendu à la trésorerie (${[bankPart>1e-9?`${fmt(bankPart)} de part de la banque`:'', soldPart>1e-9?`${fmt(soldPart)} d'actionnaire(s) ayant vendu depuis l'annonce`:''].filter(Boolean).join(' et ')})`:''}${bankPaid>1e-9?`, dont ${fmt(bankPaid)} payé par la banque (position négative sur ${co.name})`:''}.`, entries); // Section 307 — mention du paiement de la banque
     });
     state.dividendAnnouncements = state.dividendAnnouncements.filter(a=>a.payAtRoll>state.gameClock.rollCount);
     
@@ -9868,6 +9876,7 @@ function advanceGameClock(){
               const owed = perShare*shortPos.shares;
               pl.cash -= owed; state.bank.cash += owed;
               entries.push({label:`${pl.name} (paiement compensatoire — position à découvert sur ${co.name})`, amount:-owed});
+              entries.push({label:`Banque (paiement reçu du vendeur à découvert ${pl.name} — ${co.name})`, amount:owed}); // Section 317 — bogue 83 : la banque encaisse, elle apparaît au journal
             }
           });
           log(`${co.name} verse automatiquement son dividende de ${fmt(autoAmount)} (auto-versement activé, benchmark ${fmtPrice(co.dividendBenchmarkPerShare)}/part) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non versé (part de la banque, retourné en trésorerie)`:''}${bankPaid>1e-9?`, dont ${fmt(bankPaid)} payé par la banque (position négative sur ${co.name})`:''}.`, entries); // Section 307 — mention du paiement de la banque
@@ -11028,7 +11037,7 @@ function companyPriceAtPeriodClose(company, period){
 function companyRatiosForPeriod(company, statementEntry, marketSeries){
   const s = statementEntry;
   const price = companyPriceAtPeriodClose(company, s.period);
-  const marketCap = price!=null ? price*company.sharesIssued : null;
+  const marketCap = price!=null ? price*company.sharesIssued : null; // Section 317 — bogue 89 : volontairement toutes les parts émises (banque comprise), cohérent avec le résultat et les capitaux propres de toute l'entreprise dans P/E, P/S, P/B ; seul le libellé de l'affichage était faux
   const uptoRoll = s.period.isCurrent ? state.gameClock.rollCount : (s.period.semesterIndex+1)*3-1;
   const {beta, volatility} = companyBetaVolatility(company, uptoRoll, marketSeries);
   const volatilityPercentile = companyVolatilityPercentile(company, volatility, uptoRoll, marketSeries);
@@ -12443,7 +12452,7 @@ function resolvePreferredDividendsYearEnd(year){
       (co.preferredDividendDueThisYear.items||[]).forEach(it=>co.preferredDividendArrearsItems.push({issuanceId:it.issuanceId, amount:it.amount}));
       co.preferredDividendArrears = (co.preferredDividendArrears||0) + lapsed;
       injectStockCube(co, 'red', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
-      log(`${co.name} n'a pas versé son dividende préférentiel de ${fmt(lapsed)} (année financière ${co.preferredDividendDueThisYear.year}) avant la fin de l'année financière suivante — arriérage cumulé désormais ${fmt(co.preferredDividendArrears)}.`);
+      log(`${co.name} n'a pas versé son dividende préférentiel de ${fmt(lapsed)} (année financière ${displayGameYear(co.preferredDividendDueThisYear.year)}) avant la fin de l'année financière suivante — arriérage cumulé désormais ${fmt(co.preferredDividendArrears)}.`);
       co.preferredDividendDueThisYear = null;
     }
     
@@ -13812,13 +13821,14 @@ async function takeGoAdvance(companyId, opts){
     
     
     const amount = goAdvanceAmount(rank, co);
+    const priceRate = riskAdjustedRate(state.settings.goAdvanceRate, co); // Section 317 — bogue 93 : le taux qui a fixé le prix, relevé AVANT que la vente n'alourdisse la dette de l'entreprise
     co.cash += amount; state.bank.cash -= amount;
     logFin(co.id, 'go_advance_proceeds', amount);
     co.goAdvancesOwed += 1;
     
     
     injectStockCube(co, 'red', STOCK_TRIGGER_GO_ADVANCE_RED_MIN, STOCK_TRIGGER_GO_ADVANCE_RED_MAX);
-    log(`${co.name} vend sa ${rank}${rank===1?'re':'e'} subvention d'avance (sur son ${rank}${rank===1?'er':'e'} passage GO futur) pour ${amount.toFixed(2)} (taux ${(riskAdjustedRate(state.settings.goAdvanceRate,co)*100).toFixed(1)}%).`,
+    log(`${co.name} vend sa ${rank}${rank===1?'re':'e'} subvention d'avance (sur son ${rank}${rank===1?'er':'e'} passage GO futur) pour ${amount.toFixed(2)} (taux ${(priceRate*100).toFixed(1)}%).`, // Section 317 — bogue 93 : taux du prix, pas taux recalculé après la vente
       [{label:`${co.name} (subvention d'avance)`, amount:amount}, {label:'Banque', amount:-amount}]);
     return {ok:true};
   }, {label:'Subvention d\'avance GO'});
@@ -14462,7 +14472,7 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   if(state.settings.features.terrainLot && terrainPosInYear===0){
     const myBid = state.terrainLot.bids.find(b=>b.companyId===co.id);
     terrainLotSectionHtml = `
-    <div class="section-title" style="margin-top:16px;">🏙️ Lot commercial — mise pour l'année ${currentGameYear()}</div>
+    <div class="section-title" style="margin-top:16px;">🏙️ Lot commercial — mise pour l'année ${displayGameYear()}</div>
     <div class="small" style="margin-bottom:6px;">Combien ${esc(co.name)} est prêt à payer pour obtenir le droit sur le lot commercial de cette année financière (connu dès le prochain lancer). Le gagnant est celui dont Prix / (Loyer × Nombre de cases) est le plus élevé. Rien n'est payé à l'enchère ni quand une entreprise tombe sur le lot : en fin d'année, seul l'écart entre les loyers commerciaux comptés et le prix est réglé avec les autres entreprises. Le prix, ajouté à vos mises REIT de cette année, ne peut pas dépasser l'encaisse actuelle (${fmt(co.cash)}) : c'est la perte maximale (revérifié à la résolution, qui traite le lot commercial avant les REIT).</div>
     <label>Prix (en ${esc(state.unit)})</label>
     <input type="number" min="0" step="0.01" id="mTerrainBidPrice" value="${myBid?myBid.price:0}">
@@ -14474,8 +14484,8 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   } else if(state.settings.features.terrainLot && terrainPosInYear===1){
     const active = state.terrainLot.active;
     const activeInfoHtml = active
-      ? `Lot commercial de l'année ${currentGameYear()} remporté par <b>${esc(companyById(active.companyId) ? companyById(active.companyId).name : '?')}</b> — loyer ${fmt(active.loyer)}/case, ${active.numSquares} case(s).`
-      : `Aucune mise n'a été soumise pour le lot commercial de l'année ${currentGameYear()} — aucun lot actif cette année.`;
+      ? `Lot commercial de l'année ${displayGameYear()} remporté par <b>${esc(companyById(active.companyId) ? companyById(active.companyId).name : '?')}</b> — loyer ${fmt(active.loyer)}/case, ${active.numSquares} case(s).`
+      : `Aucune mise n'a été soumise pour le lot commercial de l'année ${displayGameYear()} — aucun lot actif cette année.`;
     terrainLotSectionHtml = `
     <div class="section-title" style="margin-top:16px;">🏙️ Lot commercial</div>
     <div class="small">${activeInfoHtml}</div>`;
@@ -14487,7 +14497,7 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   const openedEtfs = state.etfs.filter(e=>e.opened);
   if(state.settings.features.etf && openedEtfs.length>0 && terrainPosInYear===0){
     etfSectionHtml = `
-    <div class="section-title" style="margin-top:16px;">📈 REIT — mises pour l'année ${currentGameYear()}</div>
+    <div class="section-title" style="margin-top:16px;">📈 REIT — mises pour l'année ${displayGameYear()}</div>
     <div class="small" style="margin-bottom:6px;">Le plus offrant remporte 100% du lot de chaque REIT au prochain lancer, en rachetant les détenteurs actuels au prorata. Laissez à 0 (ou sous ${fmt(ETF_MIN_BID)}) si ${esc(co.name)} n'est pas intéressée cette année. Le TOTAL de vos mises (REIT et lot commercial) ne peut jamais dépasser l'encaisse actuelle (${fmt(co.cash)}) ; sur un REIT dont vous détenez déjà une part, seule la part à racheter compte. Chaque mise est revérifiée à la résolution, dans l'ordre lot commercial, puis Première, Deuxième, Troisième et Quatrième rue : une mise que l'encaisse restante ne couvre plus est écartée.</div>
     ${openedEtfs.map(e=>{
       const myBid = (e.bids||[]).find(b=>b.companyId===co.id);
@@ -14556,7 +14566,7 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   const preferredSectionHtml = (co.preferredDividendDueThisYear || co.preferredDividendArrears>0) ? `
     <div class="section-title" style="margin-top:16px;">🎫 Parts privilégiées</div>
     <table>
-      ${co.preferredDividendDueThisYear ? `<tr><td>Dividende préférentiel dû (année ${co.preferredDividendDueThisYear.year}) :</td><td class="money">${fmt(co.preferredDividendDueThisYear.amount)}</td><td><button class="btn btn-pale-success btn-sm" id="mPopupPayPreferredDue">Payer</button></td></tr>` : ''}
+      ${co.preferredDividendDueThisYear ? `<tr><td>Dividende préférentiel dû (année ${displayGameYear(co.preferredDividendDueThisYear.year)}) :</td><td class="money">${fmt(co.preferredDividendDueThisYear.amount)}</td><td><button class="btn btn-pale-success btn-sm" id="mPopupPayPreferredDue">Payer</button></td></tr>` : ''}
       ${co.preferredDividendArrears>0 ? `<tr><td style="color:var(--brick);">⚠️ Arriérage de dividende préférentiel :</td><td class="money" style="color:var(--brick);">${fmt(co.preferredDividendArrears)}</td><td><button class="btn btn-brick btn-sm" id="mPopupPayPreferredArrears">Payer</button></td></tr>` : ''}
     </table>` : '';
   openModal(`
@@ -14961,6 +14971,17 @@ async function mergeGroup(group){
       if(!refundInsurancePremium(insCo, insurerId, premium)) log(`Assurance sous-standard sur ${p.name} : assureur (${insurerLabel(insurerId)}) ou assurée introuvable, aucun remboursement — le regroupement du lot met fin au contrat.`); // Section 309-313 — retouche de la revue des décisions
       else log(`Assurance sous-standard sur ${p.name} remboursée (${premium.toFixed(2)} à ${insCo?insCo.name:'?'}) — le regroupement du lot met fin au contrat.`);
     }
+  });
+  // Section 317 — bogue 88 : les statistiques d'affichage (coûts et loyers historiques par entreprise) passent de la clé de
+  // chaque terrain (« prop:… ») à celle du lot (« lot:… »), que lit « Mon Entreprise » après le regroupement. Aucune
+  // encaisse ne bouge ; parties déjà regroupées : historique perdu, rien à reporter (état inchangé).
+  props.forEach(p=>{
+    [['realEstateCapex', addRealEstateCapex], ['realEstateRevenue', addRealEstateRevenue]].forEach(([field, add])=>{
+      const old = state[field] && state[field]['prop:'+p.id];
+      if(!old) return;
+      Object.keys(old).forEach(cid=>add('lot:'+mergeId, cid, old[cid]));
+      delete state[field]['prop:'+p.id];
+    });
   });
   props.forEach(p=>{ p.groupMergeId = mergeId; p.owners = newOwners.map(o=>({...o})); p.insurance = null; p.subInsurance = null; });
   log(`Le lot ${GROUPS[group].label} est regroupé (${newOwners.map(o=>`${companyById(o.companyId)?.name||'?'} ${o.share}%`).join(', ')}).`);
@@ -17021,6 +17042,8 @@ function activeLoanPrincipalSum(borrowerId){
   return activeLoansOf(borrowerId).reduce((s,l)=>s+l.principal, 0);
 }
 
+// Section 317 — bogue 97 : un maximum à 0 (ou vide) = « illimité » pour le moteur ; l'écran l'écrit « illimité » au lieu de « Infinity M$ ».
+function fmtLoanCap(v){ return isFinite(v) ? fmt(v) : 'illimité'; }
 function loanCapRemaining(borrowerId){
   const cap = state.settings.loanMaxPrincipal;
   return cap>0 ? Math.max(0, cap-activeLoanPrincipalSum(borrowerId)) : Infinity;
@@ -17344,11 +17367,12 @@ function triggerLastResortLoan(companyId){
   if(existing){
     existing.principal += principal;
     existing.totalDue += addedDue;
+    existing.roll = state.gameClock.rollCount; // Section 317 — bogue 94 : daté du dernier recours (« Exécutions récentes »)
     loan = existing;
     totalDue = existing.totalDue;
   } else {
     totalDue = addedDue;
-    loan = {id:uid(), lenderId:'BANK', lenderKind:'bank', borrowerId:company.id, principal, totalDue, repaidSoFar:0, withholdingPct:LAST_RESORT_LOAN_WITHHOLDING_PCT, multiple:LAST_RESORT_LOAN_MULTIPLE, createdAt:nowLabel(), lastResort:true};
+    loan = {id:uid(), lenderId:'BANK', lenderKind:'bank', borrowerId:company.id, principal, totalDue, repaidSoFar:0, withholdingPct:LAST_RESORT_LOAN_WITHHOLDING_PCT, multiple:LAST_RESORT_LOAN_MULTIPLE, createdAt:nowLabel(), roll: state.gameClock.rollCount, lastResort:true}; // Section 317 — bogue 94 : sans lancer, ce prêt était classé comme le plus ancien
     state.loans.push(loan);
   }
   state.bank.cash -= principal;
@@ -17415,9 +17439,9 @@ function renderEtfCard(etf, isCreator){
     statusHtml = `<div class="small" style="margin-top:10px;">Pas encore ouvert par le créateur.</div>`;
   } else if(inBidWindow){
     const bidCount = (etf.bids||[]).length;
-    statusHtml = `<div class="small" style="margin-top:10px;">Enchère de l'année ${currentGameYear()} en cours — ${bidCount} mise(s) scellée(s) soumise(s) jusqu'ici, résultat connu au prochain lancer. Misez depuis le pop-up de fin de tour.</div>`;
+    statusHtml = `<div class="small" style="margin-top:10px;">Enchère de l'année ${displayGameYear()} en cours — ${bidCount} mise(s) scellée(s) soumise(s) jusqu'ici, résultat connu au prochain lancer. Misez depuis le pop-up de fin de tour.</div>`;
   } else {
-    statusHtml = `<div class="small" style="margin-top:10px;">${etf.lastAuctionYear!=null?`Dernière enchère remportée en année ${etf.lastAuctionYear} à ${fmt(etf.lastAuctionPrice)} pour l'ensemble du lot.`:totalHeld<=0.001?`Aucune entreprise ne détient encore ce lot — en attente de la toute première enchère.`:''} Prochaine (ré-)enchère au 1er lancer de l'année prochaine.</div>`;
+    statusHtml = `<div class="small" style="margin-top:10px;">${etf.lastAuctionYear!=null?`Dernière enchère remportée en année ${displayGameYear(etf.lastAuctionYear)} à ${fmt(etf.lastAuctionPrice)} pour l'ensemble du lot.`:totalHeld<=0.001?`Aucune entreprise ne détient encore ce lot — en attente de la toute première enchère.`:''} Prochaine (ré-)enchère au 1er lancer de l'année prochaine.</div>`;
   }
   // Section 310 — bogue 29 : la valeur retenue au bilan peut différer de la dernière mise (part déjà détenue, non payée).
   if(etf.lastAuctionYear!=null && Math.abs(etfLotValuationPrice(etf)-(etf.lastAuctionPrice||0))>1e-9){
@@ -17846,8 +17870,8 @@ function tvSlideLeaderboard(){
 function tvSlideYear(){
   return `
   <div class="tv-title">Année financière en cours</div>
-  <div class="tv-big">${currentGameYear()}</div>
-  <div class="tv-sub">Semestre ${currentSemesterInYear()}/2 · ${rollsInCurrentSemester()}/3 lancés de dés ce semestre</div>
+  <div class="tv-big">${displayGameYear()}</div>
+  <div class="tv-sub">Semestre ${currentSemesterInYear()}/2 · ${rollsInCurrentSemester()}/3 lancers de dés faits ce semestre</div>
   <div class="tv-sub" style="margin-top:30px;">Banque: <b>${fmt(state.bank.cash)}</b> · Argent total en circulation: <b>${fmt(totalCashPool())}</b></div>
   `;
 }
@@ -18037,9 +18061,9 @@ function tvSlideEtfDutch(etfId){
     statusLine = "Pas encore ouvert par le créateur";
   } else if(inBidWindow){
     const bidCount = (etf.bids||[]).length;
-    statusLine = `Enchère de l'année ${currentGameYear()} en cours — ${bidCount} mise(s) scellée(s), résultat au prochain lancer`;
+    statusLine = `Enchère de l'année ${displayGameYear()} en cours — ${bidCount} mise(s) scellée(s), résultat au prochain lancer`;
   } else if(etf.lastAuctionYear!=null){
-    statusLine = `Dernière enchère — année ${etf.lastAuctionYear}, ${fmt(etf.lastAuctionPrice)} pour l'ensemble du lot`;
+    statusLine = `Dernière enchère — année ${displayGameYear(etf.lastAuctionYear)}, ${fmt(etf.lastAuctionPrice)} pour l'ensemble du lot`;
   } else {
     statusLine = "En attente de la toute première enchère";
   }
@@ -21167,7 +21191,7 @@ function modalAnnounceDividend(){
       }
       return {ok:true, entries, coName:co.name};
     });
-    if(res && res.ok && res.entries) showTransactionPopup(`Dividende annoncé — ${res.coName}`, res.entries);
+    if(res && res.ok && res.entries) showTransactionPopup(`Dividende annoncé — ${res.coName}`, res.entries, 'montant immobilisé jusqu\'au versement, il sera distribué aux actionnaires : ce n\'est pas un écart'); // Section 317 — bogue 84 : plus d'« écart d'arrondi » pour tout le dividende
   });
 }
 
@@ -21185,6 +21209,8 @@ function modalDividendRecurrentSettings(){
   
   
   const baseBenchmark = myCo.dividendRecurrentNeedsReset ? myCo.dividendBenchmarkFounding : myCo.dividendBenchmarkPerShare;
+  // Section 317 — bogue 82 : coût réel pour l'entreprise = montant par part × parts des porteurs réels (la part de la banque est rendue à la trésorerie) ; plafonné aux parts émises (une banque négative paie elle-même l'excédent).
+  const dividendPaidShares = Math.min(myCo.sharesIssued, myCo.shareholders.filter(s=>s.playerId!=='BANK' && s.shares>1e-9).reduce((t,s)=>t+s.shares,0));
   const resetNoticeHtml = myCo.dividendRecurrentNeedsReset
     ? `<div class="small" style="margin-bottom:10px;color:var(--brick,#C0392B);">⚠️ Le dividende récurrent a été suspendu (aucun dividende récurrent versé au dernier semestre<!-- Section 315 — bogue 25 -->) — le réactiver repart du niveau de fondation (${fmtPrice(myCo.dividendBenchmarkFounding)}/part), pas d'où il était avant la coupure. Les cubes, eux, restent intacts tant qu'ils ne sont pas piochés (ils doivent être tirés pour redevenir blancs).</div>`
     : '';
@@ -21201,7 +21227,7 @@ function modalDividendRecurrentSettings(){
     <div class="small" style="display:flex;justify-content:space-between;margin-top:2px;"><span>◀ Diminuer</span><span>Augmenter ▶</span></div>
     <div class="small" style="margin-top:10px;padding:8px 10px;background:var(--bg-alt,rgba(127,127,127,0.08));border-radius:6px;">
       Dividende par part: <b id="mDivPerShare">${fmtPrice(baseBenchmark)}</b>/part<br>
-      Coût total par semestre: <b id="mDivTotalCost">${fmt(baseBenchmark*myCo.sharesIssued)}</b>
+      Coût total par semestre (hors part de la banque, rendue à la trésorerie): <b id="mDivTotalCost">${fmt(baseBenchmark*dividendPaidShares)}</b>
     </div>
     <div class="small" id="mDivCutWarning" style="display:none;margin-top:8px;color:var(--brick,#C0392B);">${cutWarningHtml}</div>
     ${myCo.preferredDividendArrears>0 ? `<div class="small" style="margin-top:8px;color:var(--brick,#C0392B);">⚠️ Arriérage de dividende préférentiel de ${fmt(myCo.preferredDividendArrears)} : le dividende récurrent ne sera PAS versé tant qu'il n'est pas réglé (« Payer l'arriérage » dans Mon Entreprise).</div>` : ''}<!-- Section 315 — bogue 27 -->
@@ -21220,7 +21246,7 @@ function modalDividendRecurrentSettings(){
     const perShare = baseBenchmark * pct;
     document.getElementById('mDivTierLabel').textContent = tierLabel(tier);
     document.getElementById('mDivPerShare').textContent = fmtPrice(perShare);
-    document.getElementById('mDivTotalCost').textContent = fmt(perShare*myCo.sharesIssued);
+    document.getElementById('mDivTotalCost').textContent = fmt(perShare*dividendPaidShares); // Section 317 — bogue 82
     const cutWarn = document.getElementById('mDivCutWarning');
     if(cutWarn) cutWarn.style.display = tier<3 ? 'block' : 'none';
   };
@@ -22676,11 +22702,11 @@ function modalIssueLoan(){
     <div class="small" style="margin-bottom:8px;">${creditRatingBadgeHtml(myCo)}</div>
     ${activeLoansHtml}
     <div class="small" style="margin-bottom:10px;">Publiez une demande d'emprunt pour recevoir les offres des joueurs (taux de loyer, multiple) et choisissez la meilleure. Une seule demande OUVERTE est permise à la fois, mais plusieurs prêts peuvent être actifs en parallèle.</div>
-    <div class="small" style="margin-bottom:10px;">Capacité d'emprunt restante : <b>${fmt(capLeft)}</b> (max. cumulé : ${fmt(state.settings.loanMaxPrincipal)}).</div>
+    <div class="small" style="margin-bottom:10px;">Capacité d'emprunt restante : <b>${fmtLoanCap(capLeft)}</b>${isFinite(capLeft) ? ` (max. cumulé : ${fmt(state.settings.loanMaxPrincipal)})` : ' (aucun maximum fixé pour cette partie)'}.</div>
     <label>Emprunteur</label>
     <div class="small" style="margin-bottom:8px;"><b>${esc(myCo.name)}</b></div>
-    <label>Capital demandé (en ${esc(state.unit)}, max ${fmt(capLeft)})</label>
-    <input type="number" step="0.01" min="0" max="${capLeft}" id="mLoanPrincipalModal" value="0">
+    <label>Capital demandé (en ${esc(state.unit)}${isFinite(capLeft) ? `, max ${fmt(capLeft)}` : ', sans maximum'})</label>
+    <input type="number" step="0.01" min="0" ${isFinite(capLeft) ? `max="${capLeft}"` : ''} id="mLoanPrincipalModal" value="0">
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -23328,7 +23354,7 @@ function renderSetup(){
       <!-- Section 192 — fin de partie alternative à durée cachée: voir le commentaire complet dans
       createGame(). 0/0 (les deux champs) = désactivé, comportement historique. -->
       <div class="setup-subhead">Durée de partie (optionnel)</div>
-      <label>Fin alternative à durée cachée — plage d'années financières (0/0 = désactivé, aucune limite). Un an, tiré au hasard dans cette plage à la création, est choisi et jamais révélé aux joueurs avant la fin de la partie.</label>
+      <label>Fin alternative à durée cachée — plage d'années financières (0/0 = désactivé, aucune limite). Un nombre N, tiré au hasard dans cette plage à la création, fixe la fin de la partie et n'est jamais révélé avant la fin. La partie s'arrête à la fin de l'année N+1 affichée dans la barre du haut (ex. : plage 2–2 = jusqu'à la fin de l'« Année 3 » ; plage 1–3 = fin de l'« Année 2 », 3 ou 4).</label>
       <div style="display:flex;gap:10px;align-items:center;">
         <input type="number" step="1" min="0" id="setupMaxGameYearsMin" value="0" style="flex:1;" placeholder="Min">
         <span>–</span>

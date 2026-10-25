@@ -5,7 +5,7 @@
 // payer les 10 % entiers (unités mélangées : % du terrain contre % du REIT). Désormais : réserve × parts vendues / 100.
 // La part non vendue n'est pas payée (REIT ouvert sans détenteur : rien, comme avant ; le message d'ouverture ne
 // prétend plus que la banque collecte). Toutes les voies du loyer passent par etfReservedCollectedPct : terrain seul,
-// lot regroupé, terrain sous ABS, pion neutre (payé par la banque), estimation payableRent ; la monnaie est conservée
+// lot regroupé, terrain sous ABS, accord de compensation, pion neutre (payé par la banque), estimation payableRent ; monnaie conservée
 // (banque + entreprises + joueurs + fonds REIT).
 // Lancer depuis la racine du dépôt :  node tests/section310-reit-reserve.test.js
 const { loadEngine, check, near } = require('./helpers/engine');
@@ -83,7 +83,7 @@ const OLD_FORMULA = s => s.replace(/  \/\/ Section 310 — décision \(bogue 54\
     ok(near(E.run('masse()'), m0), 'monnaie conservée');
   });
 
-  await scenario('C. Autres voies du loyer : estimation, lot regroupé, terrain sous ABS, pion neutre', async () => {
+  await scenario('C. Autres voies du loyer : estimation, pion neutre, terrain sous ABS, accord de compensation, lot regroupé', async () => {
     for(const variant of ['corrigé', 'ancien']){
       const E = await setup(variant === 'ancien' ? { transform: OLD_FORMULA } : {});
       E.run('C.etfHoldings.rue4 = 50; R4.fundCash = 0;');
@@ -99,6 +99,11 @@ const OLD_FORMULA = s => s.replace(/  \/\/ Section 310 — décision \(bogue 54\
               seniorCapTotal:1000, seniorPaidSoFar:0, seniorHolders:[{holderType:'company', holderId:D.id, amount:50, receivedSoFar:0}], juniorHolders:[]}];`);
       const rAbs = await visit(E, 'C.etfHoldings.rue4 = 50');
       E.run('state.revenueSwaps = [];');
+      // Accord de compensation Co Alice / Co Bob : la part de Co Bob va au registre, la réserve est payée en argent.
+      E.run(`state.settings.features.rentCompensation = true; state.rentCompensations = [{id:'rc', companyA:A.id, companyB:B.id, interestRate:0.05, balance:0, createdAt:''}];`);
+      const rComp = await visit(E, 'C.etfHoldings.rue4 = 50');
+      const compBalance = E.run('state.rentCompensations[0].balance');
+      E.run('state.rentCompensations = [];');
       // Lot Vert regroupé.
       E.run('as(A)'); await E.run(`mergeGroup('VERT')`);
       const merged = E.run('!!V1.groupMergeId');
@@ -108,6 +113,7 @@ const OLD_FORMULA = s => s.replace(/  \/\/ Section 310 — décision \(bogue 54\
         ok(near(est, 8.55), 'estimation payableRent : 8,55');
         ok(near(pawnPaid, 8.55) && near(pawnFund, 0.45) && near(pawnMasse, 0), 'pion neutre : la banque paie 8,55 dont 0,45 au fonds, monnaie conservée');
         ok(near(rAbs.paid, 8.55) && near(rAbs.fund, 0.45) && near(rAbs.dMasse, 0), 'terrain sous ABS : 8,55 dont 0,45 au fonds, monnaie conservée');
+        ok(near(rComp.paid, 0.45) && near(rComp.fund, 0.45) && near(compBalance, 8.1) && near(rComp.dMasse, 0), 'accord de compensation : 8,1 inscrits au registre, seule la réserve vendue (0,45) est payée en argent au fonds');
         ok(merged && near(rLot.paid, 8.55) && near(rLot.fund, 0.45) && near(rLot.dMasse, 0), 'lot regroupé : 8,55 dont 0,45 au fonds, monnaie conservée');
       } else {
         ok(near(est, 9) && near(pawnPaid, 9) && near(rAbs.paid, 9) && near(rLot.paid, 9), 'contre-épreuve : l’ancienne formule fait payer 9 sur toutes les voies');

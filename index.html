@@ -15756,6 +15756,15 @@ async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multip
   return true;
 }
 
+// Section 312 — bogue 23 (choix à valider par Julien) : retenue de prêt sur un loyer reçu. L'option « Prêts » ne
+// commande que les prêts ordinaires (marché des obligations) ; un prêt de dernier recours, offert dans toutes les
+// parties, est TOUJOURS remboursé par sa retenue de 50 % (avant : jamais sans l'option, soit 10 M$ gratuits).
+function applyRentLoanWithholding(companyId, grossAmount, opts){
+  opts = opts || {};
+  if(state.settings.features.loan) return applyLoanWithholding(companyId, grossAmount, opts);
+  if(opts.onlyNormal) return {net:grossAmount, totalWithheld:0, withholdings:[]};
+  return applyLoanWithholding(companyId, grossAmount, {onlyLastResort:true});
+}
 function applyLoanWithholding(companyId, grossAmount, opts){
   opts = opts || {};
   const allLoans = activeLoansOf(companyId);
@@ -17943,13 +17952,13 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
       const revenueSwap = state.revenueSwaps.find(s=>s.sellerId===c.companyId && s.propertyIds.some(pid=>samePropertyOrLot(pid, p.id)));
       if(revenueSwap){
         const full = c.amount;
-        const normalResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, full, {onlyNormal:true}) : {net:full, totalWithheld:0, withholdings:[]};
+        const normalResult = applyRentLoanWithholding(c.companyId, full, {onlyNormal:true}); // Section 312 — bogue 23
         const cededAmount = full * revenueSwap.cededPctOfShare;
         // Section 307 — seul le montant réellement versé aux porteurs quitte l'émettrice (et devient abs_interest_expense) ;
         // la part cédée versée à personne (pas de junior, senior déjà servie) lui reste. Avant : cededAmount entier retiré.
         const absPaidToHolders = distributeAbsCashflow(revenueSwap, cededAmount, entries);
         const residualAfterCession = Math.max(0, normalResult.net - absPaidToHolders);
-        const lastResortResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, residualAfterCession, {onlyLastResort:true}) : {net:residualAfterCession, totalWithheld:0, withholdings:[]};
+        const lastResortResult = applyRentLoanWithholding(c.companyId, residualAfterCession, {onlyLastResort:true}); // Section 312 — bogue 23
         const totalWithheld = normalResult.totalWithheld + lastResortResult.totalWithheld;
         const allWithholdings = normalResult.withholdings.concat(lastResortResult.withholdings);
         
@@ -18006,7 +18015,7 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
           
           
           const r = c._precomputedByAbs ? {net:c.net, totalWithheld:c.withheld, withholdings:c.withholdings}
-            : (state.settings.features.loan ? applyLoanWithholding(c.companyId, c.amount) : {net:c.amount, totalWithheld:0, withholdings:[]});
+            : applyRentLoanWithholding(c.companyId, c.amount); // Section 312 — bogue 23
           const net = r.net;
           if(net>1e-9){
             contract.balance += (visitorId===contract.companyA ? 1 : -1) * net;
@@ -18078,7 +18087,7 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
       
       
       if(c._precomputedByCompensation || c._precomputedByAbs) return c;
-      const r = state.settings.features.loan ? applyLoanWithholding(c.companyId, c.amount) : {net:c.amount, totalWithheld:0, withholdings:[]};
+      const r = applyRentLoanWithholding(c.companyId, c.amount); // Section 312 — bogue 23
       return Object.assign({}, c, {net:r.net, withheld:r.totalWithheld, withholdings:r.withholdings});
     });
     
@@ -18291,13 +18300,13 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
     const revenueSwap = state.revenueSwaps.find(s=>s.sellerId===c.companyId && s.propertyIds.some(pid=>samePropertyOrLot(pid, p.id)));
     if(revenueSwap){
       const full = c.amount;
-      const normalResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, full, {onlyNormal:true}) : {net:full, totalWithheld:0, withholdings:[]};
+      const normalResult = applyRentLoanWithholding(c.companyId, full, {onlyNormal:true}); // Section 312 — bogue 23
       const cededAmount = full * revenueSwap.cededPctOfShare;
       // Section 307 — seul le montant réellement versé aux porteurs quitte l'émettrice (et devient abs_interest_expense) ;
       // la part cédée versée à personne (pas de junior, senior déjà servie) lui reste. Avant : cededAmount entier retiré.
       const absPaidToHolders = distributeAbsCashflow(revenueSwap, cededAmount, entries);
       const residualAfterCession = Math.max(0, normalResult.net - absPaidToHolders);
-      const lastResortResult = state.settings.features.loan ? applyLoanWithholding(c.companyId, residualAfterCession, {onlyLastResort:true}) : {net:residualAfterCession, totalWithheld:0, withholdings:[]};
+      const lastResortResult = applyRentLoanWithholding(c.companyId, residualAfterCession, {onlyLastResort:true}); // Section 312 — bogue 23
       const totalWithheld = normalResult.totalWithheld + lastResortResult.totalWithheld;
       const allWithholdings = normalResult.withholdings.concat(lastResortResult.withholdings);
       
@@ -18320,7 +18329,7 @@ async function settleNeutralPawnRent(p, pawnId, diceTotal, opts){
     
     
     if(c._precomputedByAbs) return c;
-    const r = state.settings.features.loan ? applyLoanWithholding(c.companyId, c.amount) : {net:c.amount, totalWithheld:0, withholdings:[]};
+    const r = applyRentLoanWithholding(c.companyId, c.amount); // Section 312 — bogue 23
     return Object.assign({}, c, {net:r.net, withheld:r.totalWithheld, withholdings:r.withholdings});
   });
   

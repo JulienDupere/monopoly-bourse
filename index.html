@@ -1640,6 +1640,7 @@ function migrateState(s){
   
   
   s.companies.forEach(co=>{ if(co.ready===undefined) co.ready = false; });
+  s.companies.forEach(co=>{ if(co.tradeImpactBudget===undefined) co.tradeImpactBudget = {window:null, used:{}}; }); // Section 314 — bogue 67 : budget d'impact cumulé de la fenêtre de marché
   
   
   
@@ -4709,7 +4710,9 @@ function renderEntreprise(){
   
   
   
-  const blockReadyForNegativeCash = company.cash<0 && tradingWindowOpen();
+  const ceoPlayerForReady = state.players.find(p=>p.id===company.ceoId); // Section 314 — bogue 37 : encaisse personnelle du CEO aussi
+  const ceoCashNegativeForReady = !!(ceoPlayerForReady && (ceoPlayerForReady.cash||0)<-1e-9); // Section 314 — retouche de la revue : tolérance d'arrondi
+  const blockReadyForNegativeCash = (company.cash<-1e-9 || ceoCashNegativeForReady) && tradingWindowOpen();
   const readyActionHtml = company.inJail
     ? `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`
     : (company.ready
@@ -5595,9 +5598,14 @@ function renderEntreprise(){
   
   
   
-  const negativeCashBannerHtml = company.cash < 0
+  const negativeCashBannerHtml = (company.cash < -1e-9 // Section 314 — retouche de la revue : tolérance d'arrondi (plus de « −0 K$ »)
     ? `<div style="background:var(--brick);color:#fff;padding:8px 14px;border-radius:var(--radius-md);margin-bottom:12px;font-weight:600;">⚠️ Encaisse négative (${fmt(company.cash)}) — remédiez à la situation dès que possible.</div>`
-    : '';
+    : '')
+    // Section 314 — bogue 37 : « Tour Terminé » disparaît aussi au semestre quand l'encaisse PERSONNELLE du CEO est
+    // négative ; ce bandeau en donne la raison.
+    + (ceoCashNegativeForReady
+    ? `<div style="background:var(--brick);color:#fff;padding:8px 14px;border-radius:var(--radius-md);margin-bottom:12px;font-weight:600;">⚠️ Votre encaisse personnelle est négative (${fmt(ceoPlayerForReady.cash)}) — au semestre, « Tour Terminé » reste bloqué tant qu'elle n'est pas ≥ 0.</div>`
+    : '');
 
   
   
@@ -6184,6 +6192,7 @@ const PRODUCTS_MATRIX = [
       `1 contrat couvert = 100 parts détenues`,
       `Parts comptées via l'actionnariat réel`,
       `Vos parts de CEO ne comptent pas`,
+      `Plafond : 15 % des parts de l'entreprise par joueur, toutes options écrites confondues — couvertes comprises`, // Section 314 — décision : plafond des options écrites
     ]},
   {f:'option', nm:`Cash-secured put`, sub:`Être payé pour attendre un point d'entrée`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Encaisse ou bons immobilisés`, duree:`1 à 3 semestres`,
@@ -6200,6 +6209,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Couverture = (encaisse + bons positifs) ÷ (strike × 100)`,
       `Règlement physique : vous recevez les parts`,
+      `Plafond : 15 % des parts de l'entreprise par joueur, toutes options écrites confondues — couvertes comprises`, // Section 314 — décision : plafond des options écrites
     ]},
   {f:'option', nm:`Écriture nue`, sub:`La prime intégrale, et tout le risque avec`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`30 % du notionnel en valeur nette`, duree:`1 à 3 semestres`,
@@ -6215,6 +6225,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Marge 30 % du notionnel courant`,
       `Portion nue = contrats écrits − contrats couverts`,
+      `Plafond : 15 % des parts de l'entreprise par joueur, toutes options écrites confondues (jambes de stratégie comprises)`, // Section 314 — décision : plafond des options écrites
     ]},
   {f:'option', nm:`Bull spread`, sub:`Deux calls : on paie moins, on gagne moins`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Débit net (ou crédit net à la vente)`, duree:`1 à 3 semestres`,
@@ -6232,6 +6243,7 @@ const PRODUCTS_MATRIX = [
       `Achat = long call bas + short call haut`,
       `Deux jambes, même nombre de contrats`,
       `Jamais fusionné avec une position simple existante`,
+      `La jambe écrite compte dans le plafond des options écrites : 15 % des parts de l'entreprise par joueur`, // Section 314 — décision : plafond des options écrites
     ]},
   {f:'option', nm:`Bear spread`, sub:`Le pari baissier à perte bornée`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Débit net (ou crédit net à la vente)`, duree:`1 à 3 semestres`,
@@ -6248,6 +6260,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Achat = long put haut + short put bas`,
       `Un flux net nul à l'ouverture est refusé`,
+      `La jambe écrite compte dans le plafond des options écrites : 15 % des parts de l'entreprise par joueur`, // Section 314 — décision : plafond des options écrites
     ]},
   {f:'option', nm:`ATM straddle`, sub:`Parier sur l'amplitude, pas sur la direction`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Deux primes (payées ou encaissées)`, duree:`1 à 3 semestres`,
@@ -6263,6 +6276,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Long call ATM + long put ATM (ou l'inverse écrit)`,
       `Strike figé à l'ouverture, jamais réajusté`,
+      `Version vendue : les deux jambes écrites comptent dans le plafond des options écrites (15 % des parts par joueur)`, // Section 314 — décision : plafond des options écrites
     ]},
   
   {f:'assur', nm:`Assurance de loyer`, sub:`Payer une prime pour ne pas payer un loyer`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
@@ -7149,10 +7163,16 @@ function netWorth(player){
 
 function marginableNetWorth(player){
   let total = netWorth(player) - absHoldingsValueOf('player', player.id); // Section 311 — retouche de la revue : titre ABS non liquide, exclu de la marge
+  // Section 314 — bogue 31 : netWorth retire déjà la garantie des prêts garantis (plafonnée à la valeur des parts de
+  // CEO) ; ici les parts de CEO sont exclues EN ENTIER. La garantie, qui repose sur ces mêmes parts, est donc rendue :
+  // sans cela elle était retirée deux fois (avec les parts, puis de la valeur nette) et déclenchait à tort un appel de
+  // marge. Résultat : parts de CEO exclues une seule fois, garantie comprise.
+  const secured = securedLoanGuaranteeInfo();
   state.companies.forEach(co=>{
     if(co.ceoId!==player.id) return;
     const stake = co.shareholders.find(s=>s.playerId===player.id);
     if(stake && stake.shares>0) total -= stake.shares * (co.stockPrice||0);
+    total += secured.ceoDeductionByCompanyId[co.id]||0; // Section 314 — bogue 31
   });
   return total;
 }
@@ -11155,7 +11175,15 @@ const STOCK_TRIGGER_NEGATIVE_CASH_MIN = 1, STOCK_TRIGGER_NEGATIVE_CASH_MAX = 2;
 const STOCK_TRADE_IMPACT_UNIT_PCT = 0.005; 
 const STOCK_TRADE_IMPACT_MAX_UNITS = 12; 
 
-function tradeCubeRange(company, qty, color, accumField){
+// Section 314 — bogue 67 : le plafond de STOCK_TRADE_IMPACT_MAX_UNITS unités s'applique au CUMUL et non plus à chaque
+// ordre (avant : 3 ordres de 1 M$ = 30 unités, un ordre de 3 M$ = 12, contrairement au Cahier 4). Fenêtre de cumul :
+// par joueur (actorId), par entreprise, par couleur, par accumulateur (trading joueur / actions corporatives) et par
+// fenêtre de marché = le lancer en cours (state.gameClock.rollCount : le marché n'ouvre qu'un lancer par semestre,
+// tous les ordres d'une même fenêtre portent le même numéro ; les fermetures forcées et exercices des autres lancers
+// ont leur propre fenêtre). Par joueur : l'ordre d'un joueur ne consomme jamais l'impact de l'ordre d'un autre.
+// Budget : company.tradeImpactBudget = {window, used:{clé: unités}} (défaut dans migrateState), remis à zéro quand la
+// fenêtre change. L'accumulateur fractionnaire (tradeImpactAccum) est inchangé.
+function tradeCubeRange(company, qty, color, accumField, actorId){
   accumField = accumField || 'tradeImpactAccum';
   if(!company || !(company.totalShares>0) || !(qty>0)) return null;
   if(!company[accumField]) company[accumField] = {green:0, red:0};
@@ -11165,7 +11193,14 @@ function tradeCubeRange(company, qty, color, accumField){
   company[accumField][color] = after;
   const unitsCrossed = Math.floor(after/unitSize) - Math.floor(before/unitSize);
   if(unitsCrossed<=0) return null;
-  const units = Math.min(unitsCrossed, STOCK_TRADE_IMPACT_MAX_UNITS);
+  const windowId = state.gameClock.rollCount;
+  if(!company.tradeImpactBudget || company.tradeImpactBudget.window!==windowId) company.tradeImpactBudget = {window: windowId, used: {}};
+  if(!company.tradeImpactBudget.used) company.tradeImpactBudget.used = {};
+  const budgetKey = `${accumField}|${actorId||'?'}|${color}`;
+  const usedUnits = company.tradeImpactBudget.used[budgetKey] || 0;
+  const units = Math.min(unitsCrossed, Math.max(0, STOCK_TRADE_IMPACT_MAX_UNITS - usedUnits));
+  if(units<=0) return null;
+  company.tradeImpactBudget.used[budgetKey] = usedUnits + units;
   return {qtyMin: units, qtyMax: units*2};
 }
 
@@ -11180,6 +11215,7 @@ function tradeCubeRange(company, qty, color, accumField){
 
 const HTB_BASE_ANNUAL = 0.02, HTB_SLOPE_ANNUAL = 0.5, HTB_MAX_ANNUAL = 0.50;
 const SHORT_MARGIN_MAINTENANCE_PCT = 0.30;
+const SHORT_AMOUNT_ABSURD_MAX = 1e6; // Section 314 — retouche de la revue : 1 000 000 M$ par vente à découvert, au-delà « montant démesuré »
 
 
 
@@ -11223,6 +11259,21 @@ function optionLongCallCapContracts(company){
   return Math.floor(OPTION_LONG_CALL_CAP_PCT * company.totalShares / OPTION_CONTRACT_MULTIPLIER + 1e-9);
 }
 
+// Section 314 — décision de Julien : « options écrites : plafond de 15 % des parts de l'entreprise par joueur (comme
+// les calls achetés) ». Même calcul que le plafond des calls achetés : floor(15 % × parts émises ÷ 100) contrats par
+// joueur et par entreprise. Compte TOUTES les options écrites du joueur sur l'entreprise : calls et puts, positions
+// simples et jambes écrites des stratégies (choix prudent : un seul plafond commun, couvertes comprises).
+const OPTION_WRITTEN_CAP_PCT = 0.15;
+function playerWrittenOptionContracts(player, companyId){
+  return (player.optionPositions||[]).filter(p=>p.companyId===companyId && p.side==='short' && p.shares>1e-9).reduce((sum,p)=>sum+p.shares, 0);
+}
+function optionWrittenCapContracts(company){
+  return Math.floor(OPTION_WRITTEN_CAP_PCT * company.totalShares / OPTION_CONTRACT_MULTIPLIER + 1e-9);
+}
+function optionWrittenCapErrorMessage(company, capContracts, already, adding){
+  const room = Math.max(0, capContracts - already);
+  return `Plafond d'options écrites atteint sur ${company.name} — maximum ${capContracts} contrat(s) écrit(s) par joueur, calls et puts confondus, jambes de stratégie comprises (${OPTION_WRITTEN_CAP_PCT*100}% de ${fmtShares(company.totalShares)} parts ÷ ${OPTION_CONTRACT_MULTIPLIER} parts/contrat). Vous en avez déjà ${already} ; cette opération en ajouterait ${adding}. Contrats écrits encore possibles : ${room}.`;
+}
 function optionLongCallCapErrorMessage(company, capContracts, already){
   return `Plafond de calls longs atteint sur ${company.name} — maximum ${capContracts} contrat(s) CALL long(s) par joueur (${OPTION_LONG_CALL_CAP_PCT*100}% de ${fmtShares(company.totalShares)} parts ÷ ${OPTION_CONTRACT_MULTIPLIER} parts/contrat), vous en détenez déjà ${already}. Cette limite protège contre une dilution disproportionnée de l'entreprise : à l'exercice physique d'un call, la banque livre les parts sans aucun plafond de son côté (contrairement à une émission d'actions normale, plafonnée à 10%).`;
 }
@@ -11490,7 +11541,7 @@ function executeShareTrade(company, player, direction, amount, _viaCeoAnnounceme
     }
     const realQty = qty-exemptQty;
     if(realQty>1e-9){
-      const buyCubeRange = tradeCubeRange(company, realQty, 'green');
+      const buyCubeRange = tradeCubeRange(company, realQty, 'green', undefined, player.id); // Section 314 — bogue 67 : budget du joueur
       if(buyCubeRange) injectTradingCube(company, 'green', buyCubeRange.qtyMin, buyCubeRange.qtyMax);
     }
     entries.push({label:`${player.name} (achat d'actions — ${company.name})`, amount:-amount});
@@ -11521,7 +11572,7 @@ function executeShareTrade(company, player, direction, amount, _viaCeoAnnounceme
     
     
     
-    const sellCubeRange = tradeCubeRange(company, qty, 'red');
+    const sellCubeRange = tradeCubeRange(company, qty, 'red', undefined, player.id); // Section 314 — bogue 67
     if(sellCubeRange) injectTradingCube(company, 'red', sellCubeRange.qtyMin, sellCubeRange.qtyMax);
     entries.push({label:`${player.name} (vente d'actions — ${company.name})`, amount});
     entries.push({label:`Banque (contrepartie de marché — ${company.name})`, amount:-amount});
@@ -11558,6 +11609,9 @@ function placeBid(player, company, price, qty){
   if(companyPendingIpoShares(company)>0) return {ok:false, error:`${company.name} n'a pas encore terminé son introduction en bourse (IPO) — pas encore tradable.`};
   if(!(price>0)) return {ok:false, error:'Le prix limite doit être positif.'};
   if(!(qty>0)) return {ok:false, error:'La quantité doit être positive.'};
+  // Section 314 — bogue 11 : prix ou quantité non fini refusé (Infinity devenait null à la sauvegarde : ordre fantôme,
+  // jamais exécutable).
+  if(!Number.isFinite(price) || !Number.isFinite(qty)) return {ok:false, error:'Prix limite ou quantité invalide : saisissez des nombres finis.'};
   if(!player.pendingBids) player.pendingBids = [];
   player.pendingBids.push({id:uid(), companyId:company.id, price, qty, createdAt:nowLabel(), roll:state.gameClock.rollCount});
   return {ok:true};
@@ -11569,6 +11623,7 @@ function placeAsk(player, company, price, qty){
   if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
   if(!(price>0)) return {ok:false, error:'Le prix limite doit être positif.'};
   if(!(qty>0)) return {ok:false, error:'La quantité doit être positive.'};
+  if(!Number.isFinite(price) || !Number.isFinite(qty)) return {ok:false, error:'Prix limite ou quantité invalide : saisissez des nombres finis.'}; // Section 314 — bogue 11
   const myEntry = company.shareholders.find(s=>s.playerId===player.id);
   const myShares = myEntry ? myEntry.shares : 0;
   if(qty>myShares+1e-9) return {ok:false, error:'Vous ne détenez pas assez de parts pour cet ask.'};
@@ -11595,7 +11650,11 @@ function cancelAsk(player, askId){
 function fillPendingBid(player, company, bid){
   const price = bid.price;
   if(!(price>0)) return {filled:0};
-  const cashAvail = Math.max(0, player.cash||0);
+  // Section 314 — bogue 36 : l'encaisse compte pour sa valeur réelle, même négative. Avant, max(0, encaisse) : avec
+  // −0,5 M$ d'encaisse, les bons ne couvraient que le prix, l'encaisse restait sous le montant et executeShareTrade
+  // refusait l'achat à chaque lancer. Désormais les bons comblent d'abord l'encaisse négative, puis paient le prix
+  // (liquidité nette = encaisse + bons ; rien si elle est ≤ 0).
+  const cashAvail = player.cash||0;
   const bondsAvail = Math.max(0, player.bondBalance||0);
   const totalAvail = cashAvail + bondsAvail;
   if(totalAvail<=1e-9) return {filled:0};
@@ -11603,11 +11662,11 @@ function fillPendingBid(player, company, bid){
   const qtyToFill = Math.min(bid.qty, affordableQty);
   if(qtyToFill<=1e-9) return {filled:0};
   const amount = qtyToFill*price;
-  
-  
-  
-  
-  const bondsNeeded = Math.max(0, amount-cashAvail);
+
+
+
+
+  const bondsNeeded = Math.min(bondsAvail, Math.max(0, amount-cashAvail));
   if(bondsNeeded>1e-9){
     player.bondBalance -= bondsNeeded;
     player.cash += bondsNeeded;
@@ -11620,6 +11679,7 @@ function fillPendingBid(player, company, bid){
     if(bondsNeeded>1e-9){ player.bondBalance += bondsNeeded; player.cash -= bondsNeeded; state.bank.cash += bondsNeeded; }
     return {filled:0};
   }
+  if(bondsNeeded>1e-9) absorbCashRoundingResidueWithBonds(player); // Section 314 — retouche de la revue : jamais −1e-17 d'encaisse
   bid.qty -= qtyToFill;
   return {filled:qtyToFill, entries:r.entries, amount, qty:qtyToFill};
 }
@@ -11718,7 +11778,7 @@ function issueNewShares(company, qty){
   
   
   
-  const base = tradeCubeRange(company, qty, 'red', 'corpActionImpactAccum');
+  const base = tradeCubeRange(company, qty, 'red', 'corpActionImpactAccum', company.id); // Section 314 — bogue 67 : budget de l'entreprise
   const bonus = STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MIN + Math.floor(Math.random()*(STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MAX-STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MIN+1));
   let cubesInjected = injectStockCube(company, 'red', bonus, bonus);
   if(base) cubesInjected += injectStockCube(company, 'red', base.qtyMin, base.qtyMax);
@@ -11749,7 +11809,7 @@ function buybackShares(company, qty){
   company.cumulativeSharesEmittedNet = Math.max(0, (company.cumulativeSharesEmittedNet||0) - qty);
   
   
-  const base = tradeCubeRange(company, qty, 'green', 'corpActionImpactAccum');
+  const base = tradeCubeRange(company, qty, 'green', 'corpActionImpactAccum', company.id); // Section 314 — bogue 67
   const bonus = STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MIN + Math.floor(Math.random()*(STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MAX-STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MIN+1));
   let cubesInjected = injectStockCube(company, 'green', bonus, bonus);
   if(base) cubesInjected += injectStockCube(company, 'green', base.qtyMin, base.qtyMax);
@@ -12197,6 +12257,14 @@ function openShortPosition(company, player, amount){
   
   if(!tradingWindowOpen()) return {ok:false, error:`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`};
   if(!(amount>0)) return {ok:false, error:'Le montant doit être positif.'};
+  // Section 314 — bogue 11 : un montant non fini (saisie « 1e309 » = Infinity) est refusé d'emblée. Avant, il n'était
+  // arrêté que par accident (comparaisons NaN de la marge initiale) ; un nombre de parts infini ne se sauvegarde pas
+  // (JSON → null) : la dette du découvert disparaissait au rechargement, l'encaisse restait.
+  if(!Number.isFinite(amount)) return {ok:false, error:'Montant invalide : saisissez un nombre fini.'};
+  // Section 314 — retouche de la revue : montant démesuré refusé avec un libellé lisible (avant : « découvert de
+  // 1e+300 M$ » dans le message de marge). Le plafond ne gêne aucune partie réelle : la marge initiale limite déjà le
+  // découvert à la valeur nette admissible ÷ 30 %.
+  if(amount>SHORT_AMOUNT_ABSURD_MAX) return {ok:false, error:`Montant démesuré : une vente à découvert est limitée à ${fmt(SHORT_AMOUNT_ABSURD_MAX)} par opération (la marge initiale la limite de toute façon à votre valeur nette admissible ÷ ${(SHORT_MARGIN_MAINTENANCE_PCT*100).toFixed(0)} %).`};
   if(player.id===company.ceoId) return {ok:false, error:`Le CEO de ${company.name} ne peut pas vendre à découvert ses propres parts — délit d'initié intégré au jeu.`};
   if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
   
@@ -12210,6 +12278,7 @@ function openShortPosition(company, player, amount){
   const price = company.stockPrice||0;
   if(!(price>0)) return {ok:false, error:'Le prix de l’action est invalide pour le moment.'};
   const qty = amount/price;
+  if(!Number.isFinite(qty)) return {ok:false, error:'Montant invalide : le nombre de parts correspondant n’est pas un nombre fini.'}; // Section 314 — bogue 11
   // Section 307 — marge initiale : le découvert ne s'ouvre que si la marge de maintien reste respectée APRÈS l'opération
   // (sinon l'appel de marge le refermait au lancer suivant en laissant une dette gratuite face aux bons).
   const marginSim = initialMarginCheck(player, p=>{
@@ -12241,7 +12310,7 @@ function openShortPosition(company, player, amount){
   state.bank.cash -= amount;
   
   
-  const shortOpenCubeRange = tradeCubeRange(company, qty, 'red');
+  const shortOpenCubeRange = tradeCubeRange(company, qty, 'red', undefined, player.id); // Section 314 — bogue 67
   if(shortOpenCubeRange) injectTradingCube(company, 'red', shortOpenCubeRange.qtyMin, shortOpenCubeRange.qtyMax);
   const entries = [
     {label:`${player.name} (vente à découvert — ${company.name})`, amount},
@@ -12259,6 +12328,7 @@ function closeShortPosition(company, player, amount, _bypassTradingWindow){
   
   if(!_bypassTradingWindow && !tradingWindowOpen()) return {ok:false, error:`Le marché est fermé — les transactions ne sont possibles qu'aux semestres. Prochaine ouverture dans ${rollsUntilSemesterEnd()} lancer(s).`};
   if(!(amount>0)) return {ok:false, error:'Le montant doit être positif.'};
+  if(!Number.isFinite(amount)) return {ok:false, error:'Montant invalide : saisissez un nombre fini.'}; // Section 314 — bogue 11 (l'appel de marge passe Number.MAX_SAFE_INTEGER, fini)
   if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
   const pos = player.shortPositions && player.shortPositions[company.id];
   if(!pos || pos.shares<=1e-9) return {ok:false, error:`Aucune position à découvert ouverte sur ${company.name} — rien à racheter.`};
@@ -12293,13 +12363,14 @@ function closeShortPosition(company, player, amount, _bypassTradingWindow){
   player.cumRealizedPnl = (player.cumRealizedPnl||0) + (pos.avgOpenPrice-price)*qty;
   player.cash -= effectiveAmount;
   state.bank.cash += effectiveAmount;
+  if(_bypassTradingWindow) absorbCashRoundingResidueWithBonds(player); // Section 314 — retouche de la revue
   let bankEntry = company.shareholders.find(s=>s.playerId==='BANK');
   if(!bankEntry){ bankEntry = {playerId:'BANK', shares:0}; company.shareholders.push(bankEntry); }
   bankEntry.shares += qty; 
   pos.shares -= qty;
   if(pos.shares<=1e-9) delete player.shortPositions[company.id]; 
   
-  const shortCloseCubeRange = tradeCubeRange(company, qty, 'green');
+  const shortCloseCubeRange = tradeCubeRange(company, qty, 'green', undefined, player.id); // Section 314 — bogue 67
   if(shortCloseCubeRange) injectTradingCube(company, 'green', shortCloseCubeRange.qtyMin, shortCloseCubeRange.qtyMax);
   const entries = [
     {label:`${player.name} (rachat pour clôturer — ${company.name})`, amount:-effectiveAmount},
@@ -12504,7 +12575,10 @@ function accrueBondInterest(){
     if(!p.bondBalance) return;
     const interest = p.bondBalance*perRollRate;
     p.bondBalance += interest;
-    state.bank.cash -= interest;
+    // Section 314 — bogue 7 : plus de débit de la banque ici. La banque garde le dépôt (buyBonds l'encaisse) et paie
+    // capital + intérêts au retrait (withdrawBonds, vente forcée, bid) : l'intérêt n'est payé (ou reçu, pour une dette
+    // de bons remboursée par buyBonds) qu'une fois. Avant, il était aussi débité ici à chaque lancer sans être versé à
+    // personne : un placement détruisait de l'argent, un emprunt en créait.
     
     
     
@@ -12858,6 +12932,13 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
       return {ok:false, error: optionLongCallCapErrorMessage(company, capContracts, already)};
     }
   }
+  if(side==='short'){ // Section 314 — décision : plafond de 15 % des options écrites (revérifié dans l'applyFn qui appelle cette fonction)
+    const capWritten = optionWrittenCapContracts(company);
+    const alreadyWritten = playerWrittenOptionContracts(player, company.id);
+    if(alreadyWritten + shares > capWritten + 1e-9){
+      return {ok:false, error: optionWrittenCapErrorMessage(company, capWritten, alreadyWritten, shares)};
+    }
+  }
   const notional = optionNotional(shares, premium);
   const typeLabel = type==='call' ? 'CALL' : 'PUT';
   // Section 307 — marge initiale pour une option ÉCRITE : simulation de l'écriture (fusion dans la position existante
@@ -12865,7 +12946,7 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
   if(side==='short'){
     const simulateWrite = (k)=>initialMarginCheck(player, p=>{
       p.cash += optionNotional(k, premium);
-      const ex = p.optionPositions.find(pos=>pos.companyId===company.id && pos.type===type && pos.side===side && Math.abs(pos.strike-strike)<1e-9 && pos.expiryRoll===expiryRoll);
+      const ex = p.optionPositions.find(pos=>pos.companyId===company.id && pos.type===type && pos.side===side && Math.abs(pos.strike-strike)<1e-9 && pos.expiryRoll===expiryRoll && !pos.strategyId); // Section 314 — bogue 38
       if(ex) ex.shares += k; else p.optionPositions.push({id:'__simulation__', companyId:company.id, type, side, strike, expiryRoll, shares:k, premiumAtOpen:premium});
     });
     const marginSim = simulateWrite(shares);
@@ -12897,7 +12978,10 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
     entries.push({label:`Banque (contrepartie — détient l'option ${company.name})`, amount:-notional});
   }
   if(!player.optionPositions) player.optionPositions = [];
-  const existing = player.optionPositions.find(pos=>pos.companyId===company.id && pos.type===type && pos.side===side && Math.abs(pos.strike-strike)<1e-9 && pos.expiryRoll===expiryRoll);
+  // Section 314 — bogue 38 : une option simple ne fusionne jamais avec une jambe de stratégie identique (même type,
+  // côté, strike, échéance). Avant, elle s'y ajoutait : disparue de « Mes positions », réglée en argent, impossible à
+  // fermer seule. Elle reste une position distincte, livrable en parts.
+  const existing = player.optionPositions.find(pos=>pos.companyId===company.id && pos.type===type && pos.side===side && Math.abs(pos.strike-strike)<1e-9 && pos.expiryRoll===expiryRoll && !pos.strategyId);
   if(existing){
     
     
@@ -12960,6 +13044,7 @@ function closeOptionPosition(player, positionId, shares, _bypassTradingWindow, _
     }
     player.cash -= notional;
     state.bank.cash += notional;
+    if(_bypassTradingWindow) absorbCashRoundingResidueWithBonds(player); // Section 314 — retouche de la revue
     player.cumOptionNetPremium = (player.cumOptionNetPremium||0) - notional;
     entries.push({label:`${player.name} (rachat de clôture — option ${typeLabel}, ${co.name})`, amount:-notional});
     entries.push({label:`Banque (vente de l'option ${typeLabel} — ${co.name})`, amount:notional});
@@ -13034,6 +13119,16 @@ function openOptionStrategy(company, player, kind, direction, strikeLow, strikeH
     const already = playerLongCallContracts(player, company.id);
     if(already + contracts > capContracts + 1e-9){
       return {ok:false, error: optionLongCallCapErrorMessage(company, capContracts, already)};
+    }
+  }
+  // Section 314 — décision : plafond de 15 % des options écrites, jambes écrites des stratégies comprises (un straddle
+  // vendu de N contrats écrit 2 × N contrats).
+  const writtenLegCount = legs.filter(l=>l.side==='short').length;
+  if(writtenLegCount>0){
+    const capWritten = optionWrittenCapContracts(company);
+    const alreadyWritten = playerWrittenOptionContracts(player, company.id);
+    if(alreadyWritten + writtenLegCount*contracts > capWritten + 1e-9){
+      return {ok:false, error: optionWrittenCapErrorMessage(company, capWritten, alreadyWritten, writtenLegCount*contracts)};
     }
   }
   
@@ -13127,6 +13222,18 @@ function settleOptionStrategyLegCash(player, pos, company, intrinsic){
 
 
 
+// Section 314 — retouche de la revue : après un paiement financé par les bons (bid, fermeture forcée, exercice),
+// encaisse + (montant − encaisse) − montant laisse souvent un résidu d'arrondi NÉGATIF (≈ −1e-17) : « Tour Terminé »
+// était alors refusé au semestre avec « −0 K$ ». Ce résidu est prélevé sur les bons (vente à la banque), monnaie
+// conservée : l'encaisse finit à 0 exactement.
+function absorbCashRoundingResidueWithBonds(player){
+  const c = player.cash||0;
+  if(c<0 && c>-1e-9 && (player.bondBalance||0)>=-c){
+    player.bondBalance += c;
+    state.bank.cash += c;
+    player.cash = 0;
+  }
+}
 // Section 307 — reasonLabel (facultatif) : libellé du journal pour les autres règlements forcés (rachat forcé d'un
 // découvert ou d'une option écrite par l'appel de marge) ; sans lui, le libellé historique de l'exercice d'option.
 function raiseCashForForcedSettlement(player, amountNeeded, reasonLabel){
@@ -13171,7 +13278,8 @@ function settleOptionExercise(player, pos, company){
     
     
     
-    const exerciseBuyCubeRange = tradeCubeRange(company, qty, 'green');
+    if(shortfall>1e-9) absorbCashRoundingResidueWithBonds(player); // Section 314 — retouche de la revue
+    const exerciseBuyCubeRange = tradeCubeRange(company, qty, 'green', undefined, player.id); // Section 314 — bogue 67
     if(exerciseBuyCubeRange) injectTradingCube(company, 'green', exerciseBuyCubeRange.qtyMin, exerciseBuyCubeRange.qtyMax);
     
     
@@ -13212,7 +13320,7 @@ function settleOptionExercise(player, pos, company){
     player.cash += notional; 
     state.bank.cash -= notional;
     
-    const exerciseSellCubeRange = tradeCubeRange(company, qty, 'red');
+    const exerciseSellCubeRange = tradeCubeRange(company, qty, 'red', undefined, player.id); // Section 314 — bogue 67
     if(exerciseSellCubeRange) injectTradingCube(company, 'red', exerciseSellCubeRange.qtyMin, exerciseSellCubeRange.qtyMax);
     
     
@@ -14175,7 +14283,14 @@ async function markCompanyReady(companyId, expectedRoll){
     
     
     
-    if(co.cash<0 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`};
+    if(co.cash<-1e-9 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`};
+    // Section 314 — bogue 37 : la règle vaut aussi pour l'encaisse PERSONNELLE du CEO (demande de Julien, archive
+    // 227-300 : « l'encaisse négatives des joueurs et des entreprises ne permet pas de passer au tour suivant seulement
+    // aux semestres »). Revérifiée ici, sur l'état frais (action de tour de la section 308 : refus sans sauvegarde).
+    const ceoPlayer = state.players.find(p=>p.id===co.ceoId);
+    // Section 314 — retouche de la revue : tolérance d'arrondi (< −1e-9, comme ailleurs dans le moteur, ici et pour
+    // l'encaisse de l'entreprise ci-dessus) ; le message donne les moyens de remonter à 0.
+    if(ceoPlayer && (ceoPlayer.cash||0)<-1e-9 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse personnelle ≥ 0$ pour continuer — votre encaisse personnelle est actuellement de ${fmt(ceoPlayer.cash)}. Pour remonter à 0 : retirez des bons gouvernementaux, empruntez en bons (vente à découvert de bons, dans la limite de la dette maximale de ${fmt(state.settings.bondShortMax||0)}), vendez des actions ou fermez des positions qui vous rapportent de l'encaisse, puis réessayez.`};
     if(co.ready) return {ok:false, error:null, code:'already-ready'};
     co.ready = true;
     log(`${co.name} est prête pour le prochain lancer de dés pour tous.`);

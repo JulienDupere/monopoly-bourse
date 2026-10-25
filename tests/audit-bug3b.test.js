@@ -34,8 +34,14 @@ async function setup(){
     state.gameClock.rollCount = 3;
     drawStockCubes = function(){ return []; };
     resolveStockDraws = function(){ return {gameOver:false}; };
-    globalThis.legacy = function(fn){ const real = requiredMaintenanceMargin; requiredMaintenanceMargin = function(){ return 0; };
-      try { return fn(); } finally { requiredMaintenanceMargin = real; } };
+    // Section 314 — une position héritée précède aussi le plafond de 15 % des options écrites : legacy() le neutralise.
+    globalThis.legacy = function(fn){ const real = requiredMaintenanceMargin, realCap = optionWrittenCapContracts;
+      requiredMaintenanceMargin = function(){ return 0; }; optionWrittenCapContracts = function(){ return Infinity; };
+      try { return fn(); } finally { requiredMaintenanceMargin = real; optionWrittenCapContracts = realCap; } };
+    // Section 314 — A4 vérifie la marge initiale avec des milliers de contrats : le plafond de 15 % des options écrites
+    // (300 contrats ici, testé dans section314-options) y est neutralisé le temps de l'ouverture.
+    globalThis.sansPlafond = function(fn){ const realCap = optionWrittenCapContracts; optionWrittenCapContracts = function(){ return Infinity; };
+      try { return fn(); } finally { optionWrittenCapContracts = realCap; } };
     globalThis.R = function(r){ return {ok: !!(r && r.ok), error: (r && r.error) || '', qty: r && r.qty}; };
     globalThis.opts = function(pl){ return (pl.optionPositions||[]).map(p=>({id:p.id, type:p.type, side:p.side, strike:p.strike, shares:p.shares, sid:p.strategyId||null})); };
     globalThis.snapC = function(){ return {cash: C.cash, bonds: C.bondBalance||0, bank: state.bank.cash, opts: JSON.stringify(opts(C)),
@@ -212,14 +218,14 @@ const same = (a, b) => ['cash', 'bonds', 'bank', 'short'].every(k => near(a[k], 
     // Calls écrits nus : refus au-delà du maximum de contrats, le maximum annoncé est réellement ouvrable.
     const { eng, S } = await setup();
     const K = 0.8 * S;
-    let r = eng.json(`R(openOptionPosition(B, C, 'call', 'short', ${K}, 12, 400000))`);
+    let r = eng.json(`R(sansPlafond(()=>openOptionPosition(B, C, 'call', 'short', ${K}, 12, 400000)))`);
     ok(!r.ok && /Marge initiale insuffisante/.test(r.error), 'écriture de 400 000 calls nus : REFUSÉE — « ' + r.error.slice(0, 90) + '… »');
     const m = /Nombre maximal de contrats ouvrables : ([0-9   ]+)/.exec(r.error);
     const maxC = m ? parseInt(m[1].replace(/[^0-9]/g, ''), 10) : NaN;
     ok(maxC > 0 && maxC < 400000, `le refus donne le nombre maximal de contrats : ${maxC}`);
-    r = eng.json(`R(openOptionPosition(B, C, 'call', 'short', ${K}, 12, ${maxC}))`);
+    r = eng.json(`R(sansPlafond(()=>openOptionPosition(B, C, 'call', 'short', ${K}, 12, ${maxC})))`);
     ok(r.ok && eng.run(`marginableNetWorth(C) >= requiredMaintenanceMargin(C)`), `écriture de ${maxC} calls (le maximum) : acceptée, marge respectée`);
-    r = eng.json(`R(openOptionPosition(B, C, 'call', 'short', ${K}, 12, 1))`);
+    r = eng.json(`R(sansPlafond(()=>openOptionPosition(B, C, 'call', 'short', ${K}, 12, 1)))`);
     ok(!r.ok && /Marge initiale insuffisante/.test(r.error), 'un contrat de plus : refusé');
   }
   {
@@ -230,9 +236,9 @@ const same = (a, b) => ['cash', 'bonds', 'bank', 'short'].every(k => near(a[k], 
     const cc = Math.floor(held / 100);
     eng.run(`C.cash -= 200;`); // dette : valeur nette très négative
     ok(eng.run(`marginableNetWorth(C)`) < 0, `Carl est sous l’eau (valeur nette ${f2(eng.run('marginableNetWorth(C)'))} M$)`);
-    let r = eng.json(`R(openOptionPosition(B, C, 'call', 'short', ${1.1 * S}, 12, ${cc}))`);
+    let r = eng.json(`R(sansPlafond(()=>openOptionPosition(B, C, 'call', 'short', ${1.1 * S}, 12, ${cc})))`);
     ok(r.ok && near(eng.run(`requiredMaintenanceMargin(C)`), 0, 1e-12), `covered call (${cc} contrats couverts par ses ${Math.round(held)} parts) : accepté, marge exigée 0`);
-    r = eng.json(`R(openOptionPosition(B, C, 'call', 'short', ${1.1 * S}, 12, 1))`);
+    r = eng.json(`R(sansPlafond(()=>openOptionPosition(B, C, 'call', 'short', ${1.1 * S}, 12, 1)))`);
     ok(!r.ok && /Marge initiale insuffisante/.test(r.error), 'un call de plus, non couvert : refusé');
     r = eng.json(`R(openShortPosition(B, C, 1))`);
     ok(!r.ok && /Marge initiale insuffisante/.test(r.error), 'découvert de 1 M$ sous l’eau : refusé');
@@ -240,18 +246,18 @@ const same = (a, b) => ['cash', 'bonds', 'bank', 'short'].every(k => near(a[k], 
   {
     const { eng, S } = await setup();
     const csp = Math.floor(eng.run(`C.cash`) / (S * 100));
-    let r = eng.json(`R(openOptionPosition(B, C, 'put', 'short', ${S}, 12, ${csp}))`);
+    let r = eng.json(`R(sansPlafond(()=>openOptionPosition(B, C, 'put', 'short', ${S}, 12, ${csp})))`);
     ok(r.ok && near(eng.run(`requiredMaintenanceMargin(C)`), 0, 1e-12), `cash-secured put (${csp} puts ATM couverts par l’encaisse) : accepté, marge exigée 0`);
   }
   {
     // Stratégies : straddle vendu énorme refusé (maximum annoncé) ; bull spread acheté (jambe écrite protégée) accepté.
     const { eng, S } = await setup();
-    let r = eng.json(`R(openOptionStrategy(B, C, 'straddle', 'sell', 0, 0, 12, 400000))`);
+    let r = eng.json(`R(sansPlafond(()=>openOptionStrategy(B, C, 'straddle', 'sell', 0, 0, 12, 400000)))`);
     ok(!r.ok && /Marge initiale insuffisante/.test(r.error), 'vente de 400 000 straddles : REFUSÉE — « ' + r.error.slice(0, 90) + '… »');
     const m = /Nombre maximal de contrats ouvrables : ([0-9   ]+)/.exec(r.error);
     const maxC = m ? parseInt(m[1].replace(/[^0-9]/g, ''), 10) : NaN;
     ok(maxC > 0 && maxC < 400000, `le refus donne le nombre maximal de contrats : ${maxC}`);
-    r = eng.json(`R(openOptionStrategy(B, C, 'straddle', 'sell', 0, 0, 12, ${maxC}))`);
+    r = eng.json(`R(sansPlafond(()=>openOptionStrategy(B, C, 'straddle', 'sell', 0, 0, 12, ${maxC})))`);
     ok(r.ok && eng.run(`marginableNetWorth(C) >= requiredMaintenanceMargin(C)`), `vente de ${maxC} straddles (le maximum) : acceptée, marge respectée`);
     const g2 = await setup();
     r = g2.eng.json(`R(openOptionStrategy(B, C, 'bullSpread', 'buy', ${0.9 * S}, ${1.1 * S}, 12, 300))`);

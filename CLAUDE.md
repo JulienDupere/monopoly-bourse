@@ -46,11 +46,14 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 - `docs/audit/audit-2026-10-19.md` : audit du moteur, 101 bogues numérotés par gravité décroissante (1–2 critiques,
   3–6 graves, 7–43 moyens, 44–101 faibles), puis « Questions de conception à trancher ». Verdicts détaillés dans le
   JSON voisin (Grep `"rank": 42,`). Au 2026-10-24 : 1–6 corrigés (section 307) ; 17, 32, 44, 57–60, 71–74
-  corrigés (section 308, synchronisation) ; les autres moyens et faibles sont en cours de correction par lots (sauf
-  12, 45, 51, 53, 61, 62, écartés par Julien).
+  corrigés (section 308, synchronisation) ; vague 2 : 8, 9, 13, 16, 33, 34, 35, 63
+  (section 309, immobilier ; 64 voulu), 18–22, 30, 42, 70 (section 311, ABS et swaps), 10, 23, 24, 47, 50, 65
+  (section 312, financement), 14, 15, 39, 40, 48, 49, 52 (section 313, assurance) ; 310 réservé à la vague 3 (REIT,
+  lot commercial) ; les autres moyens et faibles restent à corriger par lots (sauf 12, 45, 51, 53, 61, 62, écartés
+  par Julien).
 - `docs/cahiers/` : neuf cahiers PDF de formation des joueurs et un aide-mémoire (index : `README.md`). Si une
-  livraison change une mécanique qu'ils décrivent, le signaler à Julien (mises à jour en attente : fin de la
-  section 307).
+  livraison change une mécanique qu'ils décrivent, le signaler à Julien (mises à jour en attente : fin des
+  sections 307, 308, 309, 311, 312 et 313).
 
 ## Repères dans le code (par nom)
 
@@ -85,8 +88,8 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 
 ## Tests
 
-- `node tests/run-all.js` lance tous les `tests/*.test.js` (15 fichiers, 1 190 vérifications et 53 cas
-  multi-appareils au 2026-10-24). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
+- `node tests/run-all.js` lance tous les `tests/*.test.js` (35 fichiers, 1 811 vérifications et 53 cas
+  multi-appareils au 2026-10-24, après la vague 2). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
   `tests/helpers/fake-firebase.js`, mini-DOM `tests/helpers/fake-dom.js` ; `SYNC_SEEDS=40` pour un passage long). Il charge
   tout le script d'`index.html`, donc une erreur de syntaxe le fait échouer. Tout doit passer avant un push.
 - Syntaxe seule : `node -e "new (require('vm').Script)(require('./tests/helpers/engine').engineSource())"`.

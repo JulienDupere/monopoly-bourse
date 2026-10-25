@@ -58,7 +58,7 @@ async function setup(opts = {}){
     if(id) Y.champ(id, 1);
     Y.champ('mPrice', 500);
     await Y.cliquer('#mOk');
-    ok(Y.run(`P('p0').acquisitionPrice`) === 500, 'contre-épreuve (contrôle retiré) : Bob inscrit un prix d’acquisition de 500 M$ — le test détecte la régression');
+    ok(Y.run(`P('p0').acquisitionPrice`) != null && Y.json(`P('p0').owners`).length === 2, 'contre-épreuve (contrôle retiré) : Bob inscrit un achat et un prix d’acquisition — le test détecte la régression'); // Section 309 — décision de Julien (2026-10-25) : plancher en moyenne pondérée (5,594 et non 500)
   }
   // Lot regroupé.
   E = await setup();

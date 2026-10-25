@@ -18445,6 +18445,7 @@ function modalBuyShares(pid){
     <div class="small">Prix de base: ${fmt(p.basePrice)}${wasSeized?` · Valeur intrinsèque (suggérée, terrain déjà possédé par le passé): ${fmt(suggestedPrice)}`:''} (max ${state.settings.maxOwners} entreprises copropriétaires simultanées — ${existingOwnerIds.length} actuellement)</div>
     <label>Prix convenu (pour 100% du terrain, en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mPrice" value="${suggestedPrice}">
+    <div class="small" style="margin-bottom:6px;">Plancher de valeur du terrain après l’achat : moyenne pondérée par les parts du prix convenu (parts achetées ici) et du plancher actuel (${fmt(p.acquisitionPrice!=null ? p.acquisitionPrice : p.basePrice)}, autres parts).</div><!-- Section 309 — décision de Julien (2026-10-25) -->
     <label>Répartition entre entreprises acheteuses (max ${cap}% rachetable à la banque${cap<100?` — le reste (${100-cap}%) est réservé en permanence à la banque, module REIT activé`:''})</label>
     <div id="mBuyerRows"></div>
     <button type="button" class="btn btn-ghost" id="mAddBuyerRow" style="margin:6px 0;">+ Ajouter une entreprise</button>
@@ -18499,11 +18500,13 @@ function modalBuyShares(pid){
         const newOnes = formEntries.filter(e=>!freshExistingOwnerIds.includes(e.companyId)).map(e=>companyById(e.companyId)?.name||'?').join(', ');
         return {ok:false, error:`Maximum ${state.settings.maxOwners} entreprises copropriétaires simultanées pour ce terrain — cette opération en compterait ${finalCount}${newOnes?` (nouvelles: ${newOnes})`:''}.`};
       }
-      
-      
+
+
+      let boughtPct = 0; // Section 309 — décision de Julien (2026-10-25) : parts réellement payées dans cette fenêtre
       for(const e of formEntries){
         const buyerCo = companyById(e.companyId);
         if(!buyerCo) continue;
+        boughtPct += e.pct;
         const cost = price * (e.pct/100);
         buyerCo.cash -= cost;
         logFin(buyerCo.id, 'land_purchase', -cost);
@@ -18516,7 +18519,13 @@ function modalBuyShares(pid){
         log(`${buyerCo.name} achète ${e.pct}% de ${prop.name} pour ${cost.toFixed(2)} (prix convenu ${price.toFixed(2)} pour 100%)`,
           [{label:`${buyerCo.name} (achat ${e.pct}% de ${prop.name})`, amount:-cost}, {label:'Banque', amount:cost}]);
       }
-      prop.acquisitionPrice = price;
+      // Section 309 — décision de Julien (2026-10-25) : plancher de valeur (acquisitionPrice, pour 100 % du terrain) = prix
+      // RÉELLEMENT payé, en moyenne pondérée par les parts : les parts achetées ici comptent au prix convenu, les autres
+      // au plancher précédent (prix de base s'il n'y en a pas), qui résume déjà les achats antérieurs (sinon un rachat
+      // partiel effacerait le prix payé avant). Ex. Brun 1 : 1 % « à 500 pour 100 % » → 0,99 × 0,6 + 0,01 × 500 = 5,594
+      // (avant : 500, soit +370 M$ à la revente à la banque). Le plancher monte au plus du montant payé : la triche coûte.
+      const prevFloor = prop.acquisitionPrice!=null ? prop.acquisitionPrice : prop.basePrice;
+      if(boughtPct>0) prop.acquisitionPrice = prevFloor*((100-boughtPct)/100) + price*(boughtPct/100);
       return {ok:true};
     });
   });

@@ -14851,6 +14851,24 @@ function swapSplit(propId, ownerId, visitorId, cutAmount){
 
 
 
+// Section 311 — bogue 22 : swapSplit ne retient qu'UN swap par (entreprise, terrain) : le spécifique sur ce terrain (ou
+// son lot), sinon le général. Un second swap du même genre sur le même côté ne jouait donc que dans un sens (l'entreprise
+// recevait les loyers du partenaire sans jamais lui verser les siens). Option la plus sûre retenue : refuser la
+// proposition ET la signature d'un swap qui entrerait en conflit avec un swap actif — deux côtés généraux (ou à budget)
+// pour la même entreprise, ou deux côtés spécifiques sur le même terrain/lot. Un spécifique et un général restent
+// compatibles (le spécifique l'emporte sur son terrain, le général couvre le reste : section 258).
+function rentSwapConflictReason(companyId, isGeneral, propId){
+  const co = companyById(companyId);
+  const isActive = s => s.budgetMode || s.yearsRemaining>0;
+  const clash = state.rentSwaps.find(s=> isActive(s) && [[s.companyA, s.generalA, s.propA], [s.companyB, s.generalB, s.propB]].some(([cid, gen, pid])=>
+    cid===companyId && (isGeneral ? !!gen : (!gen && samePropertyOrLot(pid, propId)))));
+  if(!clash) return null;
+  const partner = companyById(clash.companyA===companyId ? clash.companyB : clash.companyA);
+  if(isGeneral) return `${co?co.name:'?'} a déjà un swap de loyers général ou à budget actif avec ${partner?partner.name:'?'} — un second swap général ne jouerait que dans un sens. Attendez la fin du premier.`;
+  const p = state.properties.find(x=>x.id===propId);
+  const label = p ? (p.groupMergeId ? `Lot ${GROUPS[p.group].label}` : p.name) : '?';
+  return `${co?co.name:'?'} a déjà un swap de loyers actif sur ${label} avec ${partner?partner.name:'?'} — un second swap sur le même terrain ne jouerait que dans un sens. Attendez la fin du premier.`;
+}
 async function createRentSwap(propA, companyA, propB, companyB, years, capA, capB, generalA, generalB, budgetCapA, budgetCapB, opts){
   
   
@@ -14889,6 +14907,9 @@ async function createRentSwap(propA, companyA, propB, companyB, years, capA, cap
     if(!propBObjForCheck || propertyOwnedShare(propBObjForCheck, companyB)<=0) return fail(`${coBForCheck.name} ne possède plus ce terrain — swap annulé.`);
     if(isPropertyLockedByRevenueSwap(propB, companyB)) return fail(`${coBForCheck.name} a vendu le revenu de ce terrain (swap de revenu fixe/variable) — impossible d'y signer un nouveau swap de loyers tant que l'accord est actif.`);
   }
+  // Section 311 — bogue 22 : revérifié à la signature (un autre swap a pu être conclu depuis la proposition).
+  const conflictAtSign = rentSwapConflictReason(companyA, generalA, propA) || rentSwapConflictReason(companyB, generalB, propB);
+  if(conflictAtSign) return fail(conflictAtSign);
   state.rentSwaps.push({id:uid(), propA: generalA?null:propA, companyA, generalA, capA: capA||null,
     propB: generalB?null:propB, companyB, generalB, capB: capB||null,
     yearsRemaining: budgetMode?null:years, yearsTotal: budgetMode?null:years,
@@ -14956,6 +14977,8 @@ async function proposeRentSwap(propA, companyA, propB, companyB, years, capA, ca
     if(!propBObj || propertyOwnedShare(propBObj, companyB)<=0) return fail(`${coB.name} ne possède aucune part de ce terrain — impossible de le proposer dans un swap.`);
     if(isPropertyLockedByRevenueSwap(propB, companyB)) return fail(`${coB.name} a vendu le revenu de ce terrain (swap de revenu fixe/variable) — impossible d'y proposer un nouveau swap de loyers tant que l'accord est actif.`);
   }
+  const conflictAtProposal = rentSwapConflictReason(companyA, generalA, propA) || rentSwapConflictReason(companyB, generalB, propB); // Section 311 — bogue 22
+  if(conflictAtProposal) return fail(conflictAtProposal);
   state.rentSwapOffers.push({id:uid(), fromCompanyId:companyA, propA: generalA?null:propA, generalA, capA: capA||null,
     toCompanyId:companyB, propB: generalB?null:propB, generalB, capB: capB||null, years: budgetMode?null:years,
     budgetMode, budgetCapA: budgetMode?budgetCapA:null, budgetCapB: budgetMode?budgetCapB:null});

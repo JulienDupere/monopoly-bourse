@@ -18171,12 +18171,19 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
           
           
           payable -= net;
-          if(r.totalWithheld>1e-9){
+          // Section 311 — bogue 70 : part d'ABS + accord de compensation. Le visiteur paie en argent ce qui est versé aux
+          // porteurs (et aux prêteurs) ; seul le reste (net) va au registre. L'émettrice enregistre donc maintenant, comme
+          // sans compensation, le loyer réglé en argent (versé aux porteurs + retenues) et la charge d'intérêt d'ABS ;
+          // la part inscrite au registre sera constatée au règlement de fin d'année (rent_compensation_revenue), jamais
+          // deux fois. Avant : la coupe était retirée et le loyer cédé comme l'intérêt disparaissaient de ses états.
+          // Trésorerie inchangée (net:0, les porteurs ont déjà été crédités par distributeAbsCashflow).
+          const settledNow = c._precomputedByAbs ? Math.max(0, c.amount - Math.max(0, net)) : r.totalWithheld;
+          if(settledNow>1e-9){
             
             
             
             
-            keptCuts.push({companyId:c.companyId, amount:r.totalWithheld, viaSwap:c.viaSwap, fromOwnerId:c.fromOwnerId,
+            keptCuts.push({companyId:c.companyId, amount:settledNow, absCeded:c._precomputedByAbs ? c.absCeded : 0, viaSwap:c.viaSwap, fromOwnerId:c.fromOwnerId, // Section 311 — bogue 70
               net:0, withheld:r.totalWithheld, withholdings:r.withholdings, _precomputedByCompensation:true});
           }
         } else {

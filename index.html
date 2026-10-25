@@ -1295,6 +1295,7 @@ function migrateState(s){
   if(!s.rentSwapOffers) s.rentSwapOffers = [];
   if(!s.rentCompensationOffers) s.rentCompensationOffers = [];
   if(!Array.isArray(s.assetSaleOffers)) s.assetSaleOffers = []; // Section 309 — offres de vente de maisons / de parts à accepter
+  if(!Array.isArray(s.rentSwapTerminationRequests)) s.rentSwapTerminationRequests = []; // Section 311 — décision de Julien (2026-10-25) : résiliation amiable d'un swap à budget
   
   
   
@@ -1697,6 +1698,9 @@ function migrateState(s){
     
     if(sw.budgetMode===undefined) sw.budgetMode = false;
   });
+  // Section 311 — décision de Julien (2026-10-25) : la résiliation amiable désigne le swap par son identifiant. Un ancien
+  // swap sans identifiant en reçoit un DÉTERMINISTE (même valeur sur tous les appareils qui migrent le même état).
+  (s.rentSwaps||[]).forEach((sw, i)=>{ if(!sw.id) sw.id = `rs-ancien-${i}-${sw.companyA||''}-${sw.companyB||''}`; });
   (s.rentSwapOffers||[]).forEach(o=>{
     o.fromCompanyId = coIdOfPlayer(o.fromPlayerId!==undefined ? o.fromPlayerId : o.fromCompanyId);
     delete o.fromPlayerId;
@@ -2004,6 +2008,7 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
     terrainLot: {bids:[], active:null, lastResult:null},
     rentSwaps: [], rentCompensations: [], rentSwapOffers: [], rentCompensationOffers: [], loans: [], loanRequests: [], loanOffers: [], taxInsurances: [],
     assetSaleOffers: [], // Section 309 — offres de vente de maisons / de parts à accepter par le CEO acheteur
+    rentSwapTerminationRequests: [], // Section 311 — décision de Julien (2026-10-25) : demandes de résiliation amiable d'un swap à budget
     
     
     revenueSwapListings: [], revenueSwaps: [],
@@ -5116,6 +5121,7 @@ function renderEntreprise(){
   const incomingCompOffers = (state.rentCompensationOffers||[]).filter(o=>o.toCompanyId===myCoId);
   const outgoingCompOffers = (state.rentCompensationOffers||[]).filter(o=>o.fromCompanyId===myCoId);
   const mortgageOffersHtml = mortgageOffersPendingHtml(myCoId); // Section 312 — bogue 50
+  const swapTerminationHtml = rentSwapTerminationRequestsHtml(myCoId); // Section 311 — décision de Julien (2026-10-25)
   
   
   
@@ -5130,7 +5136,7 @@ function renderEntreprise(){
   
   
   
-  const hasAnyPendingItems = incomingSwapOffers.length || outgoingSwapOffers.length || incomingCompOffers.length || outgoingCompOffers.length || company.inJail || otherAbsListingsToShow.length || mortgageOffersHtml; // Section 312 — bogue 50
+  const hasAnyPendingItems = incomingSwapOffers.length || outgoingSwapOffers.length || incomingCompOffers.length || outgoingCompOffers.length || company.inJail || otherAbsListingsToShow.length || mortgageOffersHtml || swapTerminationHtml; // Section 312 — bogue 50 ; section 311 — décision de Julien (2026-10-25)
   const offersHtml = !hasAnyPendingItems ? '' : `
   <div class="section-title" style="margin-top:16px;">Propositions en attente</div>
   ${company.inJail ? `
@@ -5185,6 +5191,7 @@ function renderEntreprise(){
     </div>`;
   }).join('')}
   ${mortgageOffersHtml}
+  ${swapTerminationHtml}
   ${otherAbsListingsToShow.map(l=>{
     const seller = companyById(l.sellerId);
     const labels = l.propertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p?(p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name):'?'; }).join(', ');
@@ -5320,7 +5327,12 @@ function renderEntreprise(){
       const plafondBContent = s.budgetMode
         ? `${s.capB?fmt(s.capB)+'/événement, ':''}${fmt(s.disbursedA)}/${fmt(s.budgetCapA)} cumulatif`
         : (s.capB?fmt(s.capB)+'/événement':'illimité');
-      const durationContent = s.budgetMode ? 'Budget cumulatif (sans durée)' : `${s.yearsRemaining}/${s.yearsTotal}`;
+      // Section 311 — décision de Julien (2026-10-25) : un des deux CEO d'un swap à budget peut en proposer la résiliation amiable.
+      const pendingTermination = s.budgetMode ? rentSwapTerminationRequestList().find(r=>r.swapId===s.id) : null;
+      const terminationContent = !s.budgetMode || (myCoId!==s.companyA && myCoId!==s.companyB) || company.ceoId!==myPlayerId ? ''
+        : (pendingTermination ? `<div class="small">Résiliation amiable ${pendingTermination.fromCompanyId===myCoId ? 'proposée — en attente de réponse' : 'demandée — voir Propositions en attente'}</div>`
+          : `<div><button class="btn btn-ghost btn-sm" data-propose-swap-termination="${s.id}">Proposer une résiliation amiable</button></div>`);
+      const durationContent = s.budgetMode ? 'Budget cumulatif (sans durée)' + terminationContent : `${s.yearsRemaining}/${s.yearsTotal}`;
       return `<tr>
         <td>${labelA}</td><td>${esc(coB?coB.name:'?')}</td>
         <td class="small">${plafondAContent}</td>
@@ -10050,6 +10062,7 @@ function advanceGameClock(){
   expirePendingLoanRequests();
   expirePendingMortgageOffers(); // Section 312 — retouche de la revue
   expireAssetSaleOffers(); // Section 309 — retouche de la revue : les offres de vente expirent au lancer suivant
+  expireRentSwapTerminationRequests(); // Section 311 — décision de Julien (2026-10-25)
   
   
   
@@ -14322,6 +14335,25 @@ function mergeRoundShares(raw, total){
   }
   return out;
 }
+// Section 311 — décision de Julien (2026-10-25) : une même entreprise avec des swaps de loyers SPÉCIFIQUES actifs sur deux
+// terrains (côtés) différents d'un lot : après le regroupement, swapSplit n'en retiendrait qu'un pour le lot (le premier
+// trouvé) et le second ne jouerait plus que dans un sens. Le regroupement est refusé (comme pour une ABS en cours) tant
+// que l'un d'eux court. Renvoie le message de refus, ou null.
+function mergeGroupSpecificSwapsRefusal(props){
+  const ids = new Set(props.map(p=>p.id));
+  const isActive = s => s.budgetMode || s.yearsRemaining>0;
+  const sides = {};
+  (state.rentSwaps||[]).filter(isActive).forEach(s=>{
+    [[s.companyA, s.generalA, s.propA, s.companyB], [s.companyB, s.generalB, s.propB, s.companyA]].forEach(([cid, gen, pid, partnerId])=>{
+      if(!gen && ids.has(pid)) (sides[cid] = sides[cid] || []).push({pid, partnerId});
+    });
+  });
+  const cid = Object.keys(sides).find(k=>sides[k].length>=2);
+  if(!cid) return null;
+  const co = companyById(cid);
+  const list = sides[cid].map(x=>{ const p = props.find(pp=>pp.id===x.pid); const partner = companyById(x.partnerId); return `${p?p.name:'?'} (avec ${partner?partner.name:'?'})`; }).join(', ');
+  return `Regroupement impossible : ${co?co.name:'?'} a des swaps de loyers spécifiques actifs sur plusieurs terrains de ce lot — ${list}. Une fois le lot regroupé, un seul de ces swaps s'appliquerait au lot et l'autre ne jouerait plus que dans un sens. Attendez la fin de l'un d'eux.`;
+}
 async function mergeGroup(group){
   const res = await attemptActionWithRetry(async ()=>{
   if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut regrouper un lot.'};
@@ -14339,6 +14371,8 @@ async function mergeGroup(group){
   // survivrait pas au regroupement (parts redistribuées, une seule ABS retrouvée par lot : la seconde n'était plus payée).
   // Parties en cours : le regroupement attend l'échéance (ou le retrait de l'annonce) de ces ABS.
   if(state.revenueSwaps.concat(state.revenueSwapListings).some(s=>(s.propertyIds||[]).some(pid=>props.some(p=>p.id===pid)))) return {ok:false, error:`Regroupement impossible : une émission ABS court (ou est annoncée) sur un terrain du lot ${GROUPS[group].label} — attendez son échéance.`};
+  const twoSwapsRefusal = mergeGroupSpecificSwapsRefusal(props); // Section 311 — décision de Julien (2026-10-25)
+  if(twoSwapsRefusal) return {ok:false, error:twoSwapsRefusal};
   const values = props.map(p=>p.basePrice);
   const contributions = {};
   props.forEach((p,i)=>{ p.owners.forEach(o=>{ contributions[o.companyId] = (contributions[o.companyId]||0) + values[i]*(o.share/100); }); });
@@ -15650,6 +15684,121 @@ async function cancelRentSwapOffer(id){
   }, {label:'Retrait d\'une proposition de swap de loyers'});
   if(!res.ok){ if(res.error) alert(res.error); return; }
   render();
+}
+
+// Section 311 — décision de Julien (2026-10-25) « Ok go pour tes reco » : résiliation amiable d'un swap à budget
+// cumulatif (sans durée, il ne prend fin qu'à l'épuisement des deux côtés : un swap dont aucun côté ne progresse liait
+// les deux entreprises sans limite). L'un des deux CEO propose la résiliation (state.rentSwapTerminationRequests,
+// défaut [] dans migrateState : {id, swapId, fromCompanyId, toCompanyId, byPlayerId, roll, createdAt}) ; seul le CEO de
+// l'autre entreprise l'accepte ou la refuse (rentOfferResponderRefusal), l'auteur peut la retirer ; elle expire au
+// lancer de dés suivant, comme les autres offres. À l'acceptation, le swap prend fin sans aucun paiement (ce qui a été
+// reçu reste acquis). Tout est revérifié dans les applyFn, sur l'état frais.
+function rentSwapTerminationRequestList(){
+  return Array.isArray(state.rentSwapTerminationRequests) ? state.rentSwapTerminationRequests : [];
+}
+function rentSwapBudgetSummary(s){
+  const coA = companyById(s.companyA), coB = companyById(s.companyB);
+  return `${coA?coA.name:'?'} ${fmt(s.disbursedA||0)} reçus sur ${fmt(s.budgetCapA||0)}, ${coB?coB.name:'?'} ${fmt(s.disbursedB||0)} reçus sur ${fmt(s.budgetCapB||0)}`;
+}
+async function proposeRentSwapTermination(swapId){
+  const res = await attemptActionWithRetry(async ()=>{
+    if(state.gameEndedReason) return {ok:false, error:'La partie est terminée.'};
+    const s = (state.rentSwaps||[]).find(x=>x.id===swapId);
+    if(!s) return {ok:false, error:'Ce swap n’existe plus (épuisé ou déjà résilié).'};
+    if(!s.budgetMode) return {ok:false, error:'Seul un swap à budget cumulatif se résilie à l’amiable : un swap à durée prend fin à son échéance.'};
+    const myCo = myCompany();
+    if(!myCo || (myCo.id!==s.companyA && myCo.id!==s.companyB)) return {ok:false, error:'Seul le CEO d’une des deux entreprises du swap peut en proposer la résiliation.'};
+    if(rentSwapTerminationRequestList().some(r=>r.swapId===s.id)) return {ok:false, error:'Une demande de résiliation de ce swap est déjà en attente de réponse.'};
+    const partnerId = myCo.id===s.companyA ? s.companyB : s.companyA;
+    const partner = companyById(partnerId);
+    if(!Array.isArray(state.rentSwapTerminationRequests)) state.rentSwapTerminationRequests = [];
+    state.rentSwapTerminationRequests.push({id:uid(), swapId:s.id, fromCompanyId:myCo.id, toCompanyId:partnerId, byPlayerId:myPlayerId, roll:state.gameClock.rollCount, createdAt:nowLabel()});
+    log(`${myCo.name} propose à ${partner?partner.name:'?'} de résilier à l’amiable leur swap de loyers à budget cumulatif (${rentSwapBudgetSummary(s)}), sans paiement — en attente de sa réponse (onglet Mon Entreprise du CEO de ${partner?partner.name:'?'}) avant le prochain lancer de dés.`);
+    return {ok:true};
+  }, {label:'Proposition de résiliation d’un swap à budget'});
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
+  render();
+  return res;
+}
+async function acceptRentSwapTermination(reqId){
+  const res = await attemptActionWithRetry(async ()=>{
+    if(state.gameEndedReason) return {ok:false, error:'La partie est terminée.'};
+    const req = rentSwapTerminationRequestList().find(r=>r.id===reqId);
+    if(!req) return {ok:false, error:'Cette demande de résiliation n’existe plus (retirée, refusée ou expirée) — le swap continue.'};
+    const notResponder = rentOfferResponderRefusal(req); // Section 311 — décision de Julien (2026-10-25) : seul le CEO destinataire répond
+    if(notResponder) return notResponder;
+    if(state.gameClock.rollCount!==req.roll) return {ok:false, error:`Cette demande, faite au lancer ${req.roll}, a expiré au lancer de dés suivant — le swap continue.`};
+    const from = companyById(req.fromCompanyId), to = companyById(req.toCompanyId);
+    state.rentSwapTerminationRequests = rentSwapTerminationRequestList().filter(r=>r.id!==reqId);
+    const s = (state.rentSwaps||[]).find(x=>x.id===req.swapId);
+    if(!s){ log(`La demande de résiliation amiable de ${from?from.name:'?'} à ${to?to.name:'?'} est sans objet : le swap à budget a déjà pris fin — retirée.`); return {ok:true}; }
+    state.rentSwaps = state.rentSwaps.filter(x=>x!==s);
+    log(`${to?to.name:'?'} accepte la résiliation amiable proposée par ${from?from.name:'?'} : leur swap de loyers à budget cumulatif prend fin, sans paiement (${rentSwapBudgetSummary(s)} — ce qui a été reçu reste acquis).`);
+    return {ok:true};
+  }, {label:'Acceptation d’une résiliation de swap à budget'});
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
+  render();
+  return res;
+}
+async function refuseRentSwapTermination(reqId){
+  const res = await attemptActionWithRetry(async ()=>{
+    const req = rentSwapTerminationRequestList().find(r=>r.id===reqId);
+    if(!req) return {ok:false, error:'Cette demande de résiliation n’existe plus.'};
+    const notResponder = rentOfferResponderRefusal(req); // Section 311 — décision de Julien (2026-10-25)
+    if(notResponder) return notResponder;
+    const from = companyById(req.fromCompanyId), to = companyById(req.toCompanyId);
+    state.rentSwapTerminationRequests = rentSwapTerminationRequestList().filter(r=>r.id!==reqId);
+    log(`${to?to.name:'?'} refuse la résiliation amiable proposée par ${from?from.name:'?'} : le swap de loyers à budget continue.`);
+    return {ok:true};
+  }, {label:'Refus d’une résiliation de swap à budget'});
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
+  render();
+  return res;
+}
+async function cancelRentSwapTermination(reqId){
+  const res = await attemptActionWithRetry(async ()=>{
+    const req = rentSwapTerminationRequestList().find(r=>r.id===reqId);
+    if(!req) return {ok:false, error:'Cette demande de résiliation n’existe plus.'};
+    const from = companyById(req.fromCompanyId), to = companyById(req.toCompanyId);
+    if(!from || from.ceoId!==myPlayerId) return {ok:false, error:'Seule l’entreprise auteure de la demande peut la retirer.'};
+    state.rentSwapTerminationRequests = rentSwapTerminationRequestList().filter(r=>r.id!==reqId);
+    log(`${from.name} retire sa demande de résiliation amiable du swap à budget avec ${to?to.name:'?'}.`);
+    return {ok:true};
+  }, {label:'Retrait d’une demande de résiliation de swap'});
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
+  render();
+  return res;
+}
+// Au lancer de dés (advanceGameClock, à côté de expireAssetSaleOffers) : les demandes du lancer précédent expirent, et
+// celles dont le swap a déjà pris fin (épuisé) sont retirées ; trace au journal.
+function expireRentSwapTerminationRequests(){
+  const list = rentSwapTerminationRequestList();
+  const gone = list.filter(r=>state.gameClock.rollCount>r.roll || !(state.rentSwaps||[]).some(x=>x.id===r.swapId));
+  if(!gone.length) return;
+  gone.forEach(r=>{
+    const from = companyById(r.fromCompanyId), to = companyById(r.toCompanyId);
+    log(`La demande de résiliation amiable du swap à budget de ${from?from.name:'?'} à ${to?to.name:'?'} (lancer ${r.roll}) expire sans réponse avant le lancer de dés suivant — le swap continue s'il court encore.`);
+  });
+  state.rentSwapTerminationRequests = list.filter(r=>!gone.includes(r));
+}
+// Affichage dans « Propositions en attente » (onglet Mon Entreprise) : demandes reçues (Accepter / Refuser) et envoyées (Retirer).
+function rentSwapTerminationRequestsHtml(myCoId){
+  const live = rentSwapTerminationRequestList().filter(r=>(state.rentSwaps||[]).some(x=>x.id===r.swapId));
+  const incoming = live.filter(r=>r.toCompanyId===myCoId), outgoing = live.filter(r=>r.fromCompanyId===myCoId);
+  return incoming.map(r=>{
+    const from = companyById(r.fromCompanyId);
+    return `<div class="deed-actions" style="margin-bottom:6px;">
+      <span class="ownerchip">🛑 Résiliation amiable du swap à budget — proposée par ${esc(from?from.name:'?')} (lancer ${r.roll}, expire au lancer suivant) : le swap prendrait fin sans paiement</span>
+      <button class="btn btn-primary btn-sm" data-accept-swap-termination="${r.id}">Accepter la résiliation</button>
+      <button class="btn btn-brick btn-sm" data-refuse-swap-termination="${r.id}">Refuser</button>
+    </div>`;
+  }).join('') + outgoing.map(r=>{
+    const to = companyById(r.toCompanyId);
+    return `<div class="deed-actions" style="margin-bottom:6px;">
+      <span class="small">🛑 Résiliation amiable du swap à budget proposée à ${esc(to?to.name:'?')} — en attente de sa réponse (lancer ${r.roll}, expire au lancer suivant).</span>
+      <button class="btn btn-ghost btn-sm" data-cancel-swap-termination="${r.id}">Retirer</button>
+    </div>`;
+  }).join('');
 }
 
 
@@ -17761,6 +17910,11 @@ function bindTabEvents(t){
     document.querySelectorAll('[data-refuse-comp-offer]').forEach(b=>b.addEventListener('click', ()=>refuseRentCompensationOffer(b.dataset.refuseCompOffer)));
     document.querySelectorAll('[data-cancel-swap-offer]').forEach(b=>b.addEventListener('click', ()=>cancelRentSwapOffer(b.dataset.cancelSwapOffer)));
     document.querySelectorAll('[data-cancel-comp-offer]').forEach(b=>b.addEventListener('click', ()=>cancelRentCompensationOffer(b.dataset.cancelCompOffer)));
+    // Section 311 — décision de Julien (2026-10-25) : résiliation amiable d'un swap à budget.
+    document.querySelectorAll('[data-propose-swap-termination]').forEach(b=>b.addEventListener('click', ()=>proposeRentSwapTermination(b.dataset.proposeSwapTermination)));
+    document.querySelectorAll('[data-accept-swap-termination]').forEach(b=>b.addEventListener('click', ()=>acceptRentSwapTermination(b.dataset.acceptSwapTermination)));
+    document.querySelectorAll('[data-refuse-swap-termination]').forEach(b=>b.addEventListener('click', ()=>refuseRentSwapTermination(b.dataset.refuseSwapTermination)));
+    document.querySelectorAll('[data-cancel-swap-termination]').forEach(b=>b.addEventListener('click', ()=>cancelRentSwapTermination(b.dataset.cancelSwapTermination)));
     // Section 312 — bogue 50 : offres d'hypothèque (accepter = confirmation aux conditions de l'offre).
     document.querySelectorAll('[data-accept-mortgage-offer]').forEach(b=>b.addEventListener('click', ()=>modalAcceptMortgageOffer(b.dataset.acceptMortgageOffer)));
     document.querySelectorAll('[data-refuse-mortgage-offer]').forEach(b=>b.addEventListener('click', ()=>refuseMortgageOffer(b.dataset.refuseMortgageOffer)));

@@ -9333,16 +9333,43 @@ function settleBankDividendExcess(co, paidTotal, debited, entries){
   return excess;
 }
 
+// Section 316 — décision de Julien : « dividende annoncé dû au lancer final = versé aux actionnaires ». Une annonce
+// échue à ce lancer (payAtRoll ≤ rollCount) n'est plus rendue : elle reste en place et le versement du changement de
+// semestre de CE lancer la paie, avec les règles actuelles (section 307 : parts éligibles au versement, banque à
+// position négative). payAtRoll est toujours un début de semestre, et la seule fin posée AVANT ce versement est la
+// durée maximale (advanceGameClock, frontière d'année donc de semestre) : les autres fins arrivent après lui ou entre
+// deux lancers, quand aucune annonce échue ne reste. Les annonces pas encore échues restent rendues à l'entreprise.
 function forfeitPendingDividendAnnouncementsAtGameEnd(){
   if(!state.dividendAnnouncements || state.dividendAnnouncements.length===0) return;
-  state.dividendAnnouncements.forEach(ann=>{
+  const pending = state.dividendAnnouncements.filter(ann=>!(ann.payAtRoll<=state.gameClock.rollCount)); // Section 316 — décision
+  pending.forEach(ann=>{
     const co = companyById(ann.companyId);
     if(!co) return; 
     co.cash += ann.amount;
     logFin(co.id, 'dividend_forfeited_return', ann.amount);
     log(`La partie se termine avant le versement du dividende de ${fmt(ann.amount)} annoncé par ${co.name} (lancer #${ann.announcedAtRoll}) — montant intégralement rendu à sa trésorerie, personne ne l'ayant encore reçu.`);
   });
-  state.dividendAnnouncements = [];
+  state.dividendAnnouncements = state.dividendAnnouncements.filter(ann=>!pending.includes(ann)); // Section 316 — décision : les annonces échues restent pour le versement
+}
+// Section 316 — décision de Julien : « fin de partie en cours d'année : régler les soldes de compensation et le pari du
+// lot commercial, comptés au classement final ». Mêmes fonctions et mêmes règles qu'en fin d'année (processYearEnd) :
+// balance + intérêt annuel versés par la débitrice, accord clôturé ; pari du lot commercial (loyers accumulés − prix)
+// réparti à parts égales. À une frontière d'année (durée maximale), processYearEnd a déjà tout réglé : rien à faire.
+// Monnaie conservée : de simples virements entre entreprises.
+function settleYearContractsAtGameEnd(){
+  const comps = state.rentCompensations || [];
+  const lot = (state.settings.features.terrainLot && state.terrainLot) ? state.terrainLot.active : null;
+  if(comps.length===0 && !lot) return;
+  log(`🏁 Fin de partie en cours d’année : ${[comps.length ? 'les accords de compensation de loyer' : '', lot ? 'le pari du lot commercial' : ''].filter(Boolean).join(' et ')} ${comps.length && lot ? 'sont réglés' : 'est réglé'} maintenant, aux règles de fin d’année, et compté${comps.length && lot ? 's' : ''} au classement final.`);
+  comps.forEach(c=>settleRentCompensation(c));
+  state.rentCompensations = [];
+  if(lot) settleTerrainLotYearEnd(lot.year!=null ? lot.year : currentGameYear(), state.gameClock.rollCount);
+}
+// Section 316 — règlements de fin de partie, appelés là où gameEndedReason est posé (durée maximale, cours à 0,
+// 100 % banque, prêt de dernier recours).
+function settleAtGameEnd(){
+  forfeitPendingDividendAnnouncementsAtGameEnd();
+  settleYearContractsAtGameEnd(); // Section 316 — décision
 }
 
 // Section 311 — bogue 19 : une ABS est tarifée sur years × 6 lancers (computeAbsPricing) ; elle est désormais servie
@@ -9384,7 +9411,7 @@ function advanceGameClock(){
   
   if(!state.gameEndedReason && state.hiddenGameLengthTargetYear!=null && after>state.hiddenGameLengthTargetYear){
     state.gameEndedReason = {reason:'maxDuration', roll: state.gameClock.rollCount, year: state.hiddenGameLengthTargetYear};
-    forfeitPendingDividendAnnouncementsAtGameEnd(); 
+    settleAtGameEnd(); // Section 316 — décisions : dividende échu versé, règlements de fin d'année
   }
   
   
@@ -10005,7 +10032,7 @@ function advanceGameClock(){
         
         
         state.gameEndedReason = {companyId: co.id, companyName: co.name, roll: state.gameClock.rollCount, reason:'stockFloor'};
-        forfeitPendingDividendAnnouncementsAtGameEnd(); 
+        settleAtGameEnd(); // Section 316 — décisions
       }
       
       
@@ -11423,7 +11450,7 @@ function checkBankOwnershipGraceExpiry(){
     if(co.bankOwnedGraceExpiry===undefined) continue;
     if(state.gameClock.rollCount >= co.bankOwnedGraceExpiry){
       state.gameEndedReason = {companyId: co.id, companyName: co.name, roll: state.gameClock.rollCount, reason:'bankOwnsAll'};
-      forfeitPendingDividendAnnouncementsAtGameEnd(); 
+      settleAtGameEnd(); // Section 316 — décisions
       log(`🏁 Le délai de grâce de ${co.name} (2 années financières) a expiré sans qu'aucune position longue n'ait été ré-acquise — la partie se termine officiellement pour tout le monde.`);
       return; 
     }
@@ -16827,7 +16854,7 @@ function triggerLastResortLoan(companyId){
   if(hist.length>500) hist.shift();
   if(gameOver && !state.gameEndedReason){
     state.gameEndedReason = {companyId: company.id, companyName: company.name, roll, reason:'stockFloor'};
-    forfeitPendingDividendAnnouncementsAtGameEnd(); 
+    settleAtGameEnd(); // Section 316 — décisions
   }
   const entries = [{label:'Banque (capital prêté — dernier recours)', amount:-principal}, {label:`${company.name} (capital reçu — dernier recours)`, amount:principal}];
   log(`🆘 ${company.name} contracte un PRÊT DE DERNIER RECOURS de ${fmt(principal)} auprès de la banque (${company.lastResortLoanCount} fois cette partie) — annonce majeure aux joueurs. Conséquences permanentes pour ${company.name}: cours de l'action -${Math.round(LAST_RESORT_PRICE_DROP_PCT*100)}% (${fmtPrice(priceBefore)} → ${fmtPrice(company.stockPrice)}), ventes à découvert/achats de calls courts/achats de puts longs désormais bloqués (les positions déjà ouvertes sont conservées), sortie publique du CEO définitivement indisponible pour cette entreprise (l'annonce CEO différée à 1 an reste possible), effets baissiers en bourse durablement amplifiés. Remboursement: ${Math.round(LAST_RESORT_LOAN_WITHHOLDING_PCT*100)}% de tous les loyers reçus jusqu'à ${fmt(totalDue)} au total (${LAST_RESORT_LOAN_MULTIPLE}× le capital).`, entries);

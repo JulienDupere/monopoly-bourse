@@ -650,7 +650,7 @@ const NET_WORTH_INDEX_DEFS = [
 
 
 const COMPANY_TYPE_GUIDELINES = {
-  dividende: `Le CEO d'une compagnie Dividendes gagne la confiance du marché par la RÉGULARITÉ de ses versements, plus que par leur ampleur. Un dividende stable ou en légère hausse, maintenu semestre après semestre, est récompensé avec le temps. À l'inverse, toute baisse du dividende récurrent est un signal brutal : votre sac type passe d'un coup à 20 cubes rouges. Et verser plus que le bénéfice du semestre fait rougir 5 cubes de ce même sac — mieux vaut un montant modeste mais tenable qu'un gros versement qu'il faudra réduire plus tard.`,
+  dividende: `Le CEO d'une compagnie Dividendes gagne la confiance du marché par la RÉGULARITÉ de ses versements, plus que par leur ampleur. Un dividende stable ou en légère hausse, maintenu semestre après semestre, est récompensé avec le temps. À l'inverse, toute baisse du dividende récurrent est un signal brutal : votre sac type passe d'un coup à 20 cubes rouges, comme pour un semestre sans dividende récurrent (un dividende annoncé à la main ne le remplace pas). Et verser plus que le bénéfice du semestre (tous dividendes réellement versés, hors part de la banque) fait rougir 5 cubes de ce même sac — mieux vaut un montant modeste mais tenable qu'un gros versement qu'il faudra réduire plus tard.`,
   croissance: `Le CEO d'une compagnie Croissance est jugé sur sa capacité à faire croître ses revenus plus vite que le reste du marché. Un semestre où l'entreprise dépasse largement les attentes est récompensé généreusement — mais un échec marqué est puni plus durement encore. C'est le type le plus polarisé des quatre : fort potentiel de gain, mais aussi le risque le plus sévère en cas de contre-performance.`,
   garp: `Le CEO d'une compagnie GARP gère une valeur « sans histoire » : aucun mécanisme dominant, aucun bonus ni pénalité spéciale — seulement une progression régulière et modérée sur les fondamentaux de base. C'est le choix le plus prévisible des quatre, pour un CEO qui préfère éviter de parier sur un scénario précis.`,
   momentum: `Le CEO d'une compagnie Momentum gère une valeur qui suit sa PROPRE tendance de prix récente, plus que ses résultats financiers. Une série de semestres dans la même direction a tendance à se renforcer d'elle-même — à la hausse comme à la baisse. Mais une tendance qui s'étire trop longtemps finit par s'essouffler et peut se retourner brusquement : c'est le type le plus extrême des quatre, où un vrai coup de chance (ou de malchance) compte davantage qu'ailleurs.`,
@@ -9371,7 +9371,14 @@ function advanceGameClock(){
   state.gameClock.rollCount = (state.gameClock.rollCount||0) + 1;
   const after = currentGameYear();
   const semesterAfter = Math.floor(state.gameClock.rollCount/3);
-  if(after>before) processYearEnd(after);
+  // Section 315 — bogue 80 : intérêts hypothécaires annuels, dividendes REIT et règlements des accords de compensation
+  // appartiennent à l'année qui se termine et sont réglés avant la photo du bilan de clôture : leurs écritures vont au
+  // semestre clos (dernier lancer de l'année, comme le lot commercial). Avant : au nouveau semestre, si bien que le
+  // bilan de clôture les incluait mais pas l'état des résultats ni les flux du semestre.
+  if(after>before){
+    finLedgerDefaultRollOverride = state.gameClock.rollCount-1;
+    try{ processYearEnd(after); } finally{ finLedgerDefaultRollOverride = null; }
+  }
   
   
   
@@ -9411,7 +9418,8 @@ function advanceGameClock(){
     if(hadSemesterContracts){
       log('Les contrats d\'assurance normale (terrains et taxes) tarifés au terme « Semestre » expirent — fin du semestre; primes conservées par leurs vendeurs respectifs.');
     }
-    snapshotBalanceSheets(semesterBefore);
+    // Section 315 — bogue 81 : la photo du bilan de clôture est prise APRÈS les versements de dividendes (plus bas),
+    // qui sont inscrits au semestre clos : flux, résultats et bilan du semestre concordent.
     
     
     
@@ -9471,8 +9479,10 @@ function advanceGameClock(){
       });
       const unclaimed = ann.amount - paidTotal;
       if(unclaimed > 1e-9){
-        co.cash += unclaimed; 
-        logFin(co.id, 'dividend_forfeited_return', unclaimed);
+        co.cash += unclaimed;
+        // Section 315 — bogue 81 et décision de Julien (ratio sans la part de la banque) : la part non versée revient
+        // au semestre clos, celui de l'annonce, comme pour l'auto-versement (avant : au nouveau semestre).
+        logFin(co.id, 'dividend_forfeited_return', unclaimed, state.gameClock.rollCount-1);
         entries.push({label:`${co.name} (portion de dividende non réclamée — retour trésorerie)`, amount:unclaimed});
       }
       const bankPaid = settleBankDividendExcess(co, paidTotal, ann.amount, entries); // Section 307 — la banque paie sa position négative
@@ -9503,8 +9513,15 @@ function advanceGameClock(){
     
     
     
+    const recurrentDividendPaidIds = new Set(); // Section 315 — bogue 25 : entreprises qui ont versé leur dividende récurrent
     activeCompanies().forEach(co=>{
       if(co.type==='dividende' && co.dividendAutoPay && co.dividendBenchmarkPerShare>0){
+        // Section 315 — bogue 27 : un arriérage de dividende privilégié bloque aussi l'auto-versement (comme l'annonce
+        // manuelle) ; trace au journal. Le dividende récurrent n'étant pas versé, le sac type passe à 20 rouges (bogue 25).
+        if(co.preferredDividendArrears>0){
+          log(`${co.name}: dividende récurrent automatique NON versé ce semestre — arriérage de dividende préférentiel de ${fmt(co.preferredDividendArrears)} à régler d'abord (bouton « Payer l'arriérage » dans Mon Entreprise). Sans dividende récurrent, le sac type passe à 20 cubes rouges.`);
+          return;
+        }
         const autoAmount = co.dividendBenchmarkPerShare * co.sharesIssued;
         if(autoAmount>1e-9){
           co.cash -= autoAmount;
@@ -9552,9 +9569,11 @@ function advanceGameClock(){
           });
           log(`${co.name} verse automatiquement son dividende de ${fmt(autoAmount)} (auto-versement activé, benchmark ${fmtPrice(co.dividendBenchmarkPerShare)}/part) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non versé (part de la banque, retourné en trésorerie)`:''}${bankPaid>1e-9?`, dont ${fmt(bankPaid)} payé par la banque (position négative sur ${co.name})`:''}.`, entries); // Section 307 — mention du paiement de la banque
           co.dividendAutoPaySemesterIdx = semesterAfter;
+          recurrentDividendPaidIds.add(co.id); // Section 315 — bogue 25
         }
       }
     });
+    snapshotBalanceSheets(semesterBefore); // Section 315 — bogue 81 : après les versements de dividendes du semestre clos
     
     
     
@@ -9853,22 +9872,18 @@ function advanceGameClock(){
         
         breakDividendStreak();
         co.dividendLossStreak = 0;
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        if(co.type==='dividende' && co.dividendBenchmarkPerShare>0){
-          wipeTypeReserveToRed(co);
-          co.dividendRecurrentNeedsReset = true;
-        }
+
+
+
+
+
+
+
+
+
+
+
+
       } else if(is.netIncome<=1e-9){
         
         co.dividendLossStreak = (co.dividendLossStreak||0) + 1;
@@ -9905,13 +9920,23 @@ function advanceGameClock(){
         co.dividendStreak = (co.dividendStreak||0) + 1;
         injectDividendReward(co.dividendStreak);
       }
+      // Section 315 — bogue 25 (décision de Julien) : le sac type d'une Dividendes ne réagit QU'AU dividende récurrent.
+      // S'il n'a pas été versé ce semestre (auto-versement décoché, ou bloqué par un arriérage), sac type à 20 rouges,
+      // même si un dividende manuel a été versé. Avant : un dividende manuel de 1 $ évitait le choc.
+      if(co.type==='dividende' && co.dividendBenchmarkPerShare>0 && !recurrentDividendPaidIds.has(co.id)){
+        wipeTypeReserveToRed(co);
+        co.dividendRecurrentNeedsReset = true;
+      }
       // Section 306 — sac type des compagnies Dividendes : ratio de distribution (dividendes versés ÷ bénéfice net du
       // semestre) > 1 → 5 cubes rougis, blancs d'abord puis verts. Un semestre sans bénéfice (≤ 0) avec un versement
       // compte comme un ratio > 1 : on distribue plus que ce qu'on a gagné.
-      if(co.type==='dividende' && thisSem>1e-9 && (is.netIncome<=1e-9 || (thisSem/is.netIncome) > 1)){
+      // Section 315 — décisions de Julien : TOUS les dividendes réellement versés (récurrent et manuels), HORS part de la
+      // banque (jamais versée, rendue à la trésorerie) et parts vendues depuis l'annonce (dividendNetPaidInSemester).
+      const paidForRatio = dividendNetPaidInSemester(co.id, semesterBefore);
+      if(co.type==='dividende' && paidForRatio>1e-9 && (is.netIncome<=1e-9 || (paidForRatio/is.netIncome) > 1)){
         const reddened = redenTypeReserveWhiteFirst(co, DIVIDEND_OVERPAYOUT_RED_CUBES);
         if(reddened>0){
-          const ratioTxt = is.netIncome>1e-9 ? `${Math.round(thisSem/is.netIncome*100)} %` : 'bénéfice nul ou négatif';
+          const ratioTxt = is.netIncome>1e-9 ? `${Math.round(paidForRatio/is.netIncome*100)} %` : 'bénéfice nul ou négatif';
           log(`${co.name}: dividendes versés supérieurs au bénéfice du semestre (ratio de distribution : ${ratioTxt}) — ${reddened} cube(s) du sac type passent au rouge.`);
         }
       }
@@ -10317,16 +10342,27 @@ const FIN_CATEGORIES = {
   preferred_dividend_unclaimed_return: {bucket:null, cf:'financing', label:'Dividende préférentiel non distribué — retour trésorerie'},
 };
 
+// Section 315 — bogue 80 : pendant les règlements de fin d'année (processYearEnd), les écritures sans lancer explicite
+// sont inscrites au dernier lancer de l'année close (posé et retiré par advanceGameClock).
+let finLedgerDefaultRollOverride = null;
 function logFin(companyId, category, amount, roll){
-  if(!companyId || companyId==='BANK') return; 
-  if(!amount) return; 
-  const r = (roll!==undefined) ? roll : state.gameClock.rollCount;
+  if(!companyId || companyId==='BANK') return;
+  if(!amount) return;
+  const r = (roll!==undefined) ? roll : (finLedgerDefaultRollOverride!==null ? finLedgerDefaultRollOverride : state.gameClock.rollCount); // Section 315 — bogue 80
   state.finLedger.push({companyId, roll:r, semesterIndex:Math.floor(r/3), category, amount});
   if(state.finLedger.length>10000) state.finLedger.shift(); 
 }
 
 function dividendPaidInSemester(companyId, semesterIndex){
   return state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex && e.category==='dividend_payout')
+    .reduce((s,e)=>s+(-e.amount), 0);
+}
+// Section 315 — décisions de Julien (ratio de distribution > 1, section 306) : dividendes ordinaires RÉELLEMENT versés
+// par l'entreprise dans le semestre = débités (dividend_payout) moins la part revenue en trésorerie
+// (dividend_forfeited_return : part de la banque, parts vendues depuis l'annonce). Ce que la banque paie au titre
+// d'une position négative ne sort pas de l'entreprise et n'y figure pas.
+function dividendNetPaidInSemester(companyId, semesterIndex){
+  return state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex && (e.category==='dividend_payout' || e.category==='dividend_forfeited_return'))
     .reduce((s,e)=>s+(-e.amount), 0);
 }
 
@@ -20532,6 +20568,7 @@ function modalAnnounceDividend(){
   openModal(`
     <h3>Annoncer un dividende — ${esc(myCo.name)}</h3>
     <div class="small" style="margin-bottom:10px;">Dès l'annonce, le montant total est bloqué et retiré de la trésorerie. Le versement intervient le semestre suivant au prorata des actions détenues ce jour-là.</div>
+    ${myCo.type==='dividende' && myCo.dividendBenchmarkPerShare>0 ? `<div class="small" style="margin-bottom:10px;color:var(--muted);">Un dividende annoncé à la main ne remplace pas le dividende récurrent : sans versement récurrent ce semestre, votre sac type passe à 20 cubes rouges à la clôture.</div>` : ''}<!-- Section 315 — bogue 25 -->
     ${graceWarningHtml}
     <div class="small" style="margin-bottom:8px;">Trésorerie actuelle: <b>${fmt(myCo.cash)}</b>${inGracePeriod?` &nbsp;|&nbsp; Maximum autorisé pendant le délai de grâce: <b>${fmt(graceDividendCap)}</b>`:''}</div>
     <label>Montant total à annoncer (en ${esc(state.unit)})</label>
@@ -20649,7 +20686,7 @@ function modalDividendRecurrentSettings(){
   
   const baseBenchmark = myCo.dividendRecurrentNeedsReset ? myCo.dividendBenchmarkFounding : myCo.dividendBenchmarkPerShare;
   const resetNoticeHtml = myCo.dividendRecurrentNeedsReset
-    ? `<div class="small" style="margin-bottom:10px;color:var(--brick,#C0392B);">⚠️ Le dividende récurrent a été suspendu (rien versé au dernier semestre) — le réactiver repart du niveau de fondation (${fmtPrice(myCo.dividendBenchmarkFounding)}/part), pas d'où il était avant la coupure. Les cubes, eux, restent intacts tant qu'ils ne sont pas piochés (ils doivent être tirés pour redevenir blancs).</div>`
+    ? `<div class="small" style="margin-bottom:10px;color:var(--brick,#C0392B);">⚠️ Le dividende récurrent a été suspendu (aucun dividende récurrent versé au dernier semestre<!-- Section 315 — bogue 25 -->) — le réactiver repart du niveau de fondation (${fmtPrice(myCo.dividendBenchmarkFounding)}/part), pas d'où il était avant la coupure. Les cubes, eux, restent intacts tant qu'ils ne sont pas piochés (ils doivent être tirés pour redevenir blancs).</div>`
     : '';
   const tierLabel = t=> ['1 — forte baisse','2 — baisse','3 — inchangé','4 — hausse','5 — forte hausse','6 — très forte hausse','7 — hausse maximale'][t-1];
   // Section 306 — avertissement affiché dans l'aperçu dès qu'un palier de baisse est sélectionné.
@@ -20667,7 +20704,8 @@ function modalDividendRecurrentSettings(){
       Coût total par semestre: <b id="mDivTotalCost">${fmt(baseBenchmark*myCo.sharesIssued)}</b>
     </div>
     <div class="small" id="mDivCutWarning" style="display:none;margin-top:8px;color:var(--brick,#C0392B);">${cutWarningHtml}</div>
-    <div class="small" style="margin-top:8px;color:var(--muted);">Rappel : si les dividendes versés dans un semestre dépassent le bénéfice net de ce semestre, ${DIVIDEND_OVERPAYOUT_RED_CUBES} cubes de votre sac type passent au rouge à la clôture (les blancs d'abord, puis les verts).</div>
+    ${myCo.preferredDividendArrears>0 ? `<div class="small" style="margin-top:8px;color:var(--brick,#C0392B);">⚠️ Arriérage de dividende préférentiel de ${fmt(myCo.preferredDividendArrears)} : le dividende récurrent ne sera PAS versé tant qu'il n'est pas réglé (« Payer l'arriérage » dans Mon Entreprise).</div>` : ''}<!-- Section 315 — bogue 27 -->
+    <div class="small" style="margin-top:8px;color:var(--muted);">Rappel : seul le dividende récurrent protège votre sac type — un semestre sans versement récurrent le remet à 20 cubes rouges, même si vous annoncez un dividende à la main. Si les dividendes réellement versés dans un semestre (récurrent et manuels, hors part de la banque) dépassent le bénéfice net de ce semestre, ${DIVIDEND_OVERPAYOUT_RED_CUBES} cubes de votre sac type passent au rouge à la clôture (les blancs d'abord, puis les verts).</div><!-- Section 315 — bogue 25 et décisions de Julien -->
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>

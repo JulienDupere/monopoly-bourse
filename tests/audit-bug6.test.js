@@ -75,7 +75,9 @@ async function insureTax(eng, insurer, deductible){
   check(q.exposure > 0, `assurance : exposition positive au moment de la signature (${f4(q.exposure)})`);
   const before = eng.cashTotal();
   const insurerId = insurer === 'BANK' ? `'BANK'` : `${insurer}.id`;
-  const res = await eng.run(`purchaseInsuranceBundle([{item:{type:'tax', id:4, label:'Impôt sur le revenu'}, insurerId:${insurerId}, premium:${Math.max(q.floor, 0.01)}}], 'recurring', 'year', {silent:true})`);
+  // Section 313 — bogues 15/49 : le moteur recalcule la prime sur l'état frais et refuse une autre prime que la
+  // prime bancaire à jour (q.ceil) ; avant, ce test passait une prime arbitraire (q.floor).
+  const res = await eng.run(`purchaseInsuranceBundle([{item:{type:'tax', id:4, label:'Impôt sur le revenu'}, insurerId:${insurerId}, premium:${q.ceil}}], 'recurring', 'year', {silent:true})`);
   check(res && res.ok, `assurance : contrat taxe case 4 signé auprès de ${insurer === 'BANK' ? 'la Banque' : 'Beta'}, franchise ${deductible}`);
   check(near(eng.cashTotal(), before), 'assurance : la prime conserve la masse monétaire');
   check(eng.run(`state.taxInsurances.filter(t=>t.insuredCompanyId===A.id && t.taxPos===4).length`) === 1, 'assurance : contrat actif sur la case 4');

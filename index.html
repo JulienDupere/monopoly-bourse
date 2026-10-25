@@ -1379,6 +1379,9 @@ function migrateState(s){
   
   
   (s.taxInsurances||[]).forEach(t=>{ if(t.signedAtRoll===undefined) t.signedAtRoll = -1; });
+  // Section 313 — bogue 39 : contrat signé avant le plafond de l'indemnité : coveredAmount = null (pas de plafond,
+  // règle en vigueur à sa signature ; il expire au plus tard à la fin de l'année financière).
+  (s.taxInsurances||[]).forEach(t=>{ if(t.coveredAmount===undefined) t.coveredAmount = null; });
   
   
   
@@ -1568,6 +1571,8 @@ function migrateState(s){
     
     delete p.reitId;
     if(p.insurance && p.insurance.deductible===undefined) p.insurance.deductible = 0;
+    if(p.insurance && p.insurance.coveredAmount===undefined) p.insurance.coveredAmount = null; // Section 313 — bogue 39 : contrat antérieur, non plafonné
+    if(p.subInsurance && p.subInsurance.coveredAmount===undefined) p.subInsurance.coveredAmount = null; // Section 313 — bogue 39
     
     
     
@@ -1821,6 +1826,7 @@ function migrateState(s){
     
     
     if(co.currentDeductible===undefined) co.currentDeductible = s.currentDeductible||0;
+    co.currentDeductible = sanitizeDeductible(co.currentDeductible); // Section 313 — bogue 14 : franchise négative (ancien champ) ramenée à 0
     
     
     
@@ -4961,9 +4967,9 @@ function renderEntreprise(){
   
   
   
-  const insuranceDefaultTerm = insuranceTermAvailable('year') ? 'year' : (insuranceTermAvailable('semester') ? 'semester' : 'sub');
+  const insuranceDefaultTerm = defaultInsuranceTerm(); // Section 313 — bogue 40 : seuls les termes activés par le créateur (null : aucun)
   const insuranceDefaultTermRolls = insuranceDefaultTerm==='sub' ? null : (insuranceDefaultTerm==='semester' ? rollsUntilSemesterEnd() : rollsUntilYearEnd());
-  const insuranceHasAnyItem = insuranceDefaultTerm==='sub'
+  const insuranceHasAnyItem = !insuranceDefaultTerm ? false : insuranceDefaultTerm==='sub'
     ? subInsurableItems(company.id).length>0
     : insurableItems(company.id, 'recurring', insuranceDefaultTermRolls).length>0;
   
@@ -5728,7 +5734,7 @@ function renderDevenirAssureur(){
   const liveTakeoverPropRow = p=>{
     const insuredCo = companyById(p.insurance.insuredCompanyId);
     const canTakeOver = myCoId!==p.insurance.insuredCompanyId;
-    const live = liveTakeoverPropQuote(p, p.insurance.insuredCompanyId, p.insurance.claimMode, p.insurance.deductible, p.insurance.quotedTerm);
+    const live = liveTakeoverPropQuote(p, p.insurance.insuredCompanyId, p.insurance.claimMode, p.insurance.deductible, p.insurance.quotedTerm, p.insurance.coveredAmount); // Section 313 — bogue 39
     return `<tr>
       <td>${propertyColorChip(p)}</td>
       <td>${esc(insuredCo?insuredCo.name:'?')}</td>
@@ -5741,7 +5747,7 @@ function renderDevenirAssureur(){
     const insuredCo = companyById(t.insuredCompanyId);
     const canTakeOver = myCoId!==t.insuredCompanyId;
     const label = (TAX_SQUARES.find(x=>x.pos===t.taxPos)||{}).label || 'Taxe';
-    const live = liveTakeoverTaxQuote(t.taxPos, t.insuredCompanyId, t.claimMode, t.deductible, t.quotedTerm);
+    const live = liveTakeoverTaxQuote(t.taxPos, t.insuredCompanyId, t.claimMode, t.deductible, t.quotedTerm, t.coveredAmount); // Section 313 — bogue 39
     return `<tr>
       <td>${esc(label)}</td>
       <td>${esc(insuredCo?insuredCo.name:'?')}</td>
@@ -5756,7 +5762,7 @@ function renderDevenirAssureur(){
     
     
     
-    const live = liveTakeoverSubQuote(p, p.subInsurance.insuredCompanyId, p.subInsurance.deductible);
+    const live = liveTakeoverSubQuote(p, p.subInsurance.insuredCompanyId, p.subInsurance.deductible, p.subInsurance.coveredAmount); // Section 313 — bogue 39
     return `<tr>
       <td>${propertyColorChip(p)} (sous-standard)</td>
       <td>${esc(insuredCo?insuredCo.name:'?')}</td>
@@ -8520,7 +8526,7 @@ function taxSquareCost(pos, companyId){
   if(pos===38) return 1; 
   return 0;
 }
-function taxInsuranceQuote(pos, companyId, claimMode, termRolls){
+function taxInsuranceQuote(pos, companyId, claimMode, termRolls, deductibleOverride){ // Section 313 — bogues 14/15 : franchise bornée ; deductibleOverride = franchise saisie (sinon celle du tour)
   
   
   
@@ -8530,7 +8536,7 @@ function taxInsuranceQuote(pos, companyId, claimMode, termRolls){
   const co = companyById(companyId);
   const dist = co ? distanceBetween(co.position, pos) : null;
   const prob = co && dist!=null ? (claimMode==='single' ? landingProbabilityOverRolls(dist, termRolls) : expectedLandingsOverRolls(dist, termRolls)) : 0;
-  const cost = Math.max(0, taxSquareCost(pos, companyId) - (co ? co.currentDeductible||0 : 0));
+  const cost = Math.max(0, taxSquareCost(pos, companyId) - (deductibleOverride!==undefined ? sanitizeDeductible(deductibleOverride) : (co ? sanitizeDeductible(co.currentDeductible) : 0))); // Section 313 — bogues 14/15
   const markup = state.settings.insuranceMarkup;
   const expectedLoss = prob*cost;
   return {dist, prob, exposure:cost, floor:expectedLoss, ceil:expectedLoss*(1+markup), termRolls};
@@ -8546,8 +8552,9 @@ async function payTax(companyId, taxPos, opts){
   const ins = state.taxInsurances.find(t=>t.insuredCompanyId===companyId && t.taxPos===taxPos);
   const entries = [];
   if(ins){
-    const deductible = Math.min(ins.deductible||0, cost);
-    const insurerPortion = cost - deductible;
+    const deductible = Math.min(sanitizeDeductible(ins.deductible), cost); // Section 313 — bogue 14 : franchise bornée
+    const insurerPortion = insurerExists(ins.insurerId) ? insuranceIndemnity(cost, deductible, ins, null) : 0; // Section 313 — bogue 39 : plafond = montant couvert à la signature ; retouche de la revue : assureur introuvable = non assuré (avant : argent créé)
+    const beyondCover = cost - deductible - insurerPortion; // Section 313 — bogue 39 : payé par l'assuré
     
     
     
@@ -8557,6 +8564,7 @@ async function payTax(companyId, taxPos, opts){
     logFin(co.id, 'tax_expense', -cost);
     logFin(co.id, 'insurance_claim_revenue', insurerPortion);
     if(deductible>0){ co.cash -= deductible; entries.push({label:`${co.name} (franchise)`, amount:-deductible}); }
+    if(beyondCover>1e-12){ co.cash -= beyondCover; entries.push({label:`${co.name} (${insurerExists(ins.insurerId) ? 'au-delà du montant couvert à la signature' : 'assureur introuvable : taxe à sa charge'})`, amount:-beyondCover}); } // Section 313 — bogue 39
     if(insurerPortion>0){
       if(!ins.insurerId || ins.insurerId==='BANK') state.bank.cash -= insurerPortion;
       else { const insurer=companyById(ins.insurerId); if(insurer){ insurer.cash -= insurerPortion; logFin(insurer.id, 'insurance_claim_expense', -insurerPortion); } }
@@ -8564,7 +8572,7 @@ async function payTax(companyId, taxPos, opts){
     }
     state.bank.cash += cost;
     entries.push({label:'Banque (taxe perçue)', amount:cost});
-    log(`${co.name} devait payer « ${label} » (${fmt(cost)}) — assuré auprès de ${insurerLabel(ins.insurerId)}, ${fmt(deductible)} de franchise payée par ${co.name}.`, entries);
+    log(`${co.name} devait payer « ${label} » (${fmt(cost)}) — assuré auprès de ${insurerLabel(ins.insurerId)}, ${fmt(deductible)} de franchise payée par ${co.name}${beyondCover>1e-12 ? `, plus ${fmt(beyondCover)} au-delà du montant couvert à la signature` : ''}.`, entries); // Section 313 — bogue 39
     if(ins.claimMode==='single') state.taxInsurances = state.taxInsurances.filter(t=>t!==ins); 
   } else {
     co.cash -= cost; state.bank.cash += cost;
@@ -8579,7 +8587,7 @@ async function payTax(companyId, taxPos, opts){
 
 
 
-function insurableItems(companyId, claimMode, termRolls){
+function insurableItems(companyId, claimMode, termRolls, deductibleOverride){ // Section 313 — bogue 15 : deductibleOverride = franchise saisie
   
   
   
@@ -8589,19 +8597,21 @@ function insurableItems(companyId, claimMode, termRolls){
   
   const propItems = state.properties
     .filter(p=>!p.insurance)
-    .map(p=>({type:'prop', id:p.id, label:p.name, q:insuranceQuote(p, companyId, claimMode, termRolls)}))
+    .map(p=>({type:'prop', id:p.id, label:p.name, q:insuranceQuote(p, companyId, claimMode, termRolls, deductibleOverride)}))
     .filter(x=>x.q.prob>0 && x.q.floor>0);
   const taxItems = TAX_SQUARES
-    .map(t=>({type:'tax', id:t.pos, label:t.label, q:taxInsuranceQuote(t.pos, companyId, claimMode, termRolls)}))
+    .filter(t=>!state.taxInsurances.some(ti=>ti.taxPos===t.pos && ti.insuredCompanyId===companyId)) // Section 313 — bogue 48 : case taxe déjà assurée par cette entreprise (un seul sinistre indemnisé) : plus proposée
+    .map(t=>({type:'tax', id:t.pos, label:t.label, q:taxInsuranceQuote(t.pos, companyId, claimMode, termRolls, deductibleOverride)}))
     .filter(x=>x.q.prob>0 && x.q.floor>0);
   return propItems.concat(taxItems);
 }
 
-function subInsurableItems(companyId){
+function subInsurableItems(companyId, deductibleOverride){ // Section 313 — bogue 15 : deductibleOverride = franchise saisie
   
   return state.properties
     .filter(p=>!p.subInsurance)
-    .map(p=>({type:'prop', id:p.id, label:p.name, q:subInsuranceQuote(p, companyId)}))
+    .filter(p=>!(p.insurance && p.insurance.insuredCompanyId===companyId)) // Section 313 — bogue 52 : déjà couvert par la propre assurance normale de l'entreprise (qui passe en premier) : le sous-standard ne servirait jamais
+    .map(p=>({type:'prop', id:p.id, label:p.name, q:subInsuranceQuote(p, companyId, deductibleOverride)}))
     .filter(x=>x.q.prob>0 && x.q.floor>0);
 }
 async function purchaseInsuranceBundle(selections, claimMode, term, opts){
@@ -8624,6 +8634,7 @@ async function purchaseInsuranceBundle(selections, claimMode, term, opts){
   if(selections.length===0) return fail(null);
   const myCo = myCompany();
   if(!myCo) return fail('Vous devez d’abord fonder une entreprise.');
+  if(!insuranceTermEnabled(term)) return fail(insuranceTermDisabledMessage(term)); // Section 313 — bogue 40 : type d'assurance désactivé par le créateur
   
   
   
@@ -8644,41 +8655,50 @@ async function purchaseInsuranceBundle(selections, claimMode, term, opts){
   
   
   
-  const alreadyCovered = [];
+  // Section 313 — bogue 14 : franchise bornée par le moteur (opts.deductible = franchise saisie dans la fenêtre).
+  const deductible = opts.deductible!==undefined ? Number(opts.deductible) : sanitizeDeductible(myCo.currentDeductible);
+  if(!Number.isFinite(deductible) || deductible<0) return fail('La franchise doit être un montant positif ou nul.');
+  // Section 313 — bogues 15, 49, 48, 52 : primes et montants couverts recalculés ICI, sur l'état frais (position du
+  // pion, maisons, franchise saisie) ; cases déjà assurées (taxe par cette entreprise, terrain couvert par sa propre
+  // assurance normale…) écartées. Prime confirmée différente de la prime à jour : rien n'est fait, nouvelle
+  // confirmation (staleConditionsResult). Avant : la prime calculée à l'ouverture de la fenêtre était réutilisée.
+  const fresh = insuranceBundleConditions(myCo.id, selections.map(s=>({type:s.item.type, id:s.item.id})), claimMode, term, deductible);
+  if(fresh.unavailable) return fail(fresh.unavailable);
+  const premiumMismatch = selections.some(s=>{ const it = fresh.items.find(i=>i.type===s.item.type && i.id===s.item.id); return it && !sameConditions(it.premium, s.premium); });
+  if(opts.expectedConditions ? !sameConditions(opts.expectedConditions, fresh) : premiumMismatch) return staleConditionsResult();
+  // Section 313 — bogue 15 : la franchise confirmée devient celle du tour (« identique pour tous les contrats que
+  // VOTRE entreprise signe ce tour-ci »), même si l'enregistrement du champ n'a pas encore eu lieu.
+  if(myCo.currentDeductible!==deductible){ myCo.currentDeductible = deductible; log(`Franchise de ${myCo.name} pour ce tour fixée à ${deductible.toFixed(2)}.`); } // Section 313 — retouche de la revue : journalisée
+  const alreadyCovered = fresh.dropped.slice();
+  const insurerOf = it=>{ const s = selections.find(x=>x.item.type===it.type && x.item.id===it.id); return (s && s.insurerId) || 'BANK'; };
   if(term==='sub'){
-    for(const s of selections){
-      const p = s.item.type==='prop' ? state.properties.find(x=>x.id===s.item.id) : null;
-      if(p && p.subInsurance){ alreadyCovered.push(p.name); continue; }
-      await buySubInsurance(s.item.id, myCo.id, s.insurerId, s.premium, {silent:true});
+    for(const it of fresh.items){
+      const r = await buySubInsurance(it.id, myCo.id, insurerOf(it), it.premium, {silent:true, coveredAmount:it.covered}); // Section 313 — prime et montant couvert à jour
+      if(!r || !r.ok) return fail((r && r.error) || `Assurance sous-standard impossible sur ${it.label}.`);
     }
-    if(alreadyCovered.length && !opts.silent) alert(`Déjà assuré(e) entretemps par une autre entreprise, ignoré(e): ${alreadyCovered.join(', ')}.`);
+    if(alreadyCovered.length && !opts.silent) alert(`Retiré(e)s du contrat (déjà assuré(e)s entre-temps ou plus assurables depuis la position actuelle) : ${alreadyCovered.join(', ')}.`);
     if(!opts.silent){ await saveGame(); render(); }
     return {ok:true, alreadyCovered};
   }
-  const validSelections = selections.filter(s=>{
-    if(s.item.type!=='prop') return true;
-    const p = state.properties.find(x=>x.id===s.item.id);
-    if(p && p.insurance){ alreadyCovered.push(p.name); return false; }
-    return true;
-  });
-  if(alreadyCovered.length && !opts.silent) alert(`Déjà assuré(e) entretemps par une autre entreprise, ignoré(e): ${alreadyCovered.join(', ')}.`);
+  if(alreadyCovered.length && !opts.silent) alert(`Retiré(e)s du contrat (déjà assuré(e)s entre-temps ou plus assurables depuis la position actuelle) : ${alreadyCovered.join(', ')}.`);
   const groups = {};
-  validSelections.forEach(s=>{ (groups[s.insurerId] = groups[s.insurerId]||[]).push(s); });
+  fresh.items.forEach(it=>{ const insurerId = insurerOf(it); (groups[insurerId] = groups[insurerId]||[]).push({item:it, premium:it.premium}); });
   for(const insurerId in groups){
     const group = groups[insurerId];
     const contractId = uid();
     let totalPremium = 0;
     group.forEach(s=>{
       totalPremium += s.premium;
-      const deductible = myCo.currentDeductible||0;
+      // Section 313 — bogue 39 (décision de Julien) : coveredAmount = montant couvert affiché à la signature ;
+      // l'indemnité ne le dépasse jamais (insuranceIndemnity), même si le loyer augmente ensuite.
       if(s.item.type==='prop'){
         const p = state.properties.find(x=>x.id===s.item.id);
         
         
         
-        p.insurance = {insuredCompanyId:myCo.id, premium:s.premium, insurerId, deductible, contractId, claimMode, signedAtRoll:state.gameClock.rollCount, quotedTerm:term||null};
+        p.insurance = {insuredCompanyId:myCo.id, premium:s.premium, insurerId, deductible, contractId, claimMode:fresh.claimMode, signedAtRoll:state.gameClock.rollCount, quotedTerm:term||null, coveredAmount:s.item.covered};
       } else {
-        state.taxInsurances.push({id:uid(), contractId, taxPos:s.item.id, insuredCompanyId:myCo.id, premium:s.premium, insurerId, deductible, claimMode, signedAtRoll:state.gameClock.rollCount, quotedTerm:term||null});
+        state.taxInsurances.push({id:uid(), contractId, taxPos:s.item.id, insuredCompanyId:myCo.id, premium:s.premium, insurerId, deductible, claimMode:fresh.claimMode, signedAtRoll:state.gameClock.rollCount, quotedTerm:term||null, coveredAmount:s.item.covered});
       }
     });
     myCo.cash -= totalPremium;
@@ -8692,6 +8712,62 @@ async function purchaseInsuranceBundle(selections, claimMode, term, opts){
   }
   if(!opts.silent){ await saveGame(); render(); }
   return {ok:true, alreadyCovered};
+}
+// Section 313 — bogues 15 et 49 : conditions d'un contrat groupé (primes, montants couverts, franchise, terme)
+// recalculées sur l'état COURANT pour les cases choisies (keys = [{type, id}]) et la franchise SAISIE. Calculées à
+// l'ouverture de la fenêtre, recalculées à la confirmation puis dans l'applyFn (purchaseInsuranceBundle) : si elles
+// ont changé (franchise modifiée, pion déplacé par un lancer, maisons construites…), nouvelle confirmation. Une case
+// devenue inassurable (déjà assurée entre-temps, hors de portée) est retirée et nommée (dropped).
+function insuranceBundleItemConditions(it){ return {type:it.type, id:it.id, label:it.label, premium:it.q.ceil, covered:it.q.exposure}; }
+function insuranceItemLabel(k){
+  if(k.type==='tax') return (TAX_SQUARES.find(t=>t.pos===k.id)||{}).label || 'Taxe';
+  const p = state.properties.find(x=>x.id===k.id);
+  return p ? p.name : '?';
+}
+function insuranceBundleConditions(companyId, keys, claimMode, term, deductible){
+  const co = companyById(companyId);
+  if(!co) return {unavailable:'Votre entreprise est introuvable.'};
+  if(!insuranceTermEnabled(term)) return {unavailable:insuranceTermDisabledMessage(term)}; // Section 313 — bogue 40
+  if(term!=='sub' && !insuranceTermAvailable(term)) return {unavailable:`Le terme « ${term==='year'?'Année financière':'Semestre'} » n'est plus disponible (la partie a avancé) — seule l'assurance sous-standard peut encore être signée pour l'instant.`};
+  const isSub = term==='sub';
+  const ded = sanitizeDeductible(deductible);
+  const termRolls = isSub ? null : (term==='semester' ? rollsUntilSemesterEnd() : rollsUntilYearEnd());
+  const mode = isSub ? null : (claimMode==='single' ? 'single' : 'recurring');
+  const avail = isSub ? subInsurableItems(companyId, ded) : insurableItems(companyId, mode, termRolls, ded);
+  const items = [], dropped = [];
+  (keys||[]).forEach(k=>{
+    const it = avail.find(x=>x.type===k.type && x.id===k.id);
+    if(it) items.push(insuranceBundleItemConditions(it));
+    else dropped.push(insuranceItemLabel(k));
+  });
+  if(items.length===0) return {unavailable: dropped.length ? `Plus aucune des cases choisies n'est assurable pour ce terme (${dropped.join(', ')}) : déjà assurée, ou plus à portée depuis la position actuelle.` : 'Aucune case choisie.'};
+  return {companyName:co.name, term, claimMode:mode, termRolls, deductible:ded, items, dropped, total:items.reduce((s,i)=>s+i.premium, 0)};
+}
+// Section 313 — bogue 39 (décision de Julien : « plafonner l'indemnité d'assurance au montant couvert affiché à la
+// signature ») : indemnité versée par l'assureur pour une perte `loss` (loyer ou taxe dus), franchise `deductible`
+// déjà bornée. contract.coveredAmount = montant « à risque » affiché à la signature (perte − franchise) ; absent
+// ou null (contrat signé avant la section 313) : pas de plafond. Service : le montant affiché l'est pour un lancer
+// de 7 ; le plafond suit le lancer réel (dice/7), pour ne plafonner que ce qui a changé depuis la signature
+// (propriétaires, 2e service) et pas le hasard des dés, déjà compris dans la prime. Le reste est payé par l'assuré.
+// Section 313 — retouche de la revue : montant couvert (net de franchise) pour CE sinistre : coveredAmount, ou pour un
+// service, le montant affiché pour 7 ramené au lancer réel (journal du sinistre). null : pas de plafond.
+function insuranceCoveredForLoss(contract, deductible, serviceDice){
+  const cov = contract ? contract.coveredAmount : null;
+  if(typeof cov!=='number' || !Number.isFinite(cov)) return null;
+  if(serviceDice===null || serviceDice===undefined) return Math.max(0, cov);
+  return Math.max(0, (Math.max(0, cov) + deductible) * ((serviceDice||0)/7) - deductible);
+}
+// Section 313 — retouche de la revue : l'assureur d'un contrat existe-t-il encore ? (banque, ou entreprise trouvée).
+// Sinon le sinistre est traité comme non assuré : l'assuré paie tout (avant : l'indemnité n'était débitée de
+// personne et de l'argent était créé).
+function insurerExists(insurerId){ return !insurerId || insurerId==='BANK' || !!companyById(insurerId); }
+function insuranceIndemnity(loss, deductible, contract, serviceDice){
+  const uncapped = Math.max(0, loss - deductible);
+  const cov = contract ? contract.coveredAmount : null;
+  if(typeof cov!=='number' || !Number.isFinite(cov)) return uncapped;
+  if(serviceDice===null || serviceDice===undefined) return Math.min(uncapped, Math.max(0, cov));
+  const grossCap = (Math.max(0, cov) + deductible) * ((serviceDice||0)/7);
+  return Math.max(0, Math.min(loss, grossCap) - deductible);
 }
 
 
@@ -8713,7 +8789,7 @@ function activeContracts(){
     if(p.insurance){
       const baseId = p.insurance.contractId || p.id;
       const cid = baseId+'::'+p.insurance.insurerId;
-      map[cid] = map[cid] || {contractId:cid, baseId, insuredCompanyId:p.insurance.insuredCompanyId, insurerId:p.insurance.insurerId, items:[], premium:0, deductible:p.insurance.deductible||0, claimMode:p.insurance.claimMode, signedAtRoll:p.insurance.signedAtRoll};
+      map[cid] = map[cid] || {contractId:cid, baseId, insuredCompanyId:p.insurance.insuredCompanyId, insurerId:p.insurance.insurerId, items:[], premium:0, deductible:sanitizeDeductible(p.insurance.deductible), claimMode:p.insurance.claimMode, signedAtRoll:p.insurance.signedAtRoll}; // Section 313 — retouche de la revue : franchise bornée
       map[cid].items.push(p.name);
       map[cid].premium += p.insurance.premium;
     }
@@ -8721,7 +8797,7 @@ function activeContracts(){
   state.taxInsurances.forEach(t=>{
     const baseId = t.contractId || t.id;
     const cid = baseId+'::'+t.insurerId;
-    map[cid] = map[cid] || {contractId:cid, baseId, insuredCompanyId:t.insuredCompanyId, insurerId:t.insurerId, items:[], premium:0, deductible:t.deductible||0, claimMode:t.claimMode, signedAtRoll:t.signedAtRoll};
+    map[cid] = map[cid] || {contractId:cid, baseId, insuredCompanyId:t.insuredCompanyId, insurerId:t.insurerId, items:[], premium:0, deductible:sanitizeDeductible(t.deductible), claimMode:t.claimMode, signedAtRoll:t.signedAtRoll}; // Section 313 — retouche de la revue : franchise bornée
     map[cid].items.push((TAX_SQUARES.find(x=>x.pos===t.taxPos)||{}).label || 'Taxe');
     map[cid].premium += t.premium;
   });
@@ -8820,7 +8896,7 @@ async function takeOverSubInsurance(pid){
 }
 
 
-function liveTakeoverPropQuote(p, insuredCompanyId, claimMode, originalDeductible, quotedTerm){
+function liveTakeoverPropQuote(p, insuredCompanyId, claimMode, originalDeductible, quotedTerm, coveredAmount){ // Section 313 — bogue 39 : coveredAmount = plafond du contrat
   
   
   
@@ -8831,20 +8907,25 @@ function liveTakeoverPropQuote(p, insuredCompanyId, claimMode, originalDeductibl
   const dist = co ? distanceBetween(co.position, p.pos) : null;
   const prob = co && dist!=null ? (claimMode==='single' ? landingProbabilityOverRolls(dist, termRolls) : expectedLandingsOverRolls(dist, termRolls)) : 0;
   const markup = state.settings.insuranceMarkup;
-  const deductible = originalDeductible||0;
-  const exposure = Math.max(payableRent(p, insuredCompanyId) - deductible, 0);
+  const deductible = sanitizeDeductible(originalDeductible); // Section 313 — bogue 14
+  const exposure = capInsuredExposure(Math.max(payableRent(p, insuredCompanyId) - deductible, 0), coveredAmount); // Section 313 — bogue 39
   const expectedLoss = prob * exposure;
   
   
   return {dist, prob, exposure, ceil: Math.max(0, expectedLoss*(1+markup)), termRolls};
 }
-function liveTakeoverTaxQuote(taxPos, insuredCompanyId, claimMode, originalDeductible, quotedTerm){
+// Section 313 — bogue 39 : l'assureur repris ne doit jamais plus que le montant couvert à la signature : le prix de
+// reprise est calculé sur l'exposition plafonnée (sinon la banque paierait une couverture qui n'existe plus).
+function capInsuredExposure(exposure, coveredAmount){
+  return (typeof coveredAmount==='number' && Number.isFinite(coveredAmount)) ? Math.min(exposure, Math.max(0, coveredAmount)) : exposure;
+}
+function liveTakeoverTaxQuote(taxPos, insuredCompanyId, claimMode, originalDeductible, quotedTerm, coveredAmount){ // Section 313 — bogue 39
   
   const termRolls = quotedTerm==='semester' ? rollsUntilSemesterEnd() : rollsUntilYearEnd();
   const co = companyById(insuredCompanyId);
   const dist = co ? distanceBetween(co.position, taxPos) : null;
   const prob = co && dist!=null ? (claimMode==='single' ? landingProbabilityOverRolls(dist, termRolls) : expectedLandingsOverRolls(dist, termRolls)) : 0;
-  const cost = Math.max(0, taxSquareCost(taxPos, insuredCompanyId) - (originalDeductible||0));
+  const cost = capInsuredExposure(Math.max(0, taxSquareCost(taxPos, insuredCompanyId) - sanitizeDeductible(originalDeductible)), coveredAmount); // Section 313 — bogues 14 et 39
   const markup = state.settings.insuranceMarkup;
   const expectedLoss = prob*cost;
   return {dist, prob, exposure:cost, ceil: Math.max(0, expectedLoss*(1+markup)), termRolls};
@@ -8858,7 +8939,7 @@ async function takeOverInsuranceItemLive(propertyId){
     const myCo = myCompany();
     if(!myCo) return {ok:false, error:'Vous devez d’abord fonder une entreprise.'};
     if(myCo.id===insuredId) return {ok:false, error:'Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'};
-    const live = liveTakeoverPropQuote(p, insuredId, p.insurance.claimMode, p.insurance.deductible, p.insurance.quotedTerm);
+    const live = liveTakeoverPropQuote(p, insuredId, p.insurance.claimMode, p.insurance.deductible, p.insurance.quotedTerm, p.insurance.coveredAmount); // Section 313 — bogue 39
     const price = live.ceil;
     const originalPremium = p.insurance.premium;
     state.bank.cash -= price;
@@ -8881,7 +8962,7 @@ async function takeOverTaxInsuranceLive(taxPos, insuredCompanyId){
     const myCo = myCompany();
     if(!myCo) return {ok:false, error:'Vous devez d’abord fonder une entreprise.'};
     if(myCo.id===insuredCompanyId) return {ok:false, error:'Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'};
-    const live = liveTakeoverTaxQuote(taxPos, insuredCompanyId, ins.claimMode, ins.deductible, ins.quotedTerm);
+    const live = liveTakeoverTaxQuote(taxPos, insuredCompanyId, ins.claimMode, ins.deductible, ins.quotedTerm, ins.coveredAmount); // Section 313 — bogue 39
     const price = live.ceil;
     const originalPremium = ins.premium;
     state.bank.cash -= price;
@@ -8898,13 +8979,13 @@ async function takeOverTaxInsuranceLive(taxPos, insuredCompanyId){
   render();
 }
 
-function liveTakeoverSubQuote(p, insuredCompanyId, originalDeductible){
+function liveTakeoverSubQuote(p, insuredCompanyId, originalDeductible, coveredAmount){ // Section 313 — bogue 39 : coveredAmount = plafond du contrat
   const co = companyById(insuredCompanyId);
   const dist = co ? distanceBetween(co.position, p.pos) : null;
   const prob = dist!=null ? rollProbability(dist) : 0;
   const markup = state.settings.subInsuranceMarkup;
-  const deductible = originalDeductible||0;
-  const exposure = Math.max(payableRent(p, insuredCompanyId, true) - deductible, 0);
+  const deductible = sanitizeDeductible(originalDeductible); // Section 313 — bogue 14
+  const exposure = capInsuredExposure(Math.max(payableRent(p, insuredCompanyId, true) - deductible, 0), coveredAmount); // Section 313 — bogue 39
   const expectedLoss = prob * exposure;
   return {dist, prob, exposure, ceil: Math.max(0, expectedLoss*(1+markup))};
 }
@@ -8916,7 +8997,7 @@ async function takeOverSubInsuranceLive(pid){
     const myCo = myCompany();
     if(!myCo) return {ok:false, error:'Vous devez d’abord fonder une entreprise.'};
     if(myCo.id===insuredId) return {ok:false, error:'Votre entreprise ne peut pas reprendre un contrat sur lequel elle est déjà l’assurée.'};
-    const live = liveTakeoverSubQuote(p, insuredId, p.subInsurance.deductible);
+    const live = liveTakeoverSubQuote(p, insuredId, p.subInsurance.deductible, p.subInsurance.coveredAmount); // Section 313 — bogue 39
     const price = live.ceil;
     const originalPremium = p.subInsurance.premium;
     state.bank.cash -= price;
@@ -8932,7 +9013,7 @@ async function takeOverSubInsuranceLive(pid){
   render();
 }
 
-function insuranceQuote(p, companyId, claimMode, termRolls){
+function insuranceQuote(p, companyId, claimMode, termRolls, deductibleOverride){ // Section 313 — bogues 14/15 : franchise bornée ; deductibleOverride = franchise saisie (sinon celle du tour)
   
   
   if(termRolls===undefined || termRolls===null) termRolls = rollsUntilYearEnd();
@@ -8940,7 +9021,7 @@ function insuranceQuote(p, companyId, claimMode, termRolls){
   const dist = co ? distanceBetween(co.position, p.pos) : null;
   const prob = co && dist!=null ? (claimMode==='single' ? landingProbabilityOverRolls(dist, termRolls) : expectedLandingsOverRolls(dist, termRolls)) : 0;
   const markup = state.settings.insuranceMarkup;
-  const deductible = co ? co.currentDeductible||0 : 0;
+  const deductible = deductibleOverride!==undefined ? sanitizeDeductible(deductibleOverride) : (co ? sanitizeDeductible(co.currentDeductible) : 0); // Section 313 — bogues 14/15
   const exposure = Math.max(payableRent(p, companyId) - deductible, 0);
   const expectedLoss = prob * exposure;
   return {dist, prob, exposure, floor:expectedLoss, ceil: expectedLoss*(1+markup), deductible, termRolls};
@@ -8954,12 +9035,12 @@ function insuranceQuote(p, companyId, claimMode, termRolls){
 
 
 
-function subInsuranceQuote(p, companyId){
+function subInsuranceQuote(p, companyId, deductibleOverride){ // Section 313 — bogues 14/15 : franchise bornée ; deductibleOverride = franchise saisie (sinon celle du tour)
   const co = companyById(companyId);
   const dist = co ? distanceBetween(co.position, p.pos) : null;
   const prob = dist!=null ? rollProbability(dist) : 0;
   const markup = state.settings.subInsuranceMarkup;
-  const deductible = co ? co.currentDeductible||0 : 0;
+  const deductible = deductibleOverride!==undefined ? sanitizeDeductible(deductibleOverride) : (co ? sanitizeDeductible(co.currentDeductible) : 0); // Section 313 — bogues 14/15
   const exposure = Math.max(payableRent(p, companyId, true) - deductible, 0);
   const expectedLoss = prob * exposure;
   return {dist, prob, exposure, floor:expectedLoss, ceil: expectedLoss*(1+markup), deductible};
@@ -9016,6 +9097,28 @@ function insuranceTermAvailable(term){
   if(term==='year') return yearEndWindowOpen();
   if(term==='semester') return semesterStartWindowOpen();
   return false;
+}
+// Section 313 — bogue 40 : un type d'assurance désactivé par le créateur (réglages de la partie) ne se vend plus :
+// « Assurances » couvre les termes Année et Semestre, « Assurance sous-standard » le terme 'sub'.
+function insuranceTermEnabled(term){
+  const f = state.settings.features || {};
+  return term==='sub' ? f.subInsurance!==false : f.insurance!==false;
+}
+function insuranceTermDisabledMessage(term){
+  return term==='sub' ? 'L’assurance sous-standard est désactivée dans cette partie (réglage du créateur).' : 'L’assurance normale (Année financière, Semestre) est désactivée dans cette partie (réglage du créateur).';
+}
+function insuranceTermOffered(term){ return insuranceTermEnabled(term) && insuranceTermAvailable(term); }
+// Section 313 — bogue 40 : terme proposé par défaut (Année, sinon Semestre, sinon sous-standard), parmi les termes
+// activés et signables maintenant ; null si aucun.
+function defaultInsuranceTerm(){
+  return ['year','semester','sub'].find(t=>insuranceTermOffered(t)) || null;
+}
+// Section 313 — bogue 14 : franchise bornée par le moteur : un nombre fini, jamais négatif (une franchise négative
+// élargissait la couverture au-delà du sinistre : l'assureur payait plus que le loyer et l'écart disparaissait).
+// Le plafond « cohérent avec l'exposition » est appliqué au sinistre : la franchise retenue n'excède jamais la perte.
+function sanitizeDeductible(v){
+  const x = Number(v);
+  return (Number.isFinite(x) && x>0) ? x : 0;
 }
 
 function terrainLotBidScore(b){ return b.price / (b.loyer * b.numSquares); }
@@ -18088,9 +18191,10 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
     
     
     const subInsured = !insured && p.subInsurance && p.subInsurance.insuredCompanyId===visitorId ? p.subInsurance : null;
+    let insuredBeyondCover = 0; // Section 313 — bogue 39 : part du loyer au-delà du montant couvert, payée par l'assuré
     if(insured){
-      const deductible = Math.min(insured.deductible||0, payable);
-      const insurerPortion = payable - deductible;
+      const deductible = Math.min(sanitizeDeductible(insured.deductible), payable);
+      const insurerPortion = insurerExists(insured.insurerId) ? insuranceIndemnity(payable, deductible, insured, p.type==='service' ? diceTotal : null) : 0; // Section 313 — retouche de la revue : assureur introuvable = non assuré (avant : indemnité débitée de personne, argent créé)
       
       
       
@@ -18103,6 +18207,8 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
       
       logFin(visitorId, 'rent_expense', -payable);
       if(deductible>0){ visitor.cash -= deductible; if(visitorPl) visitorPl.stats.rentPaid += deductible; entries.push({label:`${visitor.name} (franchise)`, amount:-deductible}); }
+      insuredBeyondCover = payable - deductible - insurerPortion; // Section 313 — bogue 39
+      if(insuredBeyondCover>1e-12){ visitor.cash -= insuredBeyondCover; if(visitorPl) visitorPl.stats.rentPaid += insuredBeyondCover; entries.push({label:`${visitor.name} (${insurerExists(insured.insurerId) ? 'au-delà du montant couvert à la signature' : 'assureur introuvable : loyer à sa charge'})`, amount:-insuredBeyondCover}); }
       logFin(visitorId, 'insurance_claim_revenue', insurerPortion);
       const insurerId = insured.insurerId;
       if(!insurerId || insurerId==='BANK') state.bank.cash -= insurerPortion;
@@ -18115,11 +18221,13 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
       
       
       
-      const deductible = Math.min(subInsured.deductible||0, payable);
-      const insurerPortion = payable - deductible;
+      const deductible = Math.min(sanitizeDeductible(subInsured.deductible), payable); // Section 313 — bogue 14
+      const insurerPortion = insurerExists(subInsured.insurerId) ? insuranceIndemnity(payable, deductible, subInsured, p.type==='service' ? diceTotal : null) : 0; // Section 313 — bogue 39 ; retouche de la revue : assureur introuvable = non assuré
       
       logFin(visitorId, 'rent_expense', -payable);
       if(deductible>0){ visitor.cash -= deductible; if(visitorPl) visitorPl.stats.rentPaid += deductible; entries.push({label:`${visitor.name} (franchise)`, amount:-deductible}); }
+      insuredBeyondCover = payable - deductible - insurerPortion; // Section 313 — bogue 39
+      if(insuredBeyondCover>1e-12){ visitor.cash -= insuredBeyondCover; if(visitorPl) visitorPl.stats.rentPaid += insuredBeyondCover; entries.push({label:`${visitor.name} (${insurerExists(subInsured.insurerId) ? 'au-delà du montant couvert à la signature' : 'assureur introuvable : loyer à sa charge'})`, amount:-insuredBeyondCover}); }
       logFin(visitorId, 'insurance_claim_revenue', insurerPortion);
       const insurerId = subInsured.insurerId;
       if(!insurerId || insurerId==='BANK') state.bank.cash -= insurerPortion;
@@ -18201,8 +18309,13 @@ async function settlePropertyRent(p, visitorId, diceTotal, opts){
     }
     p.rentCollected += rentCollectedForStats;
     p.timesLanded += 1;
-    if(insured){
-      log(`${visitor.name} était assuré (vendeur: ${insurerLabel(insured.insurerId)}) — ${payable.toFixed(2)} de loyer pour ${p.name}, dont ${Math.min(insured.deductible||0,payable).toFixed(2)} de franchise payée par ${visitor.name} et le reste couvert par l'assureur.`, entries);
+    const claimContract = insured || subInsured; // Section 313 — retouche de la revue : journal du sinistre aussi pour le sous-standard
+    if(claimContract){
+      const ded = Math.min(sanitizeDeductible(claimContract.deductible), payable);
+      const coverNote = !insurerExists(claimContract.insurerId)
+        ? ` et ${insuredBeyondCover.toFixed(2)} de plus, l'assureur étant introuvable (traité comme non assuré),`
+        : (insuredBeyondCover>1e-12 ? ` et ${insuredBeyondCover.toFixed(2)} au-delà du montant couvert (${insuranceCoveredForLoss(claimContract, ded, p.type==='service' ? diceTotal : null).toFixed(2)}${p.type==='service' ? ` pour ce lancer de ${diceTotal||0}` : ' à la signature'}), payés aussi par ${visitor.name},` : '');
+      log(`${visitor.name} était assuré${subInsured ? ' (sous-standard)' : ''} (vendeur: ${insurerLabel(claimContract.insurerId)}) — ${payable.toFixed(2)} de loyer pour ${p.name}, dont ${ded.toFixed(2)} de franchise payée par ${visitor.name}${coverNote} et le reste couvert par l'assureur.`, entries); // Section 313 — bogues 14 et 39
     } else {
       log(visitorShare>0
         ? `${visitor.name} (copropriétaire à ${visitorShare}%) a payé ${payable.toFixed(2)} de loyer pour ${p.name} aux autres ayants droit.`
@@ -19052,10 +19165,10 @@ function modalInsureBundle(claimMode, term, isRegenerate){
   
   
   
-  if(!term) term = insuranceTermAvailable('year') ? 'year' : (insuranceTermAvailable('semester') ? 'semester' : 'sub');
-  else if(term!=='sub' && !insuranceTermAvailable(term)) term = 'sub';
+  if(!term || !insuranceTermOffered(term)) term = defaultInsuranceTerm(); // Section 313 — bogue 40 : terme désactivé par le créateur jamais proposé
   const myCo = myCompany();
   if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
+  if(!term){ if(isRegenerate) closeModal(); alert('Aucune assurance n’est signable maintenant dans cette partie (types d’assurance désactivés par le créateur, ou hors de leur fenêtre de signature).'); return; } // Section 313 — bogue 40
   const isSub = term==='sub';
   const termRolls = isSub ? null : (term==='semester' ? rollsUntilSemesterEnd() : rollsUntilYearEnd());
   const items = isSub ? subInsurableItems(myCo.id) : insurableItems(myCo.id, claimMode, termRolls);
@@ -19094,7 +19207,7 @@ function modalInsureBundle(claimMode, term, isRegenerate){
     : items.map((it,idx)=>`
     <div class="row" style="gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;">
       <input type="checkbox" class="bundle-check" data-idx="${idx}" style="width:auto;">
-      <span style="flex:1;min-width:140px;">${esc(it.label)} : ${(it.q.prob*100).toFixed(2)}% de probabilité de sinistre. ${fmt(it.q.exposure)} à risque.</span>
+      <span style="flex:1;min-width:140px;">${esc(it.label)} : ${(it.q.prob*100).toFixed(2)}% de probabilité de sinistre. ${fmt(it.q.exposure)} à risque${insuranceItemIsService(it) ? ' pour un lancer de 7 (ajusté au lancer réel)' : ''}.${insuranceSubWarningHtml(it, term, myCo.id)}</span>
       <span class="bundle-premium-value" data-idx="${idx}" style="width:90px;text-align:right;font-family:'IBM Plex Mono',monospace;font-weight:700;">${fmt(premiums[idx])}</span>
     </div>`
   ).join('');
@@ -19119,11 +19232,13 @@ function modalInsureBundle(claimMode, term, isRegenerate){
   
   const yearAvailable = insuranceTermAvailable('year');
   const semesterAvailable = insuranceTermAvailable('semester');
-  const termAvailabilityText = (yearAvailable && semesterAvailable)
+  const normalEnabled = insuranceTermEnabled('year'), subEnabled = insuranceTermEnabled('sub'); // Section 313 — bogue 40
+  const termAvailabilityText = !normalEnabled ? `L’assurance normale (Année financière, Semestre) est désactivée dans cette partie : seule l’assurance sous-standard (1 tour) est proposée.` : (yearAvailable && semesterAvailable)
     ? `Les termes « Année financière » et « Semestre » sont signables MAINTENANT — c'est le tout début d'une année financière (et donc aussi d'un semestre).`
     : (semesterAvailable
       ? `Le terme « Semestre » est signable MAINTENANT — c'est le tout début d'un semestre. Le terme « Année financière » ne sera de nouveau signable que dans ${rollsUntilYearEnd()} lancé(s) (prochain début d'année).`
-      : `Les termes « Année financière » et « Semestre » ne sont signables qu'au tout début de leur période respective — ils ne redeviendront disponibles que dans ${rollsUntilSemesterEnd()} lancé(s) (prochain début de semestre). En attendant, seule l'assurance sous-standard (1 tour) peut être signée.`);
+      : `Les termes « Année financière » et « Semestre » ne sont signables qu'au tout début de leur période respective — ils ne redeviendront disponibles que dans ${rollsUntilSemesterEnd()} lancé(s) (prochain début de semestre). En attendant, seule l'assurance sous-standard (1 tour) peut être signée.`)
+    + (normalEnabled && !subEnabled ? ' L’assurance sous-standard est désactivée dans cette partie.' : ''); // Section 313 — bogue 40
   
   
   
@@ -19141,21 +19256,24 @@ function modalInsureBundle(claimMode, term, isRegenerate){
   
   
   
+  const shownDeductible = sanitizeDeductible(myCo.currentDeductible); // Section 313 — bogues 14 et 15 : franchise des primes affichées
   const deductibleFieldHtml = `<label>Franchise de ${esc(myCo.name)} pour ce tour (identique pour tous les contrats que VOTRE entreprise signe ce tour-ci, en ${esc(state.unit)})</label>
-      <input type="number" step="0.01" id="mDeductibleGlobal" value="${myCo.currentDeductible||0}" style="margin-bottom:4px;">`;
+      <input type="number" step="0.01" min="0" id="mDeductibleGlobal" value="${shownDeductible}" style="margin-bottom:4px;">`;
   openModal(`
     <style>.modal{max-width:720px;}</style>
     <h3>Assurer plusieurs cases pour ce tour</h3>
     <!-- Section 282 (voir RESUME_ET_REGLES.md): condensé, aucune information retirée. -->
-    <div class="small" style="margin-bottom:8px;">Cochez les cases à assurer, toujours auprès de la banque (prime bancaire non négociable) — une autre entreprise pourra ensuite reprendre le contrat depuis Mon Entreprise. Toutes les cases cochées forment un seul contrat groupé à prime totale unique. « À risque » = ce que vous paieriez si l'événement survient, non assuré.</div>
+    <div class="small" style="margin-bottom:8px;">Cochez les cases à assurer, toujours auprès de la banque (prime bancaire non négociable) — une autre entreprise pourra ensuite reprendre le contrat depuis Mon Entreprise. Toutes les cases cochées forment un seul contrat groupé à prime totale unique. « À risque » = ce que vous paieriez si l'événement survient, non assuré. C'est aussi le plafond de l'indemnité : si le loyer augmente après la signature (maisons construites…), l'excédent reste à votre charge (service : montant pour un lancer de 7, ajusté au lancer réel).</div>
+    <!-- Section 313 — bogue 39 (décision de Julien) : indemnité plafonnée au montant couvert affiché à la signature. -->
     <div class="row" style="gap:12px;flex-wrap:wrap;">
       <div style="flex:1;min-width:180px;">${claimModeFieldHtml}</div>
       <div style="flex:1;min-width:180px;">
         <label>Terme (pour le calcul de la prime)</label>
         <select id="mTerm" style="margin-bottom:4px;">
-          <option value="year" ${term==='year'?'selected':''} ${yearAvailable?'':'disabled'}>Année financière${yearAvailable?'':' (indisponible — début d’année seulement)'}</option>
-          <option value="semester" ${term==='semester'?'selected':''} ${semesterAvailable?'':'disabled'}>Semestre${semesterAvailable?'':' (indisponible — début de semestre seulement)'}</option>
-          <option value="sub" ${isSub?'selected':''}>Assurance sous-standard (1 tour)</option>
+          ${normalEnabled ? `<option value="year" ${term==='year'?'selected':''} ${yearAvailable?'':'disabled'}>Année financière${yearAvailable?'':' (indisponible — début d’année seulement)'}</option>
+          <option value="semester" ${term==='semester'?'selected':''} ${semesterAvailable?'':'disabled'}>Semestre${semesterAvailable?'':' (indisponible — début de semestre seulement)'}</option>` : ''}
+          ${subEnabled ? `<option value="sub" ${isSub?'selected':''}>Assurance sous-standard (1 tour)</option>` : ''}
+          <!-- Section 313 — bogue 40 : un type d'assurance désactivé par le créateur n'est plus proposé. -->
         </select>
       </div>
       <div style="flex:1;min-width:180px;">${deductibleFieldHtml}</div>
@@ -19194,27 +19312,98 @@ function modalInsureBundle(claimMode, term, isRegenerate){
     
     
     
-    const newDeductible = parseFloat(mDedGlobalEl.value)||0;
-    const res = await attemptActionWithRetry(async ()=>{
-      const co = myCompany();
-      if(!co) return {ok:false};
-      co.currentDeductible = newDeductible;
-      log(`Franchise de ${co.name} pour ce tour fixée à ${co.currentDeductible.toFixed(2)}.`);
-      return {ok:true};
-    }, {label:'Ajustement de la franchise du tour'});
-    if(!res.ok){ if(res.error) alert(res.error); return; }
-    modalInsureBundle(claimMode, term, true); 
+    const typed = parseFloat(mDedGlobalEl.value);
+    const res = await setTurnDeductible(Number.isFinite(typed) ? typed : 0); // Section 313 — bogue 14 : franchise bornée par le moteur
+    // Section 313 — bogue 15 : si la fenêtre a été remplacée entre-temps (confirmation sur les conditions à jour,
+    // ouverte par un clic sur « Confirmer » juste après la saisie), elle n'est pas redessinée par-dessus.
+    const stillHere = document.getElementById('mDeductibleGlobal')===mDedGlobalEl;
+    if(!res.ok){ if(res.error) alert(res.error); if(stillHere) modalInsureBundle(claimMode, term, true); return; }
+    if(stillHere) modalInsureBundle(claimMode, term, true);
   });
   document.getElementById('mOk').addEventListener('click', async ()=>{
-    const selections = [];
+    // Section 313 — bogues 15 et 49 : la prime n'est plus celle calculée à l'ouverture. À la confirmation, elle est
+    // recalculée sur les choix réellement saisis (cases cochées, franchise tapée même si elle n'a pas encore été
+    // enregistrée) et sur l'état à jour (position du pion après un lancer, maisons…) ; si elle diffère de celle
+    // affichée, nouvelle confirmation sur les conditions à jour (confirmInsuranceBundle).
+    const keys = [];
     document.querySelectorAll('.bundle-check').forEach(c=>{
       if(!c.checked) return;
-      const idx = c.dataset.idx;
-      selections.push({item:items[idx], insurerId:'BANK', premium:premiums[idx]});
+      const it = items[c.dataset.idx];
+      if(it) keys.push({type:it.type, id:it.id});
     });
-    const res = await runModalActionWithRetry(()=>purchaseInsuranceBundle(selections, claimMode, term, {silent:true}));
-    if(res && res.ok && res.alreadyCovered && res.alreadyCovered.length) alert(`Déjà assuré(e) entretemps par une autre entreprise, ignoré(e): ${res.alreadyCovered.join(', ')}.`);
+    if(keys.length===0) return;
+    const dedEl = document.getElementById('mDeductibleGlobal');
+    const typed = dedEl ? parseFloat(dedEl.value) : shownDeductible;
+    const deductible = Number.isFinite(typed) ? typed : 0;
+    if(deductible<0){ alert('La franchise doit être un montant positif ou nul.'); return; } // Section 313 — bogue 14
+    const shownItems = keys.map(k=>insuranceBundleItemConditions(items.find(x=>x.type===k.type && x.id===k.id)));
+    const shown = {companyName:myCo.name, term, claimMode:isSub ? null : (claimMode==='single' ? 'single' : 'recurring'), termRolls, deductible:shownDeductible, items:shownItems, dropped:[], total:shownItems.reduce((s,i)=>s+i.premium, 0)};
+    return confirmInsuranceBundle(myCo.id, keys, claimMode, term, deductible, shown);
   });
+}
+// Section 313 — bogue 14 : franchise du tour enregistrée par le moteur, jamais négative ni invalide (avant : le
+// champ acceptait −5 et la couverture dépassait le loyer).
+async function setTurnDeductible(value){
+  const v = Number(value);
+  if(!Number.isFinite(v) || v<0) return {ok:false, error:'La franchise doit être un montant positif ou nul.'};
+  return attemptActionWithRetry(async ()=>{
+    const co = myCompany();
+    if(!co) return {ok:false};
+    co.currentDeductible = v;
+    log(`Franchise de ${co.name} pour ce tour fixée à ${co.currentDeductible.toFixed(2)}.`);
+    return {ok:true};
+  }, {label:'Ajustement de la franchise du tour'});
+}
+// Section 313 — bogues 15 et 49 : confirmation d'un contrat groupé sur des conditions revérifiées (cadre de la
+// section 308). shown = conditions affichées dans la fenêtre « Assurer plusieurs cases ». Mêmes conditions à jour :
+// signature directe (l'applyFn revérifie encore) ; conditions changées : fenêtre « Les conditions ont changé » avec
+// les primes, montants couverts et franchise à jour, et rien n'est signé avant la 2e confirmation.
+// Section 313 — retouche de la revue : un service est coté pour un lancer de 7 ; l'intitulé le dit.
+function insuranceItemIsService(it){
+  if(!it || it.type!=='prop') return false;
+  const p = state.properties.find(x=>x.id===it.id);
+  return !!(p && p.type==='service');
+}
+// Section 313 — retouche de la revue (bogue 52 dans l'ordre inverse) : contrat annuel ou semestriel signé sur une case
+// déjà couverte par la sous-standard de la MÊME entreprise : l'assurance normale passe en premier, la sous-standard ne
+// servira plus. Avertissement seulement (elle reste annulable, prime remboursée, tant qu'aucun lancer n'a eu lieu).
+function insuranceSubWarningHtml(it, term, companyId){
+  if(!it || it.type!=='prop' || term==='sub') return '';
+  const p = state.properties.find(x=>x.id===it.id);
+  const co = companyId ? companyById(companyId) : myCompany();
+  if(!p || !co || !p.subInsurance || p.subInsurance.insuredCompanyId!==co.id) return '';
+  return ` <span style="color:var(--brick,#C0392B);">⚠️ votre assurance sous-standard sur cette case ne servira plus (l’assurance normale passe en premier) ; vous pouvez l’annuler, prime remboursée, avant le prochain lancer.</span>`;
+}
+function insuranceBundleDescribe(c){
+  const termLabel = c.term==='sub' ? 'Assurance sous-standard (le tout prochain lancé)' : `${c.term==='semester' ? 'Semestre' : 'Année financière'} (${c.termRolls} lancé(s) restant(s))`;
+  return `<div class="small" style="margin-bottom:6px;">${esc(c.companyName)} — ${esc(termLabel)}${c.claimMode ? ` — ${c.claimMode==='single' ? 'un seul sinistre par case' : 'sinistres récurrents'}` : ''} — franchise <b>${fmt(c.deductible)}</b> — vendeur : Banque.</div>
+    <table><tr><th>Case</th><th>Couvert au plus</th><th>Prime</th></tr>${c.items.map(i=>`<tr><td>${esc(i.label)}${insuranceSubWarningHtml(i, c.term)}</td><td class="money">${fmt(i.covered)}${insuranceItemIsService(i) ? ' pour un lancer de 7 (ajusté au lancer réel)' : ''}</td><td class="money">${fmt(i.premium)}</td></tr>`).join('')}</table>
+    <div class="small" style="margin-top:6px;font-weight:700;">Prime totale : ${fmt(c.total)}</div>
+    ${c.dropped.length ? `<div class="small" style="margin-top:6px;color:var(--brick,#C0392B);">Retiré(e)s du contrat (déjà assuré(e)s entre-temps ou plus assurables depuis la position actuelle) : ${esc(c.dropped.join(', '))}.</div>` : ''}
+    <div class="small" style="margin-top:6px;">L’indemnité de chaque case est plafonnée au montant couvert ci-dessus, même si le loyer augmente ensuite (maisons construites…) ; l’excédent reste à votre charge (service : montant pour un lancer de 7, ajusté au lancer réel).</div>`;
+}
+async function confirmInsuranceBundle(companyId, keys, claimMode, term, deductible, shown){
+  const compute = ()=>insuranceBundleConditions(companyId, keys, claimMode, term, deductible);
+  // Section 313 — retouche de la revue : TOUTES les cases choisies sont transmises, retirées comprises : l'applyFn
+  // recalcule ainsi les mêmes cases retirées (dropped) que les conditions confirmées. Avant, seules c.items l'étaient :
+  // dropped = [] d'un côté, ['…'] de l'autre, « Les conditions ont changé » à chaque clic et rien n'était signé.
+  const buy = c=>purchaseInsuranceBundle(keys.map(k=>{ const i = (c.items||[]).find(x=>x.type===k.type && x.id===k.id); return {item:{type:k.type, id:k.id, label:i ? i.label : insuranceItemLabel(k)}, insurerId:'BANK', premium:i ? i.premium : 0}; }), claimMode, term, {silent:true, deductible, expectedConditions:c});
+  const done = res=>{ render(); if(res && res.alreadyCovered && res.alreadyCovered.length) alert(`Retiré(e)s du contrat (déjà assuré(e)s entre-temps ou plus assurables depuis la position actuelle) : ${res.alreadyCovered.join(', ')}.`); };
+  const openFresh = ()=>confirmWithFreshConditions({
+    title: 'Contrat d’assurance — conditions à jour',
+    compute,
+    describe: insuranceBundleDescribe,
+    okLabel: c=>`Signer le contrat (${fmt(c.total)})`,
+    run: c=>attemptActionWithRetry(()=>buy(c), {label:'Contrat d’assurance groupé'}),
+    onDone: done,
+  }).repaint();
+  adoptLatestRemoteState();
+  const fresh = compute();
+  if(!sameConditions(shown, fresh)){ openFresh(); return {ok:false, code:'stale-conditions', shown:true}; }
+  const res = await runModalActionWithRetry(async ()=>{ const r = await buy(fresh); return (r && r.code==='stale-conditions') ? {ok:false, code:r.code} : r; });
+  if(res && res.code==='stale-conditions'){ openFresh(); return res; }
+  if(res && res.ok) done(res);
+  return res;
 }
 
 
@@ -20744,16 +20933,17 @@ function modalInsureProperty(pid, term){
       const pp = state.properties.find(x=>x.id===pid);
       if(!pp) return {ok:false, error:null};
       if(pp.insurance) return {ok:false, error:`${pp.name} est déjà assuré.`};
+      if(!insuranceTermEnabled(term)) return {ok:false, error:insuranceTermDisabledMessage(term)}; // Section 313 — bogue 40 (fenêtre sans bouton d'accès, gardée cohérente)
       const co = companyById(companyId);
       if(!co) return {ok:false, error:null};
-      const deductible = co.currentDeductible||0;
+      const deductible = sanitizeDeductible(co.currentDeductible); // Section 313 — bogue 14
       co.cash -= premium;
       logFin(co.id, 'insurance_premium_expense', -premium);
       const insuredPl = state.players.find(x=>x.id===co.ceoId);
       if(insuredPl) insuredPl.stats.spentInsurance += premium;
       state.bank.cash += premium;
       
-      pp.insurance = {insuredCompanyId:companyId, premium, insurerId, deductible, signedAtRoll:state.gameClock.rollCount, quotedTerm:term};
+      pp.insurance = {insuredCompanyId:companyId, premium, insurerId, deductible, signedAtRoll:state.gameClock.rollCount, quotedTerm:term, coveredAmount:insuranceQuote(pp, companyId, 'recurring', null, deductible).exposure}; // Section 313 — bogue 39 : plafond = montant couvert à la signature
       log(`${co.name} a assuré ${pp.name} auprès de ${insurerLabel(insurerId)} pour une prime de ${premium.toFixed(2)} (franchise ${deductible.toFixed(2)})`,
         [{label:`${co.name} (prime)`, amount:-premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:premium}]);
       return {ok:true};
@@ -21286,15 +21476,18 @@ async function buySubInsurance(pid, companyId, insurerId, premium, opts){
   
   
   if(!(premium>0) || p.subInsurance) return fail(null);
+  if(!insuranceTermEnabled('sub')) return fail(insuranceTermDisabledMessage('sub')); // Section 313 — bogue 40 : sous-standard désactivée par le créateur
+  if(p.insurance && p.insurance.insuredCompanyId===companyId) return fail(`${p.name} est déjà couvert par l’assurance normale de ${co.name}, qui passe en premier : une assurance sous-standard ne servirait jamais.`); // Section 313 — bogue 52
   co.cash -= premium;
   logFin(co.id, 'insurance_premium_expense', -premium);
   const insuredPl = state.players.find(x=>x.id===co.ceoId);
   if(insuredPl) insuredPl.stats.spentInsurance += premium;
   if(insurerId==='BANK') state.bank.cash += premium;
   else { const ins = companyById(insurerId); if(ins){ ins.cash += premium; logFin(ins.id, 'insurance_premium_revenue', premium); } }
-  const deductible = co.currentDeductible||0;
-  
-  p.subInsurance = {insuredCompanyId:companyId, premium, insurerId, deductible, signedAtRoll:state.gameClock.rollCount};
+  const deductible = sanitizeDeductible(co.currentDeductible); // Section 313 — bogue 14
+  // Section 313 — bogue 39 : montant couvert affiché à la signature (plafond de l'indemnité).
+  const coveredAmount = (opts.coveredAmount!==undefined && opts.coveredAmount!==null) ? opts.coveredAmount : subInsuranceQuote(p, companyId).exposure;
+  p.subInsurance = {insuredCompanyId:companyId, premium, insurerId, deductible, signedAtRoll:state.gameClock.rollCount, coveredAmount};
   log(`${co.name} prend une assurance sous-standard (1 lancé) sur ${p.name} auprès de ${insurerLabel(insurerId)} pour une prime de ${premium.toFixed(2)} (franchise ${deductible.toFixed(2)}).`,
     [{label:`${co.name} (prime sous-standard)`, amount:-premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:premium}]);
   if(!opts.silent){ await saveGame(); render(); }

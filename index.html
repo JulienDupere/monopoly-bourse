@@ -208,12 +208,19 @@ input[type=text],input[type=number],select{
 .btn-x{background:transparent;color:var(--brick);border:none;font-size:16px;cursor:pointer;padding:4px 8px;}
 .tabs{display:flex;flex-wrap:wrap;gap:4px 4px;margin:18px 0 14px;}
 .tab{
+  font:inherit;margin:0;line-height:normal;-webkit-appearance:none;appearance:none; /* Section 318 : l'onglet est un <button> ; apparence inchangée */
   padding:10px 16px;border-radius:12px 12px 0 0;cursor:pointer;font-weight:700;
   font-size:12px;text-transform:uppercase;letter-spacing:0.4px;white-space:nowrap;
   background:rgba(255,255,255,0.5);color:var(--muted);border:1px solid transparent;
   transition:background .12s ease, color .12s ease;
 }
 .tab.active{background:var(--paper);color:var(--board);box-shadow:var(--shadow-soft);}
+/* Section 318 — clavier et lecteur d'écran : anneau de focus commun (le fichier n’a jamais supprimé le contour des champs), lien-bouton
+   qui garde l'aspect d'un lien souligné, défilement des tableaux dans leur conteneur. */
+:focus-visible{outline:2px solid var(--board);outline-offset:2px;}
+.modal:focus{outline:none;}
+.linklike{background:transparent;border:0;padding:0;margin:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer;text-align:inherit;}
+.table-scroll{overflow-x:auto;width:100%;max-width:100%;min-width:0;-webkit-overflow-scrolling:touch;}
 .topbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;
   background:var(--paper);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
   border:1px solid var(--line);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:6px;
@@ -358,9 +365,11 @@ tr:last-child td{border-bottom:none;}
      "full-bleed": une largeur de 100vw compensée par des marges négatives qui ramènent son bord gauche à
      x=0 quel que soit le décalage de centrage de .wrap sur cet écran.
   */
-  width:100vw;
-  margin-left:calc(50% - 50vw);
-  margin-right:calc(50% - 50vw);
+  /* Section 318 : 100vw compte la barre de défilement verticale (≈ 8 px sur ordinateur) et faisait déborder la page ;
+     --sbw (posée par updateScrollbarWidthVar : innerWidth - clientWidth) la retire de la largeur et recentre le bandeau. */
+  width:calc(100vw - var(--sbw,0px));
+  margin-left:calc(50% - 50vw + var(--sbw,0px) / 2);
+  margin-right:calc(50% - 50vw + var(--sbw,0px) / 2);
 }
 .ticker{
   display:inline-flex;
@@ -400,6 +409,18 @@ tr:last-child td{border-bottom:none;}
 .ticker-item .up{color:var(--success);}
 .ticker-item .down{color:var(--brick);}
 .ticker-item .flat{color:var(--muted);}
+/* Section 318 — téléphone (≤ 600 px) : la page ne déborde plus à l'horizontale. Barre du haut à la ligne, onglets sur
+   une seule ligne qui défile (barre masquée), en-tête plus petit ; les tableaux défilent dans .table-scroll. */
+@media (max-width:600px){
+  .topbar>div{white-space:normal;}
+  .brand{margin-bottom:10px;}
+  .brand h1{font-size:22px;}
+  .tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none;-webkit-overflow-scrolling:touch;}
+  .tabs::-webkit-scrollbar{display:none;}
+  .tab{flex:0 0 auto;}
+  .tab:focus-visible{outline-offset:-2px;} /* Section 318 — retouche de la revue : la bande (overflow auto) rognerait l'anneau */
+  .tabs{padding-bottom:2px;}
+}
 </style>
 </head>
 <body>
@@ -409,7 +430,7 @@ tr:last-child td{border-bottom:none;}
       <h1>Monopoly <span>Bourse</span></h1>
     </div>
   </div>
-  <div class="ticker-wrap"><div class="ticker" id="stockTicker"></div></div>
+  <div class="ticker-wrap" aria-hidden="true"><div class="ticker" id="stockTicker"></div></div><!-- Section 318 : contenu dupliqué pour l'animation, cours déjà lisibles ailleurs -->
   <div id="firebaseConfigWarning" class="config-warning" style="display:none;">
     ⚠️ <b>Configuration Firebase manquante ou incomplète</b> — la partie ne pourra pas se sauvegarder ni
     se synchroniser entre appareils tant que <code>window.__FIREBASE_CONFIG__</code> (dans le
@@ -3538,7 +3559,8 @@ function renderPortefeuilleTrading(me, company){
   
   const netWorthIndexCheckboxesHtml = NET_WORTH_INDEX_DEFS.map(def=>{
     const checked = portefeuilleNetWorthIndexSelection.includes(def.key) ? ' checked' : '';
-    return `<label class="small" style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 6px 0;"><input type="checkbox" data-nwindex="${def.key}"${checked}> ${esc(def.label)}</label>`;
+    // Section 318 : nom accessible des cases à cocher du graphique (aria-label)
+    return `<label class="small" style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 6px 0;"><input type="checkbox" data-nwindex="${def.key}" aria-label="Afficher l’indice ${esc(def.label)} sur le graphique"${checked}> ${esc(def.label)}</label>`;
   }).join('');
   const netWorthSeries = [{points: myNetWorthPoints, color: me.color || '#B45309', label: me.name}];
   NET_WORTH_INDEX_DEFS.forEach(def=>{
@@ -3878,11 +3900,12 @@ function renderPortefeuilleCompareChart(){
   const compareSelectedIds = portefeuilleCompareCompanyIds.filter(id=>compareActiveCos.some(c=>c.id===id));
   const compareCheckboxesHtml = compareActiveCos.map(co=>{
     const checked = compareSelectedIds.includes(co.id) ? ' checked' : '';
-    return `<label class="small" style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 6px 0;"><input type="checkbox" data-compare-company="${co.id}"${checked}> ${esc(co.name)}</label>`;
+    // Section 318 : nom accessible (aria-label) des cases du comparateur
+    return `<label class="small" style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 6px 0;"><input type="checkbox" data-compare-company="${co.id}" aria-label="Comparer avec ${esc(co.name)}"${checked}> ${esc(co.name)}</label>`;
   }).join('')
   
   
-  + `<label class="small" style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 6px 0;font-weight:700;"><input type="checkbox" data-compare-market${portefeuilleCompareShowMarket?' checked':''}> Le marché</label>`;
+  + `<label class="small" style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 6px 0;font-weight:700;"><input type="checkbox" data-compare-market aria-label="Comparer avec le marché"${portefeuilleCompareShowMarket?' checked':''}> Le marché</label>`;
   
   
   const compareSeries = compareActiveCos.filter(co=>compareSelectedIds.includes(co.id) && (co.stockPriceHistory||[]).length>0).map(co=>{
@@ -6569,7 +6592,7 @@ function renderCompanySetupGate(me){
             ${state.players.map(p=>`<option value="${p.id}" ${p.id===me.id?'selected':''}>${esc(p.name)}</option>`).join('')}
           </select>
         </span>
-        <span style="cursor:pointer;text-decoration:underline;" id="leaveGameSetup">quitter la partie</span>
+        <button type="button" class="linklike" data-free-click id="leaveGameSetup">quitter la partie</button><!-- Section 318 -->
       </div>
       <div class="section-title">Bienvenue, ${esc(me.name)} — fondez votre entreprise</div>
       <!-- Section 170 (voir RESUME_ET_REGLES.md) — demande explicite de l'utilisateur: texte rendu plus
@@ -8014,7 +8037,7 @@ function renderGameEndedScreen(){
     <div class="section-title" style="justify-content:center;margin-top:20px;">📈 Comme flavor — auriez-vous battu l'investissement passif ?</div>
     <p class="small">Pour chaque joueur : la valeur qu'auraient eu ses actifs s'il avait plutôt investi à part égale dans TOUTES les entreprises de ce secteur (ou du marché entier), sans jamais rien faire d'autre — le même calcul que le comparateur de Mon Portefeuille. En vert si le joueur a réellement fait mieux en jouant activement, en rouge sinon. « — » si aucune entreprise de ce secteur n'a jamais existé dans cette partie.</p>
     <table style="text-align:left;"><tr><th>Joueur</th><th>Actifs réels (JVM)</th>${flavorIndexHeaderCells}</tr>${flavorIndexRows}</table>
-    <div style="margin-top:16px;"><span style="cursor:pointer;text-decoration:underline;" id="gameEndedReview">consulter quand même les onglets (lecture seule dans l'esprit, aucun lancer possible)</span></div>
+    <div style="margin-top:16px;"><button type="button" class="linklike" data-free-click id="gameEndedReview">consulter quand même les onglets (lecture seule dans l'esprit, aucun lancer possible)</button><!-- Section 318 --></div>
   </div>`;
   document.getElementById('gameEndedReview').addEventListener('click', ()=>{ __gameEndedReviewMode = true; render(); });
 }
@@ -8209,15 +8232,18 @@ function render(){
         ${state.players.map(p=>`<option value="${p.id}" ${p.id===myPlayerId?'selected':''}>${esc(p.name)}</option>`).join('')}
       </select>
     </div>
-    <div>Banque: <b>${fmt(state.bank.cash)}</b> &nbsp;|&nbsp; Année : <b>${displayGameYear()}</b> (semestre ${currentSemesterInYear()}/2 — ${rollsInCurrentSemester()}/3 lancers faits)${readyHeaderHtml}${gameEndedHeaderHtml}${bankGraceHeaderHtml} &nbsp;|&nbsp; <span style="cursor:pointer;text-decoration:underline;" id="leaveGame">quitter la partie</span></div>
+    <div>Banque: <b>${fmt(state.bank.cash)}</b> &nbsp;|&nbsp; Année : <b>${displayGameYear()}</b> (semestre ${currentSemesterInYear()}/2 — ${rollsInCurrentSemester()}/3 lancers faits)${readyHeaderHtml}${gameEndedHeaderHtml}${bankGraceHeaderHtml} &nbsp;|&nbsp; <button type="button" class="linklike" data-free-click id="leaveGame">quitter la partie</button></div><!-- Section 318 -->
   </div>
   ${actionStatusRowHtml}
   ${periodEndBannerHtml}
-  <div class="tabs">
-    ${tabs.map(t=>`<div class="tab ${t===activeTab?'active':''}" data-tab="${t}">${tabLabel(t)}</div>`).join('')}
+  <div class="tabs" id="tabsBar" role="tablist" aria-label="Sections de la partie">
+    ${tabs.map(t=>`<button type="button" class="tab ${t===activeTab?'active':''}" role="tab" id="tab-${t}" aria-selected="${t===activeTab?'true':'false'}" aria-controls="tabbody" tabindex="${t===activeTab?'0':'-1'}" data-tab="${t}">${tabLabel(t)}</button>`).join('')}
   </div>
-  <div class="card pad" id="tabbody"></div>
-  `;
+  <div class="card pad" id="tabbody" role="tabpanel" aria-labelledby="tab-${activeTab}"></div>
+  `; // Section 318 : onglets accessibles (rôles ARIA, un seul onglet dans l'ordre de tabulation, flèches/Début/Fin)
+  // Section 318 : si un onglet avait le focus, il le retrouve après le rendu (clic, flèches ou valeur reçue du serveur).
+  let tabHadFocus = false;
+  try{ const ae = document.activeElement; tabHadFocus = !!(ae && typeof ae.id==='string' && ae.id.indexOf('tab-')===0 && typeof app.contains==='function' && app.contains(ae)===true); }catch(e){ tabHadFocus = false; }
   app.innerHTML = html;
   document.getElementById('tabbody').innerHTML = renderTab(activeTab);
   document.getElementById('whoami').addEventListener('change', async e=>{
@@ -8227,7 +8253,57 @@ function render(){
   });
   document.getElementById('leaveGame').addEventListener('click', modalQuitGame);
   document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click', ()=>{ activeTab = t.dataset.tab; render(); }));
+  // Section 318 : flèches gauche/droite (avec bouclage), Début, Fin sur la liste d'onglets.
+  const tabsBar = document.getElementById('tabsBar');
+  if(tabsBar && typeof tabsBar.addEventListener==='function') tabsBar.addEventListener('keydown', e=>{
+    if(e.altKey || e.ctrlKey || e.metaKey) return; // Section 318 — retouche de la revue : Alt+Flèche (retour du navigateur) et autres raccourcis restent au navigateur
+    const cur = (e.target && e.target.dataset) ? e.target.dataset.tab : null;
+    const next = nextTabForKey(tabs, cur, e.key);
+    if(next===null) return;
+    e.preventDefault();
+    if(next!==activeTab){ activeTab = next; render(); }
+    else { const el = document.getElementById('tab-'+activeTab); if(el && typeof el.focus==='function') el.focus(); }
+  });
   bindTabEvents(activeTab);
+  // Section 318 : focus rendu à l'onglet actif, et onglet actif ramené dans la partie visible de la bande (téléphone).
+  if(tabHadFocus){
+    const el = document.getElementById('tab-'+activeTab);
+    if(el && typeof el.focus==='function'){ try{ el.focus({preventScroll:true}); }catch(e){ el.focus(); } }
+  }
+  // Section 318 — retouche de la revue : tables enveloppées tout de suite (ids stables, donc défilement horizontal
+  // restauré par restoreAppFormState de la section 308) et largeur de la barre de défilement recalculée.
+  try{ wrapTablesForScroll(app); }catch(e){}
+  updateScrollbarWidthVar();
+  ensureActiveTabVisible();
+}
+// Section 318 : onglet visé par une touche (flèches gauche/droite avec bouclage, Début, Fin) ; null si la touche ne
+// concerne pas les onglets. cur = onglet qui a le focus.
+function nextTabForKey(tabs, cur, key){
+  if(!Array.isArray(tabs) || !tabs.length) return null;
+  let i = tabs.indexOf(cur);
+  if(key==='Home') return tabs[0];
+  if(key==='End') return tabs[tabs.length-1];
+  if(key!=='ArrowLeft' && key!=='ArrowRight') return null;
+  if(i<0) i = 0;
+  return tabs[(i + (key==='ArrowRight' ? 1 : tabs.length-1)) % tabs.length];
+}
+// Section 318 : nouveau scrollLeft de la bande d'onglets pour que l'onglet actif soit entièrement visible (rectangles
+// en coordonnées de la fenêtre). Sans changement si déjà visible.
+function tabStripScrollLeft(barRect, tabRect, scrollLeft, margin){
+  const m = margin===undefined ? 8 : margin;
+  if(tabRect.left < barRect.left) return Math.max(0, scrollLeft + (tabRect.left - barRect.left) - m);
+  if(tabRect.right > barRect.right) return scrollLeft + (tabRect.right - barRect.right) + m;
+  return scrollLeft;
+}
+function ensureActiveTabVisible(){
+  try{
+    const bar = document.getElementById('tabsBar');
+    const act = document.getElementById('tab-'+activeTab);
+    if(!bar || !act || typeof bar.getBoundingClientRect!=='function' || typeof act.getBoundingClientRect!=='function') return;
+    if(typeof bar.scrollLeft!=='number') return;
+    const target = tabStripScrollLeft(bar.getBoundingClientRect(), act.getBoundingClientRect(), bar.scrollLeft);
+    if(target!==bar.scrollLeft) bar.scrollLeft = target;
+  }catch(e){}
 }
 
 // Section 308 — C4 (décision de Julien : « imposer le choix Vous êtes dès le premier accès ») : écran affiché à un
@@ -8244,8 +8320,8 @@ function renderIdentityGate(){
         return `<button class="btn btn-ghost" data-free-click data-identity-pick="${esc(p.id)}" style="display:block;width:100%;text-align:left;margin-top:8px;">${esc(p.name)}${co?` <span class="small">— CEO de ${esc(co.name)}</span>`:''}${p.id===state.creatorId?' <span class="small">(créateur de la partie)</span>':''}</button>`;
       }).join('')}
       <div class="small" style="margin-top:16px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-        <span style="cursor:pointer;text-decoration:underline;" id="identitySpectator">Regarder en spectateur (écran TV)</span>
-        <span style="cursor:pointer;text-decoration:underline;" id="leaveGameIdentity">quitter la partie</span>
+        <button type="button" class="linklike" data-free-click id="identitySpectator">Regarder en spectateur (écran TV)</button>
+        <button type="button" class="linklike" data-free-click id="leaveGameIdentity">quitter la partie</button><!-- Section 318 -->
       </div>
     </div>
   </div>`;
@@ -18249,8 +18325,8 @@ function renderSpectatorView(){
     <div class="tv-header">
       <div><span class="codebox">${esc(gameCode)}</span> <span class="small">Mode spectateur</span></div>
       <div style="display:flex;gap:16px;align-items:center;">
-        <span class="small" style="cursor:pointer;text-decoration:underline;" id="exitSpectator">quitter le mode spectateur</span>
-        <span class="small" style="cursor:pointer;text-decoration:underline;" id="leaveGameSpectator">quitter la partie</span>
+        <button type="button" class="linklike small" data-free-click id="exitSpectator">quitter le mode spectateur</button>
+        <button type="button" class="linklike small" data-free-click id="leaveGameSpectator">quitter la partie</button><!-- Section 318 -->
       </div>
     </div>
     <div class="tv-slide"${slideStyle}>${slideHtml}</div>
@@ -18329,19 +18405,165 @@ function openModal(html, opts){
   if(!host) return;
   // Section 308 — retouche de la revue : une fenêtre qui se redessine elle-même ({redraw:true}, ex. changement de
   // durée dans modalInsureBundle) ne relance pas l'anti-rebond de 500 ms.
-  const redraw = !!(opts && opts.redraw) && isModalOpen();
-  host.innerHTML = `<div class="modal-bg" id="modalBg"><div class="modal">${html}</div></div>`;
+  const wasOpen = isModalOpen();
+  const redraw = !!(opts && opts.redraw) && wasOpen;
+  // Section 318 : focus avant le remplacement du contenu — élément à rendre à la fermeture (hors fenêtre), ou, en
+  // redraw, élément de la fenêtre qui avait le focus (retrouvé par son id dans le nouveau contenu).
+  let redrawFocus = null;
+  try{
+    const ae = document.activeElement;
+    const inHost = !!(ae && typeof host.contains==='function' && host.contains(ae)===true);
+    if(redraw){ if(inHost) redrawFocus = {id: ae.id||'', start: ae.selectionStart, end: ae.selectionEnd}; }
+    else if(!wasOpen){ modalReturnFocus = (ae && ae!==document.body && !inHost) ? ae : null; }
+  }catch(e){}
+  host.innerHTML = `<div class="modal-bg" id="modalBg"><div class="modal" role="dialog" aria-modal="true" tabindex="-1">${html}</div></div>`;
   if(!redraw) lastModalOpenMs = Date.now();
   const openedMs = lastModalOpenMs; // Section 308
   document.getElementById('modalBg').addEventListener('click', e=>{ if(e.target.id==='modalBg' && Date.now()-openedMs>=ACTION_CLICK_DEBOUNCE_MS) closeModal(); });
+  setupModalAccessibility(host, redraw, redrawFocus); // Section 318
+}
+// Section 318 — fenêtres accessibles : titre relié (aria-labelledby), focus sur le premier champ de saisie à
+// l'ouverture (jamais sur un bouton de confirmation), focus conservé au redessin, rendu à la fermeture.
+let modalReturnFocus = null;
+function isModalTextField(el){
+  if(!el || typeof el.tagName!=='string' || el.disabled) return false;
+  if(el.tagName==='SELECT' || el.tagName==='TEXTAREA') return true;
+  if(el.tagName!=='INPUT') return false;
+  return ['text','number','search','email','tel','url','password',''].includes(String(el.type||'text').toLowerCase());
+}
+function focusElementQuietly(el){
+  if(!el || typeof el.focus!=='function') return;
+  try{ el.focus({preventScroll:true}); }catch(e){ try{ el.focus(); }catch(e2){} }
+}
+function setupModalAccessibility(host, redraw, redrawFocus){
+  try{
+    const modal = (typeof host.querySelector==='function') ? host.querySelector('.modal') : null;
+    if(!modal || typeof modal.setAttribute!=='function') return;
+    const h3 = modal.querySelector('h3');
+    if(h3 && typeof h3.setAttribute==='function'){
+      if(!h3.id) h3.id = 'modalTitle';
+      modal.setAttribute('aria-labelledby', h3.id);
+    }
+    if(redraw){
+      if(!redrawFocus) return; // le focus n'était pas dans la fenêtre : on n'y touche pas
+      const el = redrawFocus.id ? document.getElementById(redrawFocus.id) : null;
+      if(el && typeof host.contains==='function' && host.contains(el)===true){
+        focusElementQuietly(el);
+        if(typeof redrawFocus.start==='number' && isModalTextField(el) && el.tagName!=='SELECT' && typeof el.setSelectionRange==='function'){
+          try{ el.setSelectionRange(redrawFocus.start, redrawFocus.end); }catch(e){}
+        }
+      } else focusElementQuietly(modal);
+      return;
+    }
+    // Section 318 — retouche de la revue : sur écran tactile, le focus d'un champ ouvrirait le clavier virtuel (et Safari
+    // zoomerait) : le focus va alors à la fenêtre elle-même.
+    let pointerFine = false;
+    try{ pointerFine = typeof window.matchMedia==='function' && !!window.matchMedia('(hover:hover) and (pointer:fine)').matches; }catch(e){ pointerFine = false; }
+    const first = pointerFine ? Array.from(modal.querySelectorAll('input,select,textarea')).find(el=>isModalTextField(el) && el.offsetParent!==null) : null;
+    focusElementQuietly(first || modal);
+  }catch(e){ console.error('Accessibilité de la fenêtre impossible :', e); }
+}
+// Section 318 : Échap ferme la fenêtre avec la règle du clic sur le fond (pas avant ACTION_CLICK_DEBOUNCE_MS après
+// l'ouverture) ; ignoré si la cible est une liste déroulante (Échap la referme seulement).
+function modalEscapeShouldClose(targetTag, nowMs, openedMs){
+  if(String(targetTag||'').toUpperCase()==='SELECT') return false;
+  return nowMs-openedMs >= ACTION_CLICK_DEBOUNCE_MS;
+}
+// Section 318 : cible du focus pour Tab / Maj+Tab dans la fenêtre (bouclage) ; null = laisser le navigateur faire.
+function modalTabTarget(list, active, shift, modal){
+  if(!list.length) return modal;
+  const first = list[0], last = list[list.length-1];
+  const inside = list.includes(active);
+  if(shift){ return (active===first || active===modal || !inside) ? last : null; }
+  return (active===last || !inside) ? first : null;
+}
+function modalFocusables(modal){
+  return Array.from(modal.querySelectorAll('a[href],button,input,select,textarea,summary,[tabindex]')).filter(el=>{
+    if(el.disabled) return false;
+    if(el.getAttribute && el.getAttribute('tabindex')==='-1') return false;
+    if(el.tagName==='INPUT' && String(el.type||'').toLowerCase()==='hidden') return false;
+    return el.offsetParent!==null; // masqué (display:none) : hors de l'ordre de tabulation
+  });
+}
+if(typeof document!=='undefined' && document.addEventListener){
+  document.addEventListener('keydown', e=>{
+    try{
+      if(!e || (e.key!=='Escape' && e.key!=='Tab') || e.isComposing || !isModalOpen()) return;
+      if(e.key==='Escape'){
+        if(modalEscapeShouldClose(e.target && e.target.tagName, Date.now(), lastModalOpenMs)){ e.preventDefault(); closeModal(); }
+        return;
+      }
+      const modal = document.querySelector('#modalHost .modal');
+      if(!modal) return;
+      const to = modalTabTarget(modalFocusables(modal), document.activeElement, !!e.shiftKey, modal);
+      if(to){ e.preventDefault(); focusElementQuietly(to); }
+    }catch(err){ console.error(err); }
+  });
+}
+// Section 318 — tout <table> rendu dans #app ou #modalHost défile dans un conteneur .table-scroll au lieu d'élargir
+// la page (téléphone). Idempotent : une table déjà enveloppée n'est jamais ré-enveloppée (le déplacement dans le
+// conteneur relance l'observateur, qui ne trouve plus rien à faire).
+function wrapTablesForScroll(root){ // Section 318 — retouche de la revue : ids stables « tblscroll-N » (« tblscroll-mN » dans une fenêtre), par ordre du document
+  if(!root || typeof root.querySelectorAll!=='function') return 0;
+  let n = 0;
+  const ae = document.activeElement;
+  let sel = null;
+  try{ if(ae && typeof ae.selectionStart==='number') sel = {s:ae.selectionStart, e:ae.selectionEnd}; }catch(e){}
+  const idPrefix = root.id==='modalHost' ? 'tblscroll-m' : 'tblscroll-';
+  Array.from(root.querySelectorAll('table')).forEach((t,i)=>{
+    const p = t.parentNode;
+    if(!p || (p.classList && p.classList.contains('table-scroll'))){
+      if(p && !p.id && p.classList && typeof p.setAttribute==='function') p.setAttribute('id', idPrefix+i);
+      return;
+    }
+    const w = document.createElement('div');
+    w.className = 'table-scroll';
+    w.id = idPrefix+i;
+    p.insertBefore(w, t);
+    w.appendChild(t);
+    n++;
+  });
+  // Déplacer une table fait perdre le focus à un champ qu'elle contient : on le lui rend (avec sa sélection).
+  if(n && ae && ae!==document.body && document.activeElement!==ae && ae.isConnected!==false){
+    focusElementQuietly(ae);
+    if(sel && typeof ae.setSelectionRange==='function'){ try{ ae.setSelectionRange(sel.s, sel.e); }catch(e){} }
+  }
+  return n;
+}
+// Section 318 — largeur de la barre de défilement verticale, pour que le bandeau pleine largeur ne fasse pas déborder
+// la page (variable CSS --sbw, voir .ticker-wrap).
+function updateScrollbarWidthVar(){
+  try{
+    const de = document.documentElement;
+    const w = Math.max(0, (window.innerWidth||0) - (de.clientWidth||0));
+    if(de && de.style && typeof de.style.setProperty==='function') de.style.setProperty('--sbw', w+'px');
+    return w;
+  }catch(e){ return 0; }
+}
+if(typeof window!=='undefined' && typeof document!=='undefined'){
+  try{
+    updateScrollbarWidthVar();
+    if(typeof window.addEventListener==='function') window.addEventListener('resize', updateScrollbarWidthVar);
+    // Section 318 — retouche de la revue : la barre verticale apparaît sans événement « resize » (contenu qui s'allonge) ;
+    // l'élément <html> change alors de largeur utile.
+    if(typeof ResizeObserver!=='undefined' && document.documentElement){ try{ new ResizeObserver(()=>updateScrollbarWidthVar()).observe(document.documentElement); }catch(e){} }
+    if(typeof MutationObserver!=='undefined'){
+      const obs = new MutationObserver(()=>{ ['app','modalHost'].forEach(id=>{ try{ wrapTablesForScroll(document.getElementById(id)); }catch(e){} }); });
+      ['app','modalHost'].forEach(id=>{ const el = document.getElementById(id); if(el) obs.observe(el, {childList:true, subtree:true}); });
+    }
+  }catch(e){ console.error('Section 318 : initialisation impossible :', e); }
 }
 function closeModal(){
   const host = document.getElementById('modalHost');
+  const wasOpen = isModalOpen(); // Section 318
+  const returnTo = modalReturnFocus; modalReturnFocus = null;
   // Section 308 — retouche de la revue : fermer une fenêtre arme l'anti-rebond (lastModalOpenMs = horodatage du
   // dernier changement de fenêtre, ouverture ou fermeture) : le 2e clic d'un double clic sur « OK » ne tombe pas
   // sur le bouton d'action situé dessous.
   if(isModalOpen()) lastModalOpenMs = Date.now();
   if(host) host.innerHTML='';
+  // Section 318 : le focus revient à l'élément qui l'avait avant l'ouverture, s'il est encore dans le document.
+  if(wasOpen && returnTo && returnTo.isConnected!==false && !(host && typeof host.contains==='function' && host.contains(returnTo)===true)) focusElementQuietly(returnTo);
   scheduleDeferredPopups(); // Section 308 — C1 : les fenêtres d'information en attente s'affichent maintenant
 }
 // Section 308 — C2 : confirmation sur des conditions revérifiées à l'état à jour (utilitaire générique).
@@ -20953,7 +21175,7 @@ function modalInsureBundle(claimMode, term, isRegenerate){
     ? `<div class="small" style="padding:8px 0;">${isSub ? 'Aucun risque assurable en un seul lancé depuis votre position, pour ce terme.' : 'Aucun risque assurable depuis votre position, pour ce terme.'}</div>`
     : items.map((it,idx)=>`
     <div class="row" style="gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;">
-      <input type="checkbox" class="bundle-check" data-idx="${idx}" style="width:auto;">
+      <input type="checkbox" class="bundle-check" data-idx="${idx}" aria-label="${esc(it.label)}" style="width:auto;"><!-- Section 318 -->
       <span style="flex:1;min-width:140px;">${esc(it.label)} : ${(it.q.prob*100).toFixed(2)}% de probabilité de sinistre. ${fmt(it.q.exposure)} à risque${insuranceItemIsService(it) ? ' pour un lancer de 7 (ajusté au lancer réel)' : ''}.${insuranceSubWarningHtml(it, term, myCo.id)}</span>
       <span class="bundle-premium-value" data-idx="${idx}" style="width:90px;text-align:right;font-family:'IBM Plex Mono',monospace;font-weight:700;">${fmt(premiums[idx])}</span>
     </div>`
@@ -22026,7 +22248,7 @@ function modalAnnounceCeoTrade(){
     <div class="small" id="mCeoAnnounceInfo" style="margin-bottom:8px;"></div>
     <label id="mCeoAnnounceAmountLabel">Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
     <input type="number" step="0.01" min="0" id="mCeoAnnounceAmount" value="0">
-    <div class="small" id="mCeoAnnounceSellAllWrap" style="margin:6px 0 10px;display:none;"><span style="cursor:pointer;text-decoration:underline;" id="mCeoAnnounceSellAll">Tout vendre (${fmtShares(ceoShares)} part(s) détenue(s) au prix courant)</span></div>
+    <div class="small" id="mCeoAnnounceSellAllWrap" style="margin:6px 0 10px;display:none;"><button type="button" class="linklike" data-free-click id="mCeoAnnounceSellAll">Tout vendre (${fmtShares(ceoShares)} part(s) détenue(s) au prix courant)</button></div><!-- Section 318 -->
     <div class="small" id="mCeoAnnounceRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -23101,7 +23323,7 @@ function modalProposeRevenueSwap(){
     const host = p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p;
     const share = propertyOwnedShare(host, myCo.id);
     return `<div class="row" style="gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;">
-      <input type="checkbox" class="rswap-check" data-idx="${idx}" data-pid="${it.id}" style="width:auto;">
+      <input type="checkbox" class="rswap-check" data-idx="${idx}" data-pid="${it.id}" aria-label="${esc(it.label)}" style="width:auto;"><!-- Section 318 -->
       <span style="flex:1;min-width:140px;">${esc(it.label)} <span class="small" style="color:var(--muted);">(part détenue: ${share}%)</span></span>
     </div>`;
   }).join('');

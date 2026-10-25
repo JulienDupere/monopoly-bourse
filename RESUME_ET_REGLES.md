@@ -2191,3 +2191,59 @@ Bogues traités : 82, 83, 84, 88, 89, 90, 93, 94, 95, 97 (la partie A couvre 77-
 - Prêt avec maximum à 0 : « illimité ».
 
 **Intégration** (vague 3) : partie A — aucun conflit ; les fonctions partagées avec la section 314 (`fillPendingBid`, `withdrawBonds`, `closeShortPosition`, jambes de stratégie réglées en argent et projection d'encaisse des options) ont été relues ; raccord de la statistique des bons décrit à la section 314. La sonde de la revue qui rejoue la même partie (graine fixe, 8 graines, 43 lancers) avant et après les deux parties ne montre aucune différence d'argent, de parts ni de prêts. Partie B — cinq conflits (quatre avec la section 310, un avec la section 315), résolus comme décrit dans ces sections ; tout numéro d'année affiché passe par `displayGameYear()`, y compris les lignes ajoutées par la section 310 (seule à en ajouter dans la vague) ; les numéros encore écrits avec `currentGameYear()` sont des clés internes (enchères, plafond de vente du CEO, durée cachée). Ligne Banque du bogue 83 présente dans les deux chemins de versement, y compris au lancer final (test croisé de la section 315).
+
+## 318. Présentation — débordement horizontal sur téléphone, onglets et fenêtres utilisables au clavier et au lecteur d'écran — 2026-10-25
+
+### Contexte
+
+Demande de Julien (verbatim) : « /impeccable critique Le visuel de l'application seulement ».
+
+Réponses à la critique : « J'aime le style Apple Finance, les états financiers et les fonctionnalités sont essentiels, c'est plus la présentation et le visuel que je veux voir » ; ton : « Mélange sobre » ; portée : « Les deux P0 seulement » ; puis « Go ».
+
+La critique de design du 2026-10-20 (score 20/40) a retenu deux problèmes bloquants (P0) :
+
+1. sur téléphone (375 px), la page déborde à l'horizontale : `scrollWidth` de 641 px sur Portefeuille et de 860 px sur Mon entreprise ;
+2. les onglets et les fenêtres sont inutilisables au clavier et au lecteur d'écran.
+
+La numérotation 308 prévue au départ pour cette livraison a été prise par la synchronisation multi-appareils, d'où 318. Le code porte le commentaire « Section 318 » (« Section 318 — retouche de la revue » pour les corrections qui ont suivi la revue).
+
+Présentation uniquement : aucune mécanique de jeu, aucun montant d'argent, aucun champ d'état, rien dans `migrateState`.
+
+### Mécanique retenue
+
+#### Volet A — téléphone (CSS surtout)
+
+1. **Bloc `@media (max-width:600px)`** : `.topbar>div{white-space:normal}` (la règle `nowrap` de la section 26 reste sur ordinateur) ; `.tabs` sur une seule ligne qui défile (`flex-wrap:nowrap; overflow-x:auto`, barre masquée), `.tab{flex:0 0 auto}` ; `.brand h1` à 22 px et marge du bas réduite.
+2. **Onglet actif ramené dans la bande** : `ensureActiveTabVisible()` ajuste `scrollLeft` de `#tabsBar` (jamais `scrollIntoView`, qui ferait défiler la page), seulement si l'onglet est hors de la partie visible (calcul pur `tabStripScrollLeft`).
+3. **Tableaux** : `wrapTablesForScroll(root)` entoure chaque `<table>` d'un `<div class="table-scroll">` (`overflow-x:auto; width:100%; max-width:100%`), de façon idempotente. Appelée de façon synchrone à la fin de `render()` pour `#app`, et par un `MutationObserver` pour `#app` et `#modalHost` (fenêtres, mises à jour partielles). Les enveloppes ont des ids stables par ordre du document (`tblscroll-N`, `tblscroll-mN` dans une fenêtre) : la restauration de défilement de la section 308 (`captureAppFormState` / `restoreAppFormState`, éléments de `#app` avec un id) les retrouve, de même que `#tabsBar` ; une valeur reçue d'un autre appareil ne remet donc plus le défilement horizontal à zéro (mesuré avant la retouche : tableau 120 → 0, onglets 200 → 0). Si un champ d'un tableau a le focus pendant l'enveloppement, il le garde (avec sa sélection).
+4. **Bandeau défilant** : `width:calc(100vw - var(--sbw,0px))` et marges recentrées de `--sbw/2` ; `--sbw` = largeur de la barre de défilement verticale (`innerWidth - documentElement.clientWidth`), recalculée par `updateScrollbarWidthVar()` au chargement, à `resize`, par un `ResizeObserver` sur `<html>` (la barre apparaît sans événement `resize`) et à la fin de `render()`. Effet pleine largeur inchangé.
+5. **En-tête** : titre à 22 px sous 600 px.
+
+#### Volet B — clavier et lecteur d'écran
+
+1. **Onglets** : `<div class="tabs" id="tabsBar" role="tablist" aria-label="Sections de la partie">` ; chaque onglet est un `<button type="button" class="tab" role="tab" id="tab-…" aria-selected aria-controls="tabbody" tabindex="0|-1" data-tab>` (un seul à `tabindex=0`, apparence inchangée) ; `#tabbody` est un `role="tabpanel"` étiqueté par l'onglet actif. Flèches gauche/droite (avec bouclage), Début, Fin : `nextTabForKey`. Les touches avec Alt, Ctrl ou Méta sont ignorées (Alt+Flèche gauche = retour du navigateur). Si un onglet avait le focus, il le retrouve (sur l'onglet actif) après tout `render()`, y compris celui d'une valeur reçue du serveur.
+2. **Focus visible** : `:focus-visible{outline:2px solid var(--board);outline-offset:2px}` ; le fichier n'avait aucune suppression de contour des champs. Seule la fenêtre elle-même (conteneur non interactif, focus programmatique) n'a pas d'anneau. Sous 600 px, `.tab:focus-visible{outline-offset:-2px}` et un petit `padding-bottom` sur la bande, pour que `overflow-x:auto` ne rogne pas l'anneau.
+3. **Fenêtres** (`openModal` / `closeModal`) : `.modal` reçoit `role="dialog" aria-modal="true" tabindex="-1"` et `aria-labelledby` vers son premier `h3` (id `modalTitle` posé si absent). À l'ouverture (pas en `redraw`), l'élément actif hors fenêtre est mémorisé ; le focus va au premier champ de saisie (`input` texte/nombre, `select`, `textarea`) **seulement si le pointeur est précis** (`matchMedia('(hover:hover) and (pointer:fine)')`), sinon à la fenêtre elle-même (sur écran tactile, un champ focalisé ouvrirait le clavier virtuel et Safari zoomerait) ; jamais sur un bouton de confirmation. En `redraw`, l'élément focalisé est retrouvé par son id (avec sa sélection), sinon la fenêtre ; si le focus n'était pas dans la fenêtre, rien n'est déplacé. **Échap** ferme avec la règle du clic sur le fond (`modalEscapeShouldClose` : pas avant `ACTION_CLICK_DEBOUNCE_MS` après l'ouverture, ignoré sur un `SELECT`). **Tab / Maj+Tab** bouclent dans la fenêtre (`modalTabTarget`). À la fermeture, le focus revient à l'élément mémorisé s'il est encore dans le document (une fenêtre qui en remplace une autre conserve l'origine).
+4. **Liens « quitter la partie »** : `leaveGame`, `leaveGameSetup`, `leaveGameIdentity`, `leaveGameSpectator`, `identitySpectator`, `exitSpectator`, `gameEndedReview`, `mCeoAnnounceSellAll` deviennent `<button type="button" class="linklike" data-free-click id=…>` (aspect de lien souligné, `font:inherit`). Il ne reste aucun `<span style="cursor:pointer">` dans le fichier.
+5. **Bandeau défilant** : `aria-hidden="true"` (contenu dupliqué pour l'animation, cours disponibles ailleurs).
+6. **Cases à cocher** des graphiques (MRKT, DIVD, MMTM, BOOM, GARP, comparateur d'entreprises et « le marché ») et des fenêtres d'assurance et d'ABS (`bundle-check`, `rswap-check`) : `aria-label`.
+
+### Ce qui n'est PAS changé
+
+- Aucune mécanique de jeu, aucun montant, aucun état ; style « Apple Finance » conservé.
+- Anti-rebond de la section 308 intact (`isFreeClickButton`, écouteur `click` en capture) : les onglets (sous `.tabs`) et les liens-boutons (`data-free-click`) restent des clics libres ; la règle des 500 ms après l'ouverture d'une fenêtre s'applique toujours. `noteAppFieldEvent` et `renderPreservingForms` ne sont pas modifiés.
+- Reportés (P1/P2 de la critique et le ton « mélange sobre ») : écran d'accueil, hiérarchie typographique, textes de développeur affichés au joueur.
+
+### Tests
+
+`tests/section318.test.js` : 93 vérifications (balisage et vrai gestionnaire de touches des onglets, avec modificateurs et refocus ; règle d'Échap par le vrai écouteur du document ; Tab piégé par le vrai écouteur ; mémorisation du focus par `openModal` sans pose manuelle ; focus initial selon le pointeur ; enveloppe des tableaux idempotente, ids stables, appel synchrone dans `render()` ; `--sbw` par `ResizeObserver` et par `render()` ; CSS mobile et statique). Contre-épreuves (`{ transform }`) : ancien balisage des onglets, gestionnaire de touches retiré, Échap sans délai, `--sbw` non recalculée au rendu : chacune fait échouer le contrôle visé. Le mini-DOM n'indexe pas les éléments sans attribut (`h3`) et n'implémente pas l'enveloppement : ces parties sont testées sur des objets factices.
+
+Suite complète : `node tests/run-all.js` → 71 fichiers verts, 2 984 vérifications (2 891 + 93).
+
+### Vérification à l'écran (session principale, hors tests)
+
+À 375 px : six onglets à la largeur exacte de l'écran, plus de débordement horizontal ; sur ordinateur : mise en page identique à l'ancienne ; Échap et flèches validés.
+
+### Changements visibles pour les joueurs (cahiers)
+
+Aucune règle ne change : les cahiers ne sont pas concernés. Visible seulement : mise en page mobile (onglets qui défilent, tableaux qui défilent dans leur cadre), navigation au clavier, liens « quitter la partie » inchangés d'aspect.

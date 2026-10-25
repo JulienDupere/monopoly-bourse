@@ -851,3 +851,467 @@ n'a ni la file d'actions, ni la clé d'idempotence, ni l'écran « Vous êtes »
 d'avance et de la vente REIT ; 2e confirmation « Les conditions ont changé » ; indicateur d'enregistrement et refus
 hors ligne ; messages « Ce lancer a déjà été joué », « connexion perdue », « conflits répétés », « impossible de
 savoir si votre action a été enregistrée » ; saisies et fenêtres conservées quand un autre joueur agit.
+
+## 309. Immobilier, parts et maisons : vendeur imposé, banque au prix de rachat, offres à accepter, monnaie conservée à la construction — 2026-10-24
+
+Vague 2 de la série de corrections ; le numéro 310 est réservé au lot REIT et lot commercial (vague 3).
+
+Contexte : lot 2 de la série de corrections de l'audit du 2026-10-19 (bogues moyens et faibles). Demandes de Julien,
+verbatim : « Moyens : tout corriger SAUF le 12 » ; « Faibles : tout corriger SAUF 45, 51 et 53 » ; « ventes
+unilatérales (vendre des maisons, revente de parts REIT) : exiger l'accord de l'acheteur » (ici : vendre des maisons ;
+la revente de parts REIT relève d'un autre lot) ; « compensation de maison : chaque autre copropriétaire paie sa
+quote-part au propriétaire de la maison, qui ne se paie pas lui-même, et l'affichage montre le montant réellement
+transféré ». Sur le plafond de copropriétaires, en réponse à « regrouper un lot qui dépasserait le plafond de trois
+copropriétaires » : « C'est ok, si après le regroupement il y a plus que 3 propriétaires » ; puis : « Non le plafond
+s'applique seulement à l'achat initiale du terrain individuel ». Bogues traités : 8, 9, 13, 16, 33, 34, 35, 63 ; 64
+voulu, non corrigé. Chaque changement du code porte le commentaire « Section 309 ».
+
+1. **Vendeur imposé** (bogue 8 ; `modalSellShareForm`, commune à `modalSellShare` et `modalSellMergedShare`,
+   `sellPropertyShare`, `sellMergedShare`, `proposeAssetSale`) — la fenêtre « Vendre une part » n'a plus de menu
+   « Vendeur » : le vendeur est l'entreprise du CEO qui agit (« Vendeur : Co Bob (40 % détenus) ») ; l'acheteur est
+   une AUTRE entreprise ou la banque. Revérifié dans l'applyFn : seul le CEO vendeur dépose l'offre ou vend à la
+   banque ; une entreprise ne peut pas se vendre une part. Scénario : Brun 1, Co Alice 60 %, Co Bob 40 %. Avant :
+   Bob, fenêtre ouverte sur « Co Alice » par défaut, s'attribuait les 60 % pour 0,01 M$ ; Co Alice pouvait se vendre
+   1 % pour 5 M$ (faux investissement de 5 M$). Après : la requête est refusée (« Seul le CEO de Co Alice peut
+   proposer la vente de ses actifs », « Une entreprise ne peut pas se vendre une part à elle-même »), rien ne bouge.
+2. **La banque paie sa valeur de rachat** (bogue 9 ; `bankBuybackPrice`, `modalConfirmBankShareSale`) — vente à la
+   banque : prix = valeur de rachat calculée par le moteur (`buybackValue` du terrain, `buybackValueLot` du lot,
+   × pourcentage vendu), annoncé dans une fenêtre de confirmation (`confirmWithFreshConditions` : si la valeur change
+   avant le clic, 2e confirmation) ; le prix saisi ne vaut que pour une entreprise. Scénario : Co Alice vend 1 % de
+   Brun 1 à la banque en tapant 500 M$. Avant : +500 M$ pour Co Alice, −500 M$ pour la banque. Après : la fenêtre
+   annonce 5 K$ ; Co Alice +0,0045 M$, banque −0,0045 M$ (valeur intrinsèque 0,6 × (1 − 25 %) × 1 %). Lot Brun :
+   1 % = 0,0135 M$ (valeur de rachat 0,45 + 0,90).
+3. **Ventes à une entreprise = offres à accepter** (décision « ventes unilatérales » ; `state.assetSaleOffers`, défaut
+   `[]` dans `migrateState` et `createGame` ; `proposeAssetSale`, `acceptAssetSaleOffer` /
+   `modalAcceptAssetSaleOffer`, `refuseAssetSaleOffer`, `cancelAssetSaleOffer`, `assetSaleOffersHtml`) — « Vendre des
+   maisons » et « Vendre une part » à une entreprise déposent une offre {vendeur, acheteur, quantité et prix par maison
+   | terrain ou lot, pourcentage, prix, auteur, lancer, heure}. Rien ne bouge (argent, maisons, parts) avant
+   l'acceptation. Le dépôt est vérifié à blanc (réserve, part détenue, hypothèque, ABS, lot regroupé) ; un prix non
+   fini ou non positif est refusé. L'offre expire au lancer de dés suivant son dépôt (`expireAssetSaleOffers`, au même
+   moment du cycle que les demandes d'emprunt, trace au journal ; une acceptation sur un lancer changé est refusée) ;
+   le lancer de dépôt est affiché (« déposée au lancer 12, expire au lancer suivant »). Dans « Vendre une part », le
+   prix proposé suit le pourcentage tant que le joueur ne l'a pas modifié lui-même. L'offre s'affiche
+   dans l'onglet Mon Entreprise de l'acheteur (« Co Alice vous propose 2 maison(s) de sa réserve (500 K$/maison) pour
+   1.00 M$ », Accepter / Refuser) et du vendeur (« en attente de sa réponse », Retirer). Seul le CEO acheteur accepte
+   ou refuse ; seul le vendeur retire. À l'acceptation (fenêtre « Accepter et payer 1.00 M$ »,
+   `confirmWithFreshConditions`), tout est revérifié sur l'état frais, encaisse de l'acheteur comprise ; si l'offre
+   n'est plus exécutable : « Offre non exécutée — … Rien n'a été payé ni transféré ; l'offre reste en attente
+   (refusez-la, ou le vendeur peut la retirer) ». Scénario maisons : Co Alice (3 maisons) propose 2 maisons à
+   0,5 M$ à Co Bob ; avec 0,5 M$ d'encaisse, Bob est refusé et l'offre reste ; avec 20 M$, il accepte : Co Bob −1 M$,
+   Co Alice +1 M$, réserves 3 → 1 et 0 → 2, monnaie conservée. Avant : Co Bob était débité sans rien accepter, même
+   sans encaisse. Une même maison offerte à Carl et à Dan : la 2e acceptation est refusée (réserve vide). Scénario
+   parts : Bob propose 10 % de Brun 1 à Co Carl pour 3 M$ ; Carl accepte : Co Carl −3 M$, Co Bob +3 M$, Brun 1 =
+   60 / 30 / 10 %.
+4. **Construction : la banque n'encaisse que ce que paient les entreprises** (bogue 13 ; `buildHouseCore`) — règle §7,
+   « chaque copropriétaire paie sa part de chaque maison » : la part du lot que les entreprises ne détiennent pas
+   (réserve REIT, part revendue à la banque) est à la charge de la banque, comme le prévoyait déjà la ligne
+   « Banque (REIT) » du reçu. Le reçu est équilibré : « Banque (REIT (Première rue), part de 10 % non détenue par les
+   entreprises — à sa charge) −0,05 », « Banque (construction) +0,50 ». Scénario : lot Brun, Co Alice 60 %, Co Bob
+   30 %, réserve REIT 10 %, maison à 0,5 M$. Avant : 0,30 + 0,15 payés, banque +0,50 : 0,05 M$ créés par maison.
+   Après : banque +0,45, monnaie conservée. Sans REIT, après la vente de 40 % du lot à la banque : avant 0,20 M$ créés
+   par maison, après banque +0,30 = ce que paie Co Alice. Option écartée : faire payer la part de la banque aux
+   copropriétaires (contraire à §7).
+5. **Provenance des maisons** (bogue 33 ; `buildHouseCore`) — la réserve de la source est revérifiée dans l'applyFn ;
+   sans maison fournie, ni construction ni compensation ; avec l'option active, une construction sans source est
+   refusée. Scénario : Co Carl a 1 maison, deux constructions la choisissent avec 0,4 M$ de compensation. Avant :
+   deux maisons construites, Co Carl reçoit 0,8 M$. Après : la 2e est refusée (« Co Carl n'a plus de maison en
+   réserve… rien n'a été construit ni payé »), Co Carl reçoit 0,4 M$ une fois.
+6. **Compensation de maison** (décision ; `houseCompensationTransfers`, `buildHouseCore`, `modalHouseCompensation`) —
+   le montant saisi est la « Valeur convenue de la maison » ; chaque autre copropriétaire paie sa quote-part (sa part
+   divisée par le total des parts détenues par les entreprises, jamais la banque ni le REIT) à l'entreprise qui
+   fournit la maison, qui ne se paie pas la sienne. La fenêtre affiche chaque versement et « Montant réellement
+   transféré à … » ; le journal et la fenêtre de transaction montrent le même montant. Les versements affichés sont
+   revérifiés à la confirmation : si les parts ont changé, rien n'est fait et la fenêtre se redessine avec les
+   nouveaux chiffres. Un payeur qui ne peut pas couvrir sa part de construction plus sa quote-part est refusé
+   (avant : encaisse négative). Scénario : lot Brun, Co Alice 60 % (fournit la maison), Co Bob 40 %, valeur 1 M$.
+   Avant : le champ disait « Montant total à transférer : 1 M$ » alors que 0,40 M$ seulement étaient transférés.
+   Après : « Co Bob paie 400 K$ (quote-part 40 %) — Montant réellement transféré à Co Alice : 400 K$ (Co Alice ne se
+   paie pas sa propre quote-part de 60 %) ». Source non copropriétaire (Co Carl) : Co Alice 0,60, Co Bob 0,40, Co Carl
+   reçoit 1 M$. Avec le REIT (60 / 30 / réserve 10) : Co Bob paie 30/90 × 0,9 = 0,30 M$.
+7. **Échange de parts** (bogues 16 et 35 ; `shareSwapGiveRefusal`, `executeShareSwap`, `transferAssetShare`,
+   `modalShareSwap`) — une part donnée subit les mêmes refus que la vente : hypothèque de celui qui la donne, revenu
+   cédé par ABS (swap de revenu fixe/variable) ; un terrain devenu membre d'un lot regroupé ne s'échange plus seul ;
+   le créateur est revérifié dans le moteur (`executeShareSwap`), pas seulement dans la fenêtre. Scénario : Co Alice hypothèque Brun 1 (0,3 M$ auprès de la
+   banque) puis l'administratrice échange 100 % de Brun 1 contre Brun 2 de Co Bob. Avant : échange accepté,
+   hypothèque restée au nom de Co Alice, la banque perd 0,3 M$ au défaut. Après : « Co Alice a hypothéqué sa part de
+   Brun 1 — remboursez l'hypothèque avant de pouvoir l'échanger », rien ne bouge.
+8. **Terrain regroupé entre l'ouverture et la confirmation** (bogues 34 et 35 ; `issueMortgage`,
+   `shareAssetMergedRefusal`) — hypothèque, vente ou échange d'un terrain seul refusés avec un message clair si le lot a
+   été regroupé entre-temps (« Brun 2 fait désormais partie du lot Brun regroupé — rien n'a été fait ; hypothéquez
+   votre part du lot entier »). Scénario 34 : avant, hypothèque de 0,36 M$ acceptée sur Brun 2 du lot, sans intérêt ni
+   saisie ; après, refus, aucun emprunt versé. Scénario 35 : avant, la vente de 30 % de Brun 1 ne modifiait que Brun 1
+   (lot désynchronisé, parts recopiées sans paiement à la vente suivante) ; après, refus, les terrains du lot gardent
+   les mêmes parts. Un identifiant de lot absent n'est plus interprété comme « tous les terrains non regroupés ».
+9. **Regroupement sans part confisquée** (bogue 63 ; `mergeRoundShares`, `mergeGroup`) — parts entières, somme
+   exacte (100 %, ou 90 % avec le REIT), personne à 0 % : méthode des plus forts restes avec un plancher de 1 %
+   (chacun reçoit max(1, partie entière), le reste manquant va aux plus fortes décimales ; l'excédent dû aux planchers
+   est repris un point à la fois aux parts au-dessus de 1 %, les moins lésées d'abord). Aucun argent ne bouge ; sans
+   part inférieure à 1 %, le résultat est identique à l'ancien (vérifié sur 200 cas). Écart réel : une part relevée à
+   1 % gagne moins d'un point, mais l'excédent ainsi créé (au plus k points, k = nombre de parts exactes inférieures à
+   1 %) est repris aux autres sans paiement : un copropriétaire peut céder jusqu'à k + 1 points (strictement moins).
+   Scénario Rose de l'audit (3 petites parts) : Bob passe de 98,95 % exacts à 97 %, soit 1,95 point cédé sans
+   paiement. Option laissée à Julien : compenser en argent l'écart de chacun au prix de rachat du lot, entre
+   copropriétaires. Un copropriétaire à 0 % n'est pas repris. Scénario : Bleu pâle 1 = Co Alice 1 % /
+   Co Bob 99 %, Bleu pâle 2 = Co Bob 100 %, Bleu pâle 3 = Co Bob 99 % / Co Carl 1 % (parts exactes 0,31 / 99,31 /
+   0,38 %). Avant : Co Alice 0 % (part confisquée, copropriétaire fantôme). Après : 1 / 98 / 1 %.
+10. **Achats à la banque de l'Administration** (retouche de la revue ; `modalBuyShares`, `buyMergedShareFromBank`) —
+    le créateur est revérifié dans l'applyFn et un prix nul, négatif ou non fini est refusé. Constat antérieur au lot :
+    le prix saisi « pour 100 % » devient `acquisitionPrice`, plancher de la valeur intrinsèque, donc du prix de rachat ;
+    racheter 1 % « à 500 M$ pour 100 % » (5 M$ payés) puis tout revendre à la banque rapporte +370 M$. La question de
+    fond (le prix saisi peut-il relever ce plancher ?) est posée à Julien ; `intrinsicValue` n'est pas modifiée.
+11. **Plafond de copropriétaires** (bogue 64 : voulu, non corrigé, décision de Julien) — le plafond (`maxOwners`, 3)
+    ne s'applique qu'à l'achat initial d'un terrain individuel (contrôle existant inchangé). La vente de gré à gré, la
+    vente de lot, l'échange de parts, le rachat de lot à la banque et le regroupement ne le vérifient pas. Un lot
+    regroupé peut donc compter plus de 3 copropriétaires (ex. 10 / 50 / 20 / 20 %) ; ses parts se vendent et
+    s'échangent ensuite comme les autres, sans plafond.
+
+**Tests** : `tests/section309-ventes.test.js` (51 vérifications : bogues 8, 9, 35, offres de parts),
+`tests/section309-maisons.test.js` (43 : bogues 13, 33, compensation, offres de maisons, `migrateState`),
+`tests/section309-lots.test.js` (25 : bogues 16, 34, 35, 63, regroupement au-delà du plafond),
+`tests/section309-retouches.test.js` (29 : retouches de la revue — achats de l'Administration, écart du scénario Rose,
+prix proposé, expiration des offres, échange réservé au créateur, message unique de compensation périmée). Fenêtres testées avec le
+mini-DOM du banc (vrais gestionnaires de clics). Chaque correctif a sa contre-épreuve (`loadEngine({transform})`).
+Monnaie conservée vérifiée sur chaque scénario. **19 fichiers, 1 338 vérifications et 53 cas multi-appareils, 0 échec ;
+320 cas multi-appareils avec `SYNC_SEEDS=40`.**
+
+**Documentation joueurs à mettre à jour** (cahiers 0, 5 et 7, aide-mémoire « Vendre une part ou des maisons ») :
+- « Vendre une part » : le vendeur est toujours votre entreprise ; la banque rachète à sa valeur de rachat, annoncée
+  avant confirmation (plus de prix libre) ; une vente à une entreprise est une offre que son CEO accepte ou refuse.
+- « Vendre des maisons » : offre à accepter par le CEO acheteur, paiement à l'acceptation, encaisse vérifiée.
+- Nouvelle rubrique « Offres de vente en attente » dans Mon Entreprise (Accepter / Refuser / Retirer) ; une offre
+  expire au lancer de dés suivant son dépôt.
+- Construction sur un lot dont la banque ou le REIT détient une part : la banque paie sa part (reçu équilibré).
+- Compensation de maison : saisir la valeur convenue de la maison ; chaque autre copropriétaire paie sa quote-part ;
+  la fenêtre affiche le montant réellement transféré ; un payeur sans encaisse suffisante bloque la construction.
+- Échange de parts : impossible sur une part hypothéquée ou sous ABS.
+- Regroupement : chaque copropriétaire garde au moins 1 % (une grande part peut céder près de 2 points quand
+  plusieurs petites parts sont relevées) ; plus de 3 copropriétaires possibles après regroupement ;
+  le plafond de 3 ne vaut qu'à l'achat initial d'un terrain.
+
+**Intégration** (vague 2, branche `serie-309`) : les verrous de la section 311 (ABS conclue OU annoncée, swap de loyers spécifique) s'appliquent à toutes les voies de vente de cette section : vente à la banque, dépôt à blanc et acceptation d'une offre de part de terrain (`sellPropertyShare`, raccord fait à l'intégration) ou de lot (`sellMergedShare`). Une offre déposée puis rattrapée par une annonce d'ABS ou par un swap spécifique est refusée à l'acceptation (« Offre non exécutée — Co Bob a annoncé une émission ABS sur Aéroport 1… »), rien ne bouge, l'offre reste en attente, monnaie conservée. Échange de parts : un seul contrôle ABS et swap spécifique, dans `shareSwapGiveRefusal`, avec les messages de la section 311 (le contrôle en double d'`executeShareSwap` est retiré). Garde « terrain regroupé » d'`issueMortgage` unique, commune avec la section 312 ; dans la fenêtre d'hypothèque de la section 312, ce refus s'affiche dans la fenêtre redessinée « Les conditions ont changé ». Accepter ou refuser une offre de vente passe par le contrôle commun `offerResponderRefusal` (messages inchangés). Les offres de vente expirent au même endroit du cycle que les offres d'hypothèque (`advanceGameClock`, à côté de `expirePendingLoanRequests`, même écriture). Une offre de vente devenue inexécutable reste affichée jusqu'à son expiration au lancer suivant (refus clair à l'acceptation), alors qu'une offre d'hypothèque caduque est retirée tout de suite : choix du lot 2 conservé. Les maisons de réserve ne sont rattachées à aucun terrain : aucun verrou ABS ni swap ne s'y applique. Tests : `tests/section309-integration.test.js` (54 vérifications, contre-épreuve pour chaque raccord) ; `section309-lots` adapté (bogue 34 lu dans la fenêtre redessinée, message ABS de la section 311). Suite intégrée : 35 fichiers, 1 811 vérifications et 53 cas multi-appareils, 0 échec ; 320 cas multi-appareils avec `SYNC_SEEDS=40`.
+
+## 311. Titrisation (ABS), swaps de loyers et accords de compensation : lot de couleur regroupé exigé, durée servie = durée payée, terrain verrouillé dès l'annonce, actif au bilan du souscripteur — 2026-10-24
+
+Contexte : lot 4 de la série de corrections des bogues moyens et faibles de l'audit du 2026-10-19 (cadre de
+synchronisation de la section 308). Demandes de l'utilisateur, verbatim : « Moyens : tout corriger SAUF le 12 » ;
+« Faibles : tout corriger SAUF 45, 51 et 53 » ; « 18 : une titrisation n'est permise que sur un lot de couleur déjà
+regroupé ; les aéroports et services font exception et restent permis » ; « swap de loyer spécifique : bloquer la
+vente du terrain concerné » ; « souscripteur d'ABS : garder un actif à son bilan (42) » ; « anciennes parties et
+migration des prêts joueurs : ne pas traiter ». Bogues traités : 18, 19, 20, 21, 22, 30, 42, 70, la décision « swap
+spécifique », et un point ajouté en cours de lot (signalé par le lot 5) : qui peut accepter ou refuser une offre de
+swap ou de compensation. Chaque changement du code porte le commentaire « Section 311 ».
+
+1. **ABS seulement sur un lot de couleur déjà regroupé** (bogue 18, décision de l'utilisateur) — nouvelle
+   `absPropertyNotEligibleReason` : un terrain de couleur non regroupé est refusé à l'annonce
+   (`postRevenueSwapListing`), absent de la fenêtre de publication (`revenueSwapSellableItems`) et revérifié à la
+   résolution (`resolveRevenueSwapListing`). Aéroports et services : permis terrain par terrain, comme avant.
+   **Parties en cours** (pas de migration rétroactive) : `mergeGroup` refuse de regrouper un lot tant qu'une ABS court
+   (ou est annoncée) sur un de ses terrains (« Regroupement impossible : une émission ABS court… attendez son
+   échéance »). Scénario de l'audit (Co A : ABS1 sur Brun 1 souscrite par Co C, ABS2 sur Brun 2 souscrite par Co D,
+   3 maisons, 10 passages de Co B) : avant, lot regroupé, C reçoit 8,10 et D 0 ; après, regroupement refusé, C reçoit
+   2,70 et D 5,40 (chacun sa part cédée), monnaie conservée.
+2. **Durée servie = durée payée** (bogue 19) — le prix suppose years × 6 lancers ; l'accord porte désormais
+   `endRoll` = lancer de résolution + years × 6 (toujours un début de semestre) et expire par `expireRevenueSwaps`, à
+   la fin d'année et à chaque changement de semestre ; `yearsRemaining` affiche la durée restante (0,5 an possible).
+   Accords existants : `endRoll = null` dans `migrateState`, décompte annuel inchangé. ABS d'un an publiée au lancer 3 :
+   avant, servie aux lancers 3, 4, 5 (3 lancers pour 6 payés) ; après, lancers 3 à 8.
+3. **Plafond d'encaisse sur le total des deux tranches** (bogue 20) — à la résolution, la senior est répartie d'abord ;
+   la junior d'un même souscripteur est plafonnée à son encaisse moins ce qui lui est attribué en senior. Carl, 2 M$,
+   souscrit 2 en senior et 2 en junior : avant, il paie 4 et finit à −2 ; après, 2 en senior, 0 en junior, encaisse 0
+   (avec 3 M$ : 2 + 1). Mention dans la fenêtre de souscription.
+4. **Terrain verrouillé dès l'annonce, tout revérifié à la résolution** (bogue 21) — `isPropertyLockedByRevenueSwap`
+   couvre aussi les annonces en attente : vente, hypothèque, swap de loyers et nouvelle annonce refusés dès l'annonce ;
+   l'échange de parts (`executeShareSwap`), jusque-là sans contrôle ABS, est refusé lui aussi. L'annonce mémorise les
+   parts détenues (`ownedShares`) ; à la résolution : hypothèque de l'émettrice, autre ABS, part réduite, loyer attendu
+   recalculé inférieur à celui affiché (maisons vendues, palier perdu) → annulation propre, personne ne paie, raison au
+   journal. Construire une maison entre-temps ne gêne pas. Scénario de l'audit (A annonce sur le lot Bleu foncé, C
+   souscrit 3, A hypothèque avant le lancer) : avant, C paie 3 puis reçoit 0 à chaque passage ; après, l'hypothèque est
+   refusée, l'ABS est conclue et C reçoit sa part (51 sur 5 passages avec 4 maisons). Messages (retouche de la revue,
+   `revenueSwapLockMessage`) : pendant l'annonce, « Co A a annoncé une émission ABS sur le lot Bleu foncé, résolue au
+   prochain lancer de dés — impossible de … tant que l'annonce est en attente » ; une fois conclue, « Co A a vendu le
+   revenu du lot Bleu foncé en ABS — impossible de … tant que l'accord court ». Le journal de résolution et la fenêtre
+   d'émission ne parlent plus de « fusionner en lot » ni de « lots toujours permis ».
+5. **Deux swaps de loyers en conflit** (bogue 22, option la plus sûre) — `rentSwapConflictReason` refuse la
+   proposition et la signature (revérifiée dans `createRentSwap`) d'un swap qui entrerait en conflit avec un swap
+   actif : deux côtés généraux ou à budget pour la même entreprise, ou deux côtés spécifiques sur le même terrain/lot.
+   Un spécifique et un général restent compatibles (précédence de la section 258). Une offre refusée à la signature
+   reste en attente. Scénario de l'audit (A ⇄ B général, puis A ⇄ C général) : avant, signé, et quand D visite A seul B
+   reçoit, quand D visite C c'est A qui reçoit (le swap A ⇄ C ne joue que dans un sens) ; après, le second est refusé.
+   Retouche de la revue : le côté d'un swap à budget est ÉPUISÉ quand le partenaire a reçu tout son plafond (section
+   259 : « sa part arrête ») ; ce côté n'est plus retenu par `swapSplit` (il redirigeait déjà 0) ni compté comme conflit
+   (`rentSwapBudgetSideExhausted`), sinon une entreprise restait bloquée à vie par un swap à budget dont le partenaire
+   n'a pas de terrain. Le côté qui peut encore progresser (terrains présents et futurs) reste actif : les règles ne
+   prévoient aucune résiliation.
+6. **Swap de loyers spécifique : vente et échange bloqués** (décision de l'utilisateur) — `rentSwapSaleLockMessage`,
+   revérifiée dans l'applyFn de la fenêtre « Vendre une part », de `sellMergedShare` et d'`executeShareSwap` : « Co A a
+   engagé Rose 1 dans un swap de loyers avec Co B — impossible de vendre sa part de ce terrain tant que le swap court
+   (encore 2 an(s)). » Les deux côtés spécifiques sont bloqués ; un côté général ne bloque rien ; un copropriétaire qui
+   n'est pas partie au swap vend librement.
+7. **Aéroports et services en copropriété** (bogue 30) — `expectedRentValue(p, companyId)` et
+   `intrinsicValue(p, companyId)` : palier de l'entreprise concernée pour la valeur de sa part
+   (`companyRealEstateValue`), le prix de son ABS (`computeAbsPricing`) et le résumé de swap ; sans entreprise, moyenne
+   des paliers pondérée par les parts, indépendante de l'ordre. Co1 détient la moitié de l'Aéroport 1, Co0 l'autre
+   moitié et les trois autres : espérance de l'ABS de Co1 (1 an, 60 %) avant 0,2133 si Co0 est listée en premier
+   (0,0267 sinon), après 0,0267 dans les deux cas, cohérente avec le loyer réellement versé (0,125 par passage) ;
+   valeur immobilière de Co1 avant 2,0056 ou 1,75 selon l'ordre, après 1,75. Retouche de la revue : le tableau des
+   terrains de l'onglet Entreprise affiche aussi le palier de l'entreprise (`intrinsicValue`, `intrinsicValueLot`,
+   `expectedRentValue` avec `company.id` : 125 K$ au lieu de 563 K$ dans l'exemple), et un copropriétaire sans
+   entreprise ne provoque plus de récursion infinie (`o.companyId ?? null`).
+8. **Actif au bilan du souscripteur** (bogue 42, décision de l'utilisateur) — `companyAbsHoldingsValue` : flux que la
+   participation doit encore rapporter selon le modèle même de la tarification (`computeAbsPricing` sur les lancers
+   restants, état du moment), répartis selon la cascade (senior : au plus le reste de son plafond ; junior :
+   l'espérance au-delà), au prorata de la mise ; non actualisé, comme les prêts à recevoir. Ce qui est encaissé sort
+   de la valeur ; 0 à l'échéance ; la rétention junior de l'émettrice n'est pas comptée. Compté dans `companyValue` et
+   au bilan (« ↳ Titres ABS détenus (flux attendus) », actifs long terme, instantanés de semestre). **Contre-actif de
+   l'émettrice** (retouche de la revue, décision de l'orchestrateur à valider par l'utilisateur) : l'émettrice gardant
+   son terrain à pleine valeur, le flux était compté deux fois (somme des `companyValue` +11,13 en senior seule,
+   +22,16 avec une junior « bradée » à 0,01, sans monnaie déplacée). Elle inscrit « ↳ Flux ABS cédés (contre-actif) »
+   = valeur des parts tenues par des tiers, même calcul (`absHolderValues`) : déduit de `companyValue` et du bilan,
+   pas de `companyDebt` (pas de dette côté émettrice, section 304). La somme des valeurs ne bouge plus à la
+   résolution, aux versements ni à l'échéance ; une junior bradée n'est plus qu'un transfert de valeur réel (A +12,88,
+   émettrice −12,88). Joueur porteur : titres comptés dans `netWorth` (classement), pas dans `marginableNetWorth`
+   (titre non liquide). A souscrit 5 en senior (plafond 6) : avant, valeur de A 50 → 45 ; après, A +1 et émettrice −1
+   (somme inchangée) ; un versement de 6 fait passer l'actif à 0 sans changer la valeur de A.
+9. **ABS + accord de compensation** (bogue 70) — l'émettrice enregistre, comme sans compensation, la charge d'intérêt
+   d'ABS et le loyer réglé en argent (versé aux porteurs, retenues de prêt) ; la part nette inscrite au registre est
+   constatée au règlement de fin d'année (`rent_compensation_revenue`), jamais deux fois. Trésorerie inchangée. Co1
+   (90 % du lot Vert, ABS à 60 %, compensation avec Co0), loyer de 1,17 pour sa part : avant, ni loyer ni intérêt ;
+   après, loyer 0,702, intérêt −0,702, registre 0,468 (règlement : 0,4914 avec 5 %) — au total 1,17, comme sans
+   compensation.
+10. **Offres de swap et de compensation : seule l'entreprise destinataire répond** (point ajouté, signalé par le lot
+   5) — `refuseRentSwapOffer`, `refuseRentCompensationOffer`, et aussi `acceptRentSwapOffer` /
+   `acceptRentCompensationOffer`, ne vérifiaient pas qui répondait : n'importe quel joueur pouvait effacer l'offre faite
+   à une autre entreprise, voire la signer à sa place. `rentOfferResponderRefusal` (dans l'applyFn) : seul le CEO de
+   l'entreprise destinataire accepte ou refuse ; l'auteur garde « Retirer ». L'interface ne montrait déjà les boutons
+   qu'au destinataire.
+
+**Tests** : `tests/section311-abs-lot` (18), `-abs-duree` (11), `-abs-souscription` (8), `-abs-verrou` (18),
+`-swaps` (16), `-swap-vente` (11, par la vraie fenêtre sur le mini-DOM du banc), `-copropriete` (8), `-abs-bilan` (12),
+`-abs-compensation` (11), `-offres` (10) : 123 vérifications, portées à 151 par les retouches de la revue
+(`-abs-bilan` 28, `-swaps` 21, `-copropriete` 12, `-abs-verrou` 21), chaque correctif avec sa contre-épreuve. Adaptés :
+`audit-bug1` (lots Bleu foncé et Orange regroupés, règle 1) et `section308-transaction` scénario E (l'appareil qui
+accepte est celui du destinataire, point 10). **25 fichiers, 1 341 vérifications et 53 cas multi-appareils, 0 échec ;
+320 cas multi-appareils avec `SYNC_SEEDS=40`.**
+
+**Changements visibles pour les joueurs (cahier 8 et aide-mémoire)** : une ABS ne se publie que sur un lot de couleur
+regroupé, un aéroport ou un service ; un lot ne se regroupe pas pendant une ABS d'une ancienne version sur un de ses
+terrains ; durée d'une ABS comptée en lancers depuis la résolution (durée restante en demi-années) ; le total souscrit
+dans les deux tranches ne dépasse jamais l'encaisse (senior servie d'abord) ; terrain verrouillé dès l'annonce
+(vente, échange, hypothèque, swap), annulation à la résolution si le terrain a changé ou si le loyer attendu a baissé ;
+deuxième swap général (ou deuxième swap sur un même terrain) refusé ; terrain engagé dans un swap spécifique invendable
+et non échangeable tant que le swap court ; valeur des aéroports et services au palier de chaque copropriétaire ;
+lignes « Titres ABS détenus » et « Flux ABS cédés (contre-actif) » au bilan ; titres ABS d'un joueur comptés dans sa
+valeur nette (pas dans sa marge) ; un côté épuisé d'un swap à budget ne bloque plus de nouveau swap ; messages de refus
+propres à une annonce d'ABS ; seul le CEO destinataire répond à une offre de swap ou de compensation.
+
+**Intégration** (vague 2) : la fenêtre « Vendre une part » est désormais celle de la section 309 (vendeur imposé, offre à accepter, banque au prix de rachat). Le verrou du swap spécifique (point 6) et le verrou ABS (point 4) y sont reportés dans `sellPropertyShare` : vente à la banque, dépôt de l'offre et acceptation, revérifiés sur l'état frais. Échange de parts : un seul contrôle, dans `shareSwapGiveRefusal`. Offre d'hypothèque de la section 312 : verrou ABS (annonce comprise) et message de cette section dans `mortgageAssetTerms`. L'annonce d'une ABS retire, dans la même écriture, une offre d'hypothèque en attente sur le terrain (trace au journal). `rentOfferResponderRefusal` délègue au contrôle commun `offerResponderRefusal`. Loyer : les chemins ABS et compensation (point 9) passent par la retenue de prêt de la section 312 (`applyRentLoanWithholding`, seule voie) dans `settlePropertyRent` et `settleNeutralPawnRent`. `mergeGroup` : refus pendant une ABS et arrondi de la section 309 conservés tous deux. Tests : `section311-swap-vente` réécrit sur la nouvelle fenêtre (19 vérifications, dont « offre déposée puis swap spécifique signé » et la vente à la banque) ; contre-épreuve de `section311-offres` recadrée sur le contrôle commun ; scénarios croisés dans `section309-integration`.
+
+## 312. Financement et crédit : ratio d'endettement, taux plafonné, prêts et hypothèques (audit, lot 5) — 2026-10-24
+
+Contexte : lot 5 de la série de corrections des bogues moyens et faibles de l'audit du 2026-10-19 (bogues 10, 23, 24,
+47, 50 et 65). Demandes de l'utilisateur, verbatim : « Moyens : tout corriger SAUF le 12 » ; « Faibles : tout corriger
+SAUF 45, 51 et 53 » ; « 65 : plafonner le taux final au maximum choisi à la création » ; « hypothèque auprès d'une
+autre entreprise : étape d'acceptation par le CEO prêteur » ; « anciennes parties et migration des prêts joueurs : ne
+pas traiter ». Travail fait dans une copie isolée, dans le cadre de synchronisation de la section 308 ; chaque
+correction a un test qui échoue sur l'ancien code (contre-épreuve) et réussit sur le nouveau. Chaque changement du
+code porte le commentaire « Section 312 ».
+
+1. **Ratio d'endettement : une encaisse négative compte comme une dette** (bogue 10, `companyDebtRatio`) — avant,
+   actifs = valeur + dette : quand l'encaisse négative dépassait les autres actifs, les actifs devenaient ≤ 0 et le
+   ratio valait 0. L'entreprise la plus insolvable avait la cote AA, le taux de base, la volatilité minimale et
+   échappait à la spirale de détresse. Désormais ratio = (dettes + découvert) / actifs positifs (encaisse positive,
+   immobilier, REIT, créances). Le seuil d'insolvabilité est inchangé (ratio ≥ 1 exactement quand la valeur comptable
+   est ≤ 0). Sans aucun actif positif mais avec une dette, le ratio prend la valeur plafond technique 1 000
+   (`DEBT_RATIO_MAX`, ni infini ni NaN). Effets sur tous les appelants : cote de crédit, taux hypothécaire et taux de
+   la subvention d'avance (`riskAdjustedRate`), volatilité des cubes (`volatilityMultiplier`, bornée à 2,5), σ des
+   options (`companyAnnualSigma`), condition d'endettement de la spirale de détresse. Cohérent avec la section 306
+   (le prêt compte toujours dans la dette, sans cube rouge à l'emprunt).
+   Scénario : Alpha, sans terrain, doit 12,5 M$. Encaisse +0,5 M$ : ratio 25, cote D, put d'un semestre à 8,05 % du
+   cours. Encaisse −3 M$ (pire) — avant : ratio 0, cote AA, taux hypothécaire 35 %, 1re subvention 1,82 M$,
+   volatilité 1, put 3,22 % ; après : ratio au plafond, cote D, taux 85 %, subvention 1,25 M$, volatilité 2,5, put
+   8,05 %. Créance 10 M$, dette 2 M$, encaisse −1 M$ : ratio 0,30 (avant 0,22).
+2. **Taux final plafonné au maximum choisi à la création** (bogue 65, décision de l'utilisateur, `riskAdjustedRate`) —
+   taux = taux de base + min(1, ratio) × prime max « si 100 % endetté ». La subvention d'avance suit
+   (`goAdvanceAmount`). Avant : encaisse 0,01 M$ et 12,5 M$ de dette → taux hypothécaire 62 535 % et 1re subvention
+   0,003 M$ ; après : 85 % (35 % + 50 %) et 1,25 M$ (2 / 1,6). Sous 100 % d'endettement, rien ne change (ratio 0,5 →
+   35 % + 25 % = 60 %). Une prime max réglée à 30 % plafonne le taux hypothécaire à 65 %.
+3. **Prêt de dernier recours toujours remboursé** (bogue 23, `applyRentLoanWithholding`) — **choix à valider** : les
+   règles ne rattachent pas ce prêt à l'option « Prêts » (son libellé vise le marché des obligations ; la matrice des
+   produits le présente comme le recours « sans condition »). Il reste donc offert dans toutes les parties, mais sa
+   retenue de 50 % des loyers s'applique désormais même sans l'option, sur les quatre chemins du loyer (loyer
+   ordinaire, pion neutre, terrain titrisé, accord de compensation). Les prêts ordinaires restent commandés par
+   l'option. Scénario (partie sans « Prêts ») : Alpha à −1 M$ prend le prêt (10 M$, 20 M$ à rembourser) ; Beta paie un
+   loyer de 6 M$ — avant : 6 M$ à Alpha, rien retenu (10 M$ gratuits, répétables) ; après : 3 M$ à la banque, 3 M$ à
+   Alpha.
+4. **Offre de prêt modifiée par le prêteur** (bogue 24, `modalAcceptLoanOffer`, `loanOfferConditions`,
+   `acceptLoanOffer`) — « Accepter » ouvre une confirmation (`confirmWithFreshConditions`) qui part des conditions
+   affichées sur la ligne ; si l'offre a changé entre-temps (même identifiant), rien n'est signé : la fenêtre montre
+   les nouvelles conditions et redemande confirmation. L'action revérifie les conditions confirmées sur l'état frais
+   (course avec une sauvegarde concurrente → 2e confirmation). Scénario : Bob offre 5 % / 1× / non garanti, Alice
+   ouvre la fenêtre, Bob passe à 30 % / 2,5× / garanti — avant : le clic d'Alice signait 30 % / 2,5× / garanti ;
+   après : rien n'est signé avant qu'elle ait vu et confirmé ces conditions.
+5. **Bornes du prêt d'arbitrage appliquées par le moteur** (bogue 47, `loanTermsError` dans `issueLoan`) — % de
+   retenue et multiple compris dans les bornes des réglages de la partie (5–40 % et 1–2,5× par défaut), strictement
+   positifs et numériques, pour tout prêt ordinaire. Avant : 0 % (prêt jamais remboursé), −40 % (plafond cumulatif
+   contourné), multiple négatif (capital perdu) étaient acceptés ; après : refus « Le % des loyers retenu doit être
+   entre 5% et 40% », rien ne bouge.
+6. **Hypothèque auprès d'une autre entreprise = offre acceptée par son CEO** (bogue 50 et décision de l'utilisateur ;
+   `proposeMortgageOffer`, `acceptMortgageOffer`, `refuseMortgageOffer`, `cancelMortgageOffer`,
+   `mortgageAssetTerms`, `mortgageLenderError`, `modalMortgageAsset`, `modalAcceptMortgageOffer`) — auprès de la
+   banque, l'hypothèque reste immédiate (conditions revérifiées à la confirmation). Auprès d'une entreprise, la
+   confirmation crée une offre (`state.mortgageOffers`, défaut `[]` dans `migrateState` : identifiant, emprunteur,
+   prêteur, terrain ou lot, part, montant, taux, auteur, date et lancer) ; rien ne bouge avant l'acceptation. Seul le
+   CEO prêteur accepte (confirmation aux conditions de l'offre, qui sont figées : montant et taux affichés à
+   l'emprunteur) ou refuse ; l'auteur peut retirer son offre ; une seule offre en attente par part. À l'acceptation,
+   tout est revérifié sur l'état frais : encaisse du prêteur, part inchangée, montant ≤ maximum hypothécable actuel,
+   terrain non regroupé en lot, lot non dissous, part non hypothéquée entre-temps, verrou ABS, partie terminée ; si
+   l'offre n'est plus valable, refus clair et l'offre reste (le prêteur la refuse ou l'auteur la retire). Le moteur
+   (`issueMortgage`, `issueMortgageLot`) refuse désormais un prêteur non bancaire sans offre acceptée et vérifie son
+   encaisse. Les offres apparaissent dans « Propositions en attente » de l'onglet de l'entreprise (prêteur :
+   Accepter / Refuser ; emprunteur : Retirer). Scénario de l'audit : Co Bob a 2 M$ ; pendant que la fenêtre d'Alice
+   est ouverte, Bob dépense 1,9 M$ ; Alice confirme — avant : Co Bob avance 2 M$ sans avoir accepté et tombe à
+   −1,90 M$ ; après : une offre est créée, Co Bob reste à 0,10 M$ ; son acceptation est refusée faute d'encaisse
+   (l'offre reste) ; renfloué, il accepte : Co Bob −2 M$, Co Alice +2 M$, monnaie conservée.
+7. **Retouches de la revue** — (a) **Expiration** : une offre d'hypothèque ne vaut que jusqu'au lancer de dés suivant
+   sa création (`expirePendingMortgageOffers`, au même endroit du cycle que les demandes d'emprunt, trace au journal) ;
+   `acceptMortgageOffer` refuse une offre expirée. Sans cela, le prêteur choisissait le moment : offre de 2 M$ à 35 %
+   au lancer 0, acceptée 40 lancers plus tard sur une emprunteuse à −5 M$ juste avant la fin d'année → intérêt
+   impayable, part et maisons (6,7 M$) saisies pour 2 M$ avancés ; après : refus « Cette offre d'hypothèque a
+   expiré ». (b) **Offres caduques** : une offre dont la part a été hypothéquée auprès de la banque, vendue en tout ou
+   en partie, regroupée en lot, ou dont le lot a été dissous, est retirée dans la même écriture que le changement
+   (`dropStaleMortgageOffers`, appelée à la fin de chaque action réussie dans `runActionWithRetry`), avec une trace au
+   journal ; une part déjà proposée n'est plus listée comme éligible dans « Hypothéquer ». L'acceptation revérifie
+   quand même tout (ancien onglet). (c) Garde « terrain regroupé » : même message que le lot 2 (« … fait désormais
+   partie du lot … regroupé — rien n'a été fait ; hypothéquez votre part du lot entier (menu Hypothéquer). »).
+   (d) Les offres reçues apparaissent aussi dans « Propositions en attente » du Portefeuille du CEO prêteur (Accepter /
+   Refuser). (e) Libellé de l'option « Prêts » : « … — le prêt de dernier recours reste offert et remboursé par
+   retenue, même sans cette option » (choix du point 3, à valider).
+
+**Tests** : `tests/section312-ratio.test.js` (21 vérifications : bogues 10 et 65), `tests/section312-prets.test.js`
+(77 : bogues 23, 24 et 47, dont une contre-épreuve par chemin du loyer pour le 23 et deux appareils pour le 24),
+`tests/section312-hypotheque.test.js` (47 : bogue 50, deux appareils, scénario de l'audit, expiration au lancer,
+offres caduques, revérifications à l'acceptation, droits d'accepter, refuser et retirer, Portefeuille, banque
+immédiate), nouveau banc `tests/helpers/appareils-312.js` (deux moteurs partageant la partie, vrais gestionnaires de
+clics). Chaque correctif a sa contre-épreuve (`loadEngine({transform})`). **Suite complète : 18 fichiers, 1 335
+vérifications et 53 cas multi-appareils, 0 échec ; 320 cas multi-appareils avec `SYNC_SEEDS=40`.** Monnaie conservée
+dans chaque scénario.
+
+**Hors périmètre** (autres lots ou décision de l'utilisateur) : 12, 45, 51, 53, 61, 62, 31 (marge), 94 et 97
+(affichage), dette « productive », migration des anciens prêts de joueurs.
+
+**Changements visibles pour les joueurs (cahiers à mettre à jour, cahier 7 surtout)** : une entreprise en encaisse
+négative est désormais traitée comme endettée (cote de crédit plus basse, jusqu'à D ; taux plus élevés ; cours plus
+volatil ; options plus chères ; spirale de détresse possible) ; le taux d'emprunt ne dépasse jamais taux de base +
+prime max du réglage (la subvention d'avance a donc un plancher) ; le prêt de dernier recours est remboursé par 50 %
+des loyers dans toutes les parties ; accepter une offre de prêt passe par une fenêtre de confirmation qui signale une
+offre modifiée ; le prêt d'arbitrage refuse les valeurs hors bornes ; l'hypothèque auprès d'une autre entreprise
+devient une offre que le CEO prêteur accepte ou refuse avant le prochain lancer de dés (onglet de son entreprise ou
+Portefeuille ; sinon elle expire) ; elle est retirée si la part change entre-temps (la banque reste immédiate) ;
+le libellé de l'option « Prêts » précise que le prêt de dernier recours reste disponible et remboursé.
+
+**Intégration** (vague 2) : la garde « terrain regroupé » d'`issueMortgage` est unique (message de la section 309). `dropStaleMortgageOffers` est protégé dans `runActionWithRetry` par un try/catch (erreur dans la console) : une exception ne fait jamais échouer l'action (sans protection, elle rejetait l'action sans restaurer l'état et pouvait bloquer toute la partie) ; les offres restent alors en place et leur acceptation revérifie tout. Les motifs de retrait sont calculés avant toute écriture. Verrou ABS de la section 311 (annonce comprise) et son message dans `mortgageAssetTerms`. Accepter ou refuser une offre d'hypothèque passe par le contrôle commun `offerResponderRefusal`. Expiration au même endroit du cycle que les offres de vente de la section 309. Retenue de prêt : `applyRentLoanWithholding` est la seule voie sur les quatre chemins du loyer, chemins ABS et compensation de la section 311 compris. Scénario : part de 1,17 de loyer sous ABS à 60 %, accord de compensation, prêt ordinaire à 20 % et prêt de dernier recours. Option « Prêts » cochée : porteur 0,702, prêt ordinaire 0,234, dernier recours 0,117, registre 0,117. Décochée : porteur 0,702, dernier recours 0,234, registre 0,234. Monnaie conservée dans les deux cas. Le ratio d'endettement s'appuie sur `companyValue`, qui compte les titres ABS et le contre-actif de la section 311. Tests : contre-épreuve de `section312-hypotheque` recadrée sur l'appel protégé ; « nettoyage qui lève : l'action est quand même enregistrée » dans `section309-integration`.
+
+## 313. Assurance : franchise jamais négative, prime revérifiée à la confirmation, indemnité plafonnée au montant couvert, types désactivés respectés, plus de couverture en double — 2026-10-24
+
+Contexte : lot 6 de la série de corrections de l'audit du 2026-10-19 (bogues 14, 15, 39, 40, 48, 49 et 52).
+Demandes de l'utilisateur, verbatim : « Moyens : tout corriger SAUF le 12 » ; « Faibles : tout corriger SAUF 45, 51
+et 53 » ; « 39 : plafonner l'indemnité d'assurance au montant couvert affiché à la signature ». Les bogues 51 et 53
+(assurance) ne sont pas traités, comme demandé. Chaque changement du code porte le commentaire « Section 313 ».
+Le cadre de synchronisation de la section 308 est respecté : toutes les mutations passent par
+`attemptActionWithRetry` / `runModalActionWithRetry`, les conditions affichées passent par
+`confirmWithFreshConditions`.
+
+1. **Franchise jamais négative (bogue 14)** : `sanitizeDeductible` (nombre fini, au moins 0). La franchise du
+   tour est enregistrée par `setTurnDeductible`, qui refuse un montant négatif ou invalide (« La franchise doit être
+   un montant positif ou nul. ») ; le champ porte `min="0"` et revient à la franchise enregistrée après un refus.
+   `purchaseInsuranceBundle` refuse lui aussi une franchise négative. Les cotations (`insuranceQuote`,
+   `subInsuranceQuote`, `taxInsuranceQuote`, prix de reprise) et les sinistres (`settlePropertyRent`, `payTax`)
+   bornent la franchise des contrats existants : elle n'est jamais négative et ne dépasse jamais la perte.
+   `migrateState` ramène à 0 une franchise du tour négative.
+   *Avant* : franchise −5, Bleu foncé 2 (loyer 0,5) coté « 5,5 à risque » pour 1,32 ; au sinistre la banque payait
+   5,5, B recevait 0,5 : **5 M$ détruits**. *Après* : refusé à la saisie et au moteur ; un contrat existant à −5
+   donne banque −0,5, B +0,5, A 0, masse conservée. Même chose pour une taxe assurée (TPS/TVQ : l'assureur paie 1 et
+   non 6).
+2. **Prime revérifiée à la confirmation (bogues 15 et 49)** : `insuranceBundleConditions` calcule les conditions
+   d'un contrat groupé (primes, montants couverts, franchise, terme, cases retirées) sur l'état COURANT pour les
+   cases cochées et la franchise SAISIE. Au clic sur « Confirmer la sélection » (`confirmInsuranceBundle`), la
+   dernière valeur reçue est adoptée et les conditions recalculées avec la franchise tapée (même si le champ n'a
+   pas encore été quitté, cas des téléphones) : identiques à celles affichées, le contrat est signé ; différentes,
+   la fenêtre « Les conditions ont changé » montre les nouvelles primes et rien n'est signé avant la 2e
+   confirmation. L'applyFn (`purchaseInsuranceBundle`) recalcule encore les primes sur l'état frais et renvoie
+   `staleConditionsResult()` si elles diffèrent des conditions confirmées (ou, sans conditions confirmées, si une
+   prime passée diffère de la prime à jour). La franchise confirmée devient celle du tour. Une case devenue
+   inassurable entre-temps (assurée par un autre, hors de portée) est retirée et nommée.
+   *Bogue 15, avant* : franchise 1,9 affichée, Impôt sur le revenu coté 0,0184 ; le joueur tape 0 et confirme :
+   contrat à franchise 0 au prix 0,0184 (juste prix 0,3687). *Après* : refus « conditions changées », nouvelle
+   confirmation à 0,3687 pour la franchise 0.
+   *Bogue 49, avant* : sous-standard sur Bleu foncé 2 cotée 0,0278 en case 37 (1/36) ; un autre appareil amène le
+   pion en case 32 (6/36) ; contrat signé à 0,0278. *Après* : « Les conditions ont changé », prime 0,1667, 2e
+   confirmation.
+3. **Indemnité plafonnée au montant couvert affiché à la signature (bogue 39, décision de l'utilisateur)** :
+   chaque contrat (terrain, sous-standard, taxe) enregistre `coveredAmount` = le montant « à risque » affiché à la
+   signature (perte − franchise). Au sinistre, `insuranceIndemnity` : l'assureur paie au plus ce montant ; la
+   franchise ET la part du loyer (ou de la taxe) au-delà du montant couvert sont payées par l'assuré (ligne « au-delà
+   du montant couvert à la signature » dans la transaction et le journal) ; le propriétaire reçoit toujours le loyer
+   entier. Le prix de reprise d'un contrat (« Devenir l'assureur ») est calculé sur l'exposition plafonnée.
+   *Avant* : Co0 assure Bleu foncé 2 nu (0,5 couvert) pour 0,12 ; Co1 construit un hôtel (loyer 20, cote 4,80) ; au
+   sinistre la banque payait 20. *Après* : la banque paie 0,5, Co0 paie 19,5, Co1 reçoit 20 ; masse conservée. Avec
+   une franchise de 0,2 signée à 2 maisons (couvert 5,8) : hôtel → assureur 5,8, assuré 14,2 ; loyer redescendu à
+   0,5 → assureur 0,3, assuré 0,2. Impôt sur le revenu assuré à une valeur de 8 (couvert 0,8), valeur 20 au
+   sinistre (impôt 2) → assureur 0,8, assuré 1,2.
+4. **Types d'assurance désactivés (bogue 40)** : `insuranceTermEnabled` (« Assurances » = Année et Semestre,
+   « Assurance sous-standard » = 1 tour), `defaultInsuranceTerm`. Refus dans `purchaseInsuranceBundle`,
+   `insuranceBundleConditions` et `buySubInsurance` ; les termes désactivés sont retirés du menu « Terme » ; le
+   bouton « Contrat d'assurance » est masqué quand aucun terme activé n'est signable. *Avant* : sous-standard
+   décochée, Co0 en achète une (0,1111) ; assurance normale décochée, Co0 signe un contrat annuel. *Après* : refus
+   (« … est désactivée dans cette partie (réglage du créateur) »), rien payé.
+5. **Taxe assurée deux fois (bogue 48)** : `insurableItems` ne propose plus une case taxe déjà assurée par
+   l'entreprise ; un 2e contrat est refusé par le moteur. Une autre entreprise peut toujours assurer la même case
+   pour elle-même. *Avant* : TPS/TVQ assurée deux fois, 2 × 0,2638 payés pour un seul sinistre indemnisé.
+   *Après* : 1 contrat, 0,2638 payé.
+6. **Sous-standard inutile (bogue 52)** : `subInsurableItems` et `buySubInsurance` écartent un terrain déjà couvert
+   par l'assurance normale de la MÊME entreprise (qui passe toujours en premier). *Avant* : Co0 assuré à l'année sur
+   Bleu foncé 2 achète en plus le sous-standard (0,1111) qui ne peut jamais servir. *Après* : non proposé, refusé.
+   Si l'assurance normale du terrain couvre une autre entreprise, le sous-standard reste possible. Ordre inverse
+   (sous-standard prise d'abord, contrat annuel ensuite sur la même case) : aucun argent déplacé, mais la fenêtre du
+   contrat annuel avertit que la sous-standard ne servira plus et qu'elle reste annulable, prime remboursée, avant
+   le prochain lancer.
+7. **Retouches de la revue** :
+   - **Case retirée sans boucle** : à la confirmation, toutes les cases choisies sont transmises à l'applyFn, y
+     compris celles retirées entre-temps (assurées par une autre entreprise, ou hors de portée après un lancer).
+     Avant, seules les cases restantes l'étaient : l'applyFn ne retrouvait pas les cases retirées, « Les conditions
+     ont changé » revenait à chaque clic et rien n'était jamais signé. *Après* : 1er clic, case retirée signalée ;
+     2e clic, les cases restantes sont signées (annuel : TPS/TVQ seule, 0,2638 ; sous-standard : 0,0389) ; monnaie
+     conservée.
+   - **Assureur introuvable** (entreprise disparue) : le sinistre est traité comme non assuré, l'assuré paie tout
+     (`insurerExists`, dans `settlePropertyRent` et `payTax`). *Avant* : l'indemnité n'était débitée de personne
+     (+0,4 M$ créés sur une TPS/TVQ couverte à 0,4). Défaut antérieur à cette série.
+   - Service : intitulés « à risque / couvert pour un lancer de 7 (ajusté au lancer réel) » ; le journal du
+     sinistre donne le montant couvert pour le lancer réel (« 0.48 pour ce lancer de 12 »), et une ligne de journal
+     existe aussi pour un sinistre sous-standard. La franchise changée par la confirmation est journalisée ; la liste
+     des contrats affiche la franchise bornée (≥ 0) des anciens contrats.
+
+**Contrats en cours** (à valider) : `migrateState` donne `coveredAmount = null` aux contrats signés avant cette
+mise à jour : ils ne sont pas plafonnés (règle en vigueur à leur signature) et expirent au plus tard à la fin de
+l'année financière. **Services** (à valider) : le montant « à risque » d'un service est affiché pour un lancer de 7 ;
+le plafond suit le lancer réel (montant couvert brut × dés / 7), pour ne plafonner que ce qui a changé depuis la
+signature (2e service acquis…) et non le hasard des dés, déjà compris dans la prime. Exemple : Service 1 couvert
+0,28 ; lancer de 12 sans changement → l'assureur paie tout (0,48) ; 2e service acquis ensuite (loyer 1,2) →
+assureur 0,48, assuré 0,72.
+
+**Tests** : `tests/section313-assurance.test.js` (moteur : 78 vérifications, 27 scénarios dont 9 de contre-épreuve :
+plafonds du terrain, du sous-standard, des taxes et de la reprise, assureur introuvable…) et
+`tests/section313-fenetre.test.js` (fenêtre, vrais gestionnaires de clics : 37 vérifications, dont 3 scénarios de
+contre-épreuve, case retirée comprise) ; `tests/audit-bug6.test.js` adapté (il achetait l'assurance à une prime arbitraire, désormais la
+prime bancaire à jour). **17 fichiers, 0 échec ; 320 cas multi-appareils avec `SYNC_SEEDS=40`.**
+
+**Changements visibles pour les joueurs (cahier 7, aide-mémoire)** : la franchise ne peut plus être négative ;
+le « à risque » affiché à la signature est aussi le plafond de l'indemnité (si le loyer augmente ensuite, l'excédent
+est à la charge de l'assuré ; service : montant pour un lancer de 7, ajusté au lancer réel) ; une prime qui a
+changé depuis l'ouverture de la fenêtre (franchise modifiée, pion déplacé, maisons construites) demande une 2e
+confirmation « Les conditions ont changé » ; un type d'assurance désactivé par le créateur n'apparaît plus ; une
+case taxe déjà assurée n'est plus reproposée ; pas de sous-standard sur un terrain déjà couvert par sa propre
+assurance normale, et avertissement si l'on signe un contrat annuel par-dessus sa propre sous-standard ; un contrat
+dont l'assureur a disparu ne couvre plus rien.
+
+**Intégration** (vague 2) : aucun conflit ni raccord nécessaire avec les sections 309, 311 et 312. Les sinistres (`settlePropertyRent`, `payTax`) cohabitent sans changement avec les retenues de prêt et les chemins ABS et compensation (suite complète et sondes de la revue vertes).

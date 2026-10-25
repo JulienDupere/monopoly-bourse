@@ -13332,13 +13332,14 @@ async function takeGoAdvance(companyId, opts){
     
     
     const amount = goAdvanceAmount(rank, co);
+    const priceRate = riskAdjustedRate(state.settings.goAdvanceRate, co); // Section 317 — bogue 93 : le taux qui a fixé le prix, relevé AVANT que la vente n'alourdisse la dette de l'entreprise
     co.cash += amount; state.bank.cash -= amount;
     logFin(co.id, 'go_advance_proceeds', amount);
     co.goAdvancesOwed += 1;
     
     
     injectStockCube(co, 'red', STOCK_TRIGGER_GO_ADVANCE_RED_MIN, STOCK_TRIGGER_GO_ADVANCE_RED_MAX);
-    log(`${co.name} vend sa ${rank}${rank===1?'re':'e'} subvention d'avance (sur son ${rank}${rank===1?'er':'e'} passage GO futur) pour ${amount.toFixed(2)} (taux ${(riskAdjustedRate(state.settings.goAdvanceRate,co)*100).toFixed(1)}%).`,
+    log(`${co.name} vend sa ${rank}${rank===1?'re':'e'} subvention d'avance (sur son ${rank}${rank===1?'er':'e'} passage GO futur) pour ${amount.toFixed(2)} (taux ${(priceRate*100).toFixed(1)}%).`, // Section 317 — bogue 93 : taux du prix, pas taux recalculé après la vente
       [{label:`${co.name} (subvention d'avance)`, amount:amount}, {label:'Banque', amount:-amount}]);
     return {ok:true};
   }, {label:'Subvention d\'avance GO'});

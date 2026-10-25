@@ -29,6 +29,9 @@ const SANS_GARDE_UNIQUE = src => src.replace("      if(state && state.gameEndedR
 const CONSULTATION_PERSISTANTE = src => src.replace(/\r?\n  __gameEndedReviewMode = false; \/\/ Section 316 — bogue 100[^\r\n]*/g, '');
 const PORTE_DE_FONDATION = src => src.replace('  if(me && !me.companyId && !state.gameEndedReason){ renderCompanySetupGate(me); return; }', '  if(me && !me.companyId){ renderCompanySetupGate(me); return; }');
 const BOUTON_REPRISE = src => src.replace("    const canTakeOver = myCoId!==p.insurance.insuredCompanyId && !state.gameEndedReason;", "    const canTakeOver = myCoId!==p.insurance.insuredCompanyId;");
+// Retouche de la revue : contre-épreuves des lignes taxe et sous-standard.
+const BOUTON_REPRISE_TAXE = src => src.replace("    const canTakeOver = myCoId!==t.insuredCompanyId && !state.gameEndedReason;", "    const canTakeOver = myCoId!==t.insuredCompanyId;");
+const BOUTON_REPRISE_SOUS = src => src.replace("    const canTakeOver = myCoId!==p.subInsurance.insuredCompanyId && !state.gameEndedReason;", "    const canTakeOver = myCoId!==p.subInsurance.insuredCompanyId;");
 
 // --- Appareil en mode local (window.storage), comme tests/section313-fenetre.test.js --------------------------------
 function documentDeTest(){
@@ -194,6 +197,29 @@ const serveur = T => JSON.parse(T.shared.get('game:' + T.code));
         const S = serveur(T);
         ok(near(S.companies.find(c => c.name === 'Co Bob').cash, b0) && S.properties.find(p => p.name === 'Bleu foncé 2').insurance.insurerId === 'BANK' && /partie est terminée/.test(A.alerts.join(' ')), 'E4 : le clic sur l’ancien bouton est refusé par la garde unique (Co Bob inchangée, banque assureur)');
       }
+    }
+  });
+
+  await scenario('E4b. « Devenir l’assureur » après la fin : lignes taxe et sous-standard (retouche de la revue)', async () => {
+    const CONTRATS = `const a = state.companies.find(c=>c.name==='Co Alice'); a.position = 30;
+      const p = state.properties.find(p=>p.name==='Bleu foncé 2'); p.owners = [{companyId:state.companies.find(c=>c.name==='Co Bob').id, share:100}];
+      state.taxInsurances.push({taxPos:4, insuredCompanyId:a.id, insurerId:'BANK', claimMode:'recurring', deductible:0, quotedTerm:'year', coveredAmount:2, premium:0.3});
+      p.subInsurance = {insurerId:'BANK', insuredCompanyId:a.id, deductible:0, coveredAmount:0.5, premium:0.1};`;
+    const boutons = A => ({ taxe: !!A.doc.trouver('[data-takeover-live-tax]'), sous: !!A.doc.trouver('[data-takeover-live-sub]') });
+    for(const [variante, transform] of [['corrigé', undefined], ['ancienne ligne taxe', BOUTON_REPRISE_TAXE], ['ancienne ligne sous-standard', BOUTON_REPRISE_SOUS]]){
+      const T = await partie({ setup: CONTRATS, transform });
+      const { A } = T;
+      A.run(`myPlayerId = ${ESC(T.ids[1])}; activeTab = 'assureur'; render()`); await A.calme();
+      const avant = boutons(A);
+      await terminer(A);
+      await A.cliquer('#gameEndedReview');
+      A.run("activeTab = 'assureur'; render()"); await A.calme();
+      const apres = boutons(A);
+      console.log(`    [${variante}] boutons avant la fin ${ESC(avant)}, après ${ESC(apres)}`);
+      ok(avant.taxe && avant.sous, `E4b [${variante}] : avant la fin, Bob peut reprendre les contrats banque taxe et sous-standard`);
+      if(variante === 'corrigé') ok(!apres.taxe && !apres.sous, 'E4b : après la fin, plus de bouton de reprise sur les lignes taxe et sous-standard');
+      else if(variante === 'ancienne ligne taxe') ok(apres.taxe && !apres.sous, 'E4b : contre-épreuve — l’ancienne ligne taxe garde son bouton après la fin');
+      else ok(apres.sous && !apres.taxe, 'E4b : contre-épreuve — l’ancienne ligne sous-standard garde son bouton après la fin');
     }
   });
 

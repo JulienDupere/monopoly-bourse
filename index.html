@@ -14548,6 +14548,10 @@ async function buyMergedShareFromBank(mergeId, buyerId, pct, price, opts){
   if(myPlayerId!==state.creatorId) return fail('Seul le créateur de la partie peut enregistrer le rachat d’une part de lot à la banque.');
   if(!(pct>0) || pct>purchasableBankShareLot(mergeId)+1e-9) return fail('Pourcentage invalide — dépasse la part actuellement rachetable à la banque pour ce lot.');
   if(!(Number.isFinite(price) && price>0)) return fail('Le prix convenu doit être positif.');
+  // Section 309-313 — retouche de la revue des décisions : la banque ne vend jamais une part de lot moins cher que sa
+  // valeur de rachat (sinon : achat à 0,01 puis revente à la banque au prix de rachat, avec profit).
+  const minLotPrice = Math.ceil(buybackValueLot(mergeId) * (pct/100) * 100 - 1e-9)/100;
+  if(price < minLotPrice - 1e-9) return fail(`Prix trop bas : la banque ne vend pas une part de lot moins cher que sa valeur de rachat — au moins ${minLotPrice.toFixed(2)} pour ${pct}%.`);
   buyer.cash -= price;
   logFin(buyer.id, 'land_purchase', -price);
   addRealEstateCapex(realEstateKeyFor(props[0]), buyer.id, price);
@@ -14577,7 +14581,7 @@ function modalBuyMergedShare(mergeId){
   const suggestedPrice = (iv!=null && iv>0) ? iv*cap/100 : 0;
   openModal(`
     <h3>Racheter une part du lot à la banque — ${esc(GROUPS[props[0].group].label)}</h3>
-    <div class="small">Part actuellement rachetable à la banque: ${cap}%.</div>
+    <div class="small">Part actuellement rachetable à la banque: ${cap}%. Prix minimum : la valeur de rachat de la banque, ${fmt(buybackValueLot(mergeId))} pour 100 % du lot.</div><!-- Section 309-313 — retouche de la revue des décisions -->
     <label>Acheteur (entreprise)</label>
     <select id="mBuyer">${activeCompanyOptions(myCo?myCo.id:companies[0].id)}</select>
     <label>Pourcentage acheté</label>
@@ -18537,7 +18541,10 @@ function modalBuyShares(pid){
   
   
   const wasSeized = p.acquisitionPrice!=null;
-  const suggestedPrice = wasSeized ? intrinsicValue(p) : p.basePrice;
+  // Section 309-313 — retouche de la revue des décisions : prix minimum pour 100 % = valeur de rachat de la banque,
+  // arrondie au centime supérieur ; le prix suggéré ne descend jamais en dessous.
+  const shownMinPrice100 = bankMinSalePrice100(p);
+  const suggestedPrice = Math.max(wasSeized ? intrinsicValue(p) : p.basePrice, shownMinPrice100);
 
   
   
@@ -18616,7 +18623,7 @@ function modalBuyShares(pid){
     <div class="small">Prix de base: ${fmt(p.basePrice)}${wasSeized?` · Valeur intrinsèque (suggérée, terrain déjà possédé par le passé): ${fmt(suggestedPrice)}`:''} (max ${state.settings.maxOwners} entreprises copropriétaires simultanées — ${existingOwnerIds.length} actuellement)</div>
     <label>Prix convenu (pour 100% du terrain, en ${esc(state.unit)})</label>
     <input type="number" step="0.01" id="mPrice" value="${suggestedPrice}">
-    <div class="small" style="margin-bottom:6px;">Plancher de valeur du terrain après l’achat : moyenne pondérée par les parts du prix convenu (parts achetées ici) et du plancher actuel (${fmt(p.acquisitionPrice!=null ? p.acquisitionPrice : p.basePrice)}, autres parts).</div><!-- Section 309 — décision de Julien (2026-10-25) -->
+    <div class="small" style="margin-bottom:6px;">Prix minimum : ${fmt(shownMinPrice100)} pour 100 % (la banque ne vend pas une part moins cher que sa valeur de rachat). Plancher de valeur du terrain après l’achat : moyenne pondérée par les parts du prix convenu (parts achetées ici) et du plancher actuel (${fmt(p.acquisitionPrice!=null ? p.acquisitionPrice : p.basePrice)}, autres parts).</div><!-- Section 309 — décision de Julien (2026-10-25) -->
     <label>Répartition entre entreprises acheteuses (max ${cap}% rachetable à la banque${cap<100?` — le reste (${100-cap}%) est réservé en permanence à la banque, module REIT activé`:''})</label>
     <div id="mBuyerRows"></div>
     <button type="button" class="btn btn-ghost" id="mAddBuyerRow" style="margin:6px 0;">+ Ajouter une entreprise</button>
@@ -18652,6 +18659,14 @@ function modalBuyShares(pid){
       // l'applyFn) ; prix fini et strictement positif.
       if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut enregistrer un achat de terrain à la banque.'};
       if(!(Number.isFinite(price) && price>0)) return {ok:false, error:'Le prix convenu doit être positif.'};
+      // Section 309-313 — retouche de la revue des décisions : terrain regroupé en lot entre l'ouverture de la fenêtre et la
+      // confirmation : il ne s'achète plus seul.
+      if(prop.groupMergeId) return {ok:false, error:`${prop.name} fait désormais partie du lot ${GROUPS[prop.group].label} regroupé — rien n’a été acheté ; rachetez une part du lot entier.`};
+      // Section 309-313 — retouche de la revue des décisions : la banque ne vend jamais une part moins cher que ce qu'elle la
+      // rachèterait (valeur de rachat pour 100 %, recalculée ici sur l'état frais). Sinon, le plancher pondéré permettait
+      // d'acheter 1 % « à 0,01 pour 100 % » puis de le revendre à la banque avec profit (+0,074 par cycle au plancher 10).
+      const minPrice100 = bankMinSalePrice100(prop);
+      if(price < minPrice100 - 1e-9) return {ok:false, error:`Prix trop bas : la banque ne vend pas une part de ${prop.name} moins cher que sa valeur de rachat — au moins ${minPrice100.toFixed(2)} pour 100 %.`};
       if(formEntries.length===0) return {ok:false, error:'Sélectionnez au moins une entreprise avec un pourcentage supérieur à 0.'};
       const seen = new Set();
       for(const e of formEntries){
@@ -18702,6 +18717,11 @@ function modalBuyShares(pid){
   });
 }
 
+// Section 309-313 — retouche de la revue des décisions : prix minimum (pour 100 %) d'un terrain vendu par la banque =
+// sa valeur de rachat, arrondie au centime supérieur (le prix affiché et tapé passe toujours le contrôle).
+function bankMinSalePrice100(p){
+  return Math.ceil(bankBuybackPrice({type:'prop', id:p.id}, 100)*100 - 1e-9)/100;
+}
 // Section 309 — bogue 9 : prix payé par la banque pour pct % d'un terrain ou d'un lot = sa valeur de rachat calculée
 // par le moteur (buybackValue / buybackValueLot), jamais un prix saisi par le vendeur.
 function bankBuybackPrice(asset, pct){

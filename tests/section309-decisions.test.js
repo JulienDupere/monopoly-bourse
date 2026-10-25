@@ -116,5 +116,70 @@ async function setup(opts = {}){
   E.run(`delete P('p2').acquisitionPrice; migrateState(state);`);
   ok(E.run(`P('p2').acquisitionPrice`) === null, 'champ absent : null (prix de base) par la migration');
 
+  // ---------- 7. Retouche de la revue : jamais moins cher que la valeur de rachat de la banque ----------
+  console.log('7. Achat au rabais d’une petite part : refusé sous la valeur de rachat de la banque (terrain et lot)');
+  const ROUND_UP = 'Math.ceil(bankBuybackPrice({type:"prop",id:"p0"},100)*100-1e-9)/100';
+  const boucle = async (E, prix, cycles) => {
+    const c = E.run('C0.cash');
+    for(let i = 0; i < cycles; i++){
+      await E.acheter('p0', [{ pct: 1, co: 0 }], prix === 'min' ? E.run(ROUND_UP) : prix);
+      if(E.run(`propertyOwnedShare(P('p0'), C0.id)`) > 0) await E.run(`attemptActionWithRetry(()=>sellPropertyShare('p0', C0.id, 'BANK', 1, 0, {silent:true}),{label:'t'})`);
+    }
+    return E.run('C0.cash') - c;
+  };
+  E = await setup();
+  E.run(`P('p0').owners=[]; P('p0').acquisitionPrice = 10;`);   // terrain racheté plus cher par le passé
+  m0 = E.cash();
+  await E.acheter('p0', [{ pct: 1, co: 0 }], 0.01);
+  ok(E.json(`P('p0').owners`).length === 0 && E.run(`P('p0').acquisitionPrice`) === 10 && E.alerts.some(a => /au moins 7\.50 pour 100 %/.test(a)), `1 % « à 0,01 pour 100 % » sur un terrain au plancher 10 : refusé, minimum annoncé (« ${E.alerts[E.alerts.length - 1]} »)`);
+  let g = await boucle(E, 0.01, 20);
+  ok(near(g, 0), `20 cycles « à 0,01 » : gain ${f4(g)} (tous refusés)`);
+  g = await boucle(E, 'min', 20);
+  ok(g <= 1e-9, `20 cycles au prix minimum (valeur de rachat arrondie au centime supérieur) : gain ${f4(g)} ≤ 0`);
+  ok(near(E.cash(), m0), 'monnaie conservée');
+  E.run(`closeModal(); modalBuyShares('p0')`);
+  ok(/Prix minimum/.test(E.fenetre()), 'la fenêtre annonce le prix minimum');
+  X2: {
+    const Y = await setup({ transform: s => s.replace(/      \/\/ Section 309-313 — retouche de la revue des décisions : la banque ne vend jamais[\s\S]*?if\(price < minPrice100 - 1e-9\)[^\n]*\n/, '') });
+    Y.run(`P('p0').owners=[]; P('p0').acquisitionPrice = 10;`);
+    const gY = await boucle(Y, 0.01, 20);
+    ok(gY > 1, `contre-épreuve (minimum retiré) : 20 cycles « à 0,01 » rapportent ${f4(gY)} — le test détecte la régression`);
+  }
+  // Lot regroupé : même règle, le prix étant celui du pourcentage acheté.
+  E = await setup();
+  E.run(`P('p0').owners=[{companyId:C0.id,share:60},{companyId:C1.id,share:40}]; P('p1').owners=[{companyId:C0.id,share:60},{companyId:C1.id,share:40}];`);
+  E.run(`mergeGroup('BRUN')`); await settle();
+  await E.run(`attemptActionWithRetry(()=>sellMergedShare(P('p0').groupMergeId, C1.id, 'BANK', 10, 0, {silent:true}),{label:'t'})`);
+  const minLot = E.run(`buybackValueLot(P('p0').groupMergeId) * 0.1`);
+  let rl = await E.run(`attemptActionWithRetry(()=>buyMergedShareFromBank(P('p0').groupMergeId, C1.id, 10, 0.01, {silent:true}),{label:'t'})`);
+  ok(!rl.ok && /au moins/.test(rl.error), `lot : 10 % pour 0,01 refusé (« ${rl.error} »)`);
+  rl = await E.run(`attemptActionWithRetry(()=>buyMergedShareFromBank(P('p0').groupMergeId, C1.id, 10, ${Math.ceil(minLot * 100) / 100}, {silent:true}),{label:'t'})`);
+  ok(rl.ok, `lot : 10 % au minimum (${f4(Math.ceil(minLot * 100) / 100)}) accepté`);
+  X3: {
+    const Y = await setup({ transform: s => s.replace(/  \/\/ Section 309-313 — retouche de la revue des décisions : la banque ne vend jamais une part de lot[\s\S]*?\n  if\(price < minLotPrice - 1e-9\)[^\n]*\n/, '') });
+    Y.run(`P('p0').owners=[{companyId:C0.id,share:60},{companyId:C1.id,share:40}]; P('p1').owners=[{companyId:C0.id,share:60},{companyId:C1.id,share:40}];`);
+    Y.run(`mergeGroup('BRUN')`); await settle();
+    await Y.run(`attemptActionWithRetry(()=>sellMergedShare(P('p0').groupMergeId, C1.id, 'BANK', 10, 0, {silent:true}),{label:'t'})`);
+    const ry = await Y.run(`attemptActionWithRetry(()=>buyMergedShareFromBank(P('p0').groupMergeId, C1.id, 10, 0.01, {silent:true}),{label:'t'})`);
+    ok(ry.ok, 'contre-épreuve (minimum du lot retiré) : 10 % du lot pour 0,01 — le test détecte la régression');
+  }
+
+  // ---------- 8. Retouche de la revue : terrain regroupé entre l'ouverture et la confirmation ----------
+  console.log('8. Terrain regroupé entre l’ouverture de la fenêtre et la confirmation : refus');
+  const regroupeEntreTemps = async (Z) => {
+    Z.run(`P('p0').owners=[{companyId:C0.id,share:50}]; P('p1').owners=[{companyId:C0.id,share:50}];`);
+    Z.run(`closeModal(); modalBuyShares('p0')`);
+    Z.champ('mBuyerPct0', 10); Z.champ('mPrice', 1);
+    Z.run(`P('p0').groupMergeId = P('p1').groupMergeId = 'lot-brun';`);   // regroupement fait par un autre appareil
+    await Z.cliquer('#mOk');
+    return Z.run(`P('p0').owners[0].share`);
+  };
+  E = await setup();
+  ok(await regroupeEntreTemps(E) === 50 && E.alerts.some(a => /regroupé/.test(a)), `refus clair (« ${E.alerts[E.alerts.length - 1]} »), parts inchangées`);
+  X4: {
+    const Y = await setup({ transform: s => s.replace(/      if\(prop\.groupMergeId\) return \{ok:false, error:`\$\{prop\.name\} fait désormais partie[^\n]*\n/, '') });
+    ok(await regroupeEntreTemps(Y) === 60, 'contre-épreuve (contrôle retiré) : 10 % d’un terrain regroupé achetés seuls — le test détecte la régression');
+  }
+
   console.log(`\nOK : section 309 (décision du plancher de valeur) — ${n} vérifications`);
 })().catch(e => { console.error('ÉCHEC :', e && e.message ? e.message : e); process.exit(1); });

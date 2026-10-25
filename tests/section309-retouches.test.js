@@ -78,8 +78,8 @@ async function setup(opts = {}){
   X.run(`mergeGroup('BRUN')`); await settle();
   await X.run(`act(()=>sellMergedShare(P('p0').groupMergeId, C1.id, 'BANK', 10, 0, {silent:true}))`);
   X.run('as(1)');
-  r = await X.run(`act(()=>buyMergedShareFromBank(P('p0').groupMergeId, C1.id, 10, 0.01, {silent:true}))`);
-  ok(r.ok, 'contre-épreuve (contrôle retiré) : Bob rachète 10 % du lot pour 0,01 M$ — le test détecte la régression');
+  r = await X.run(`act(()=>buyMergedShareFromBank(P('p0').groupMergeId, C1.id, 10, 0.2, {silent:true}))`); // Section 309-313 — retouche de la revue des décisions : prix au-dessus du minimum (valeur de rachat)
+  ok(r.ok, 'contre-épreuve (contrôle retiré) : Bob rachète 10 % du lot pour 0,2 M$ — le test détecte la régression');
 
   // ---------- 2. Écart réel de l'arrondi du regroupement (scénario Rose de l'audit) ----------
   console.log('2. Regroupement : écart réel de l’arrondi (documenté)');

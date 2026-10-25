@@ -11595,7 +11595,11 @@ function cancelAsk(player, askId){
 function fillPendingBid(player, company, bid){
   const price = bid.price;
   if(!(price>0)) return {filled:0};
-  const cashAvail = Math.max(0, player.cash||0);
+  // Section 314 — bogue 36 : l'encaisse compte pour sa valeur réelle, même négative. Avant, max(0, encaisse) : avec
+  // −0,5 M$ d'encaisse, les bons ne couvraient que le prix, l'encaisse restait sous le montant et executeShareTrade
+  // refusait l'achat à chaque lancer. Désormais les bons comblent d'abord l'encaisse négative, puis paient le prix
+  // (liquidité nette = encaisse + bons ; rien si elle est ≤ 0).
+  const cashAvail = player.cash||0;
   const bondsAvail = Math.max(0, player.bondBalance||0);
   const totalAvail = cashAvail + bondsAvail;
   if(totalAvail<=1e-9) return {filled:0};
@@ -11603,11 +11607,11 @@ function fillPendingBid(player, company, bid){
   const qtyToFill = Math.min(bid.qty, affordableQty);
   if(qtyToFill<=1e-9) return {filled:0};
   const amount = qtyToFill*price;
-  
-  
-  
-  
-  const bondsNeeded = Math.max(0, amount-cashAvail);
+
+
+
+
+  const bondsNeeded = Math.min(bondsAvail, Math.max(0, amount-cashAvail));
   if(bondsNeeded>1e-9){
     player.bondBalance -= bondsNeeded;
     player.cash += bondsNeeded;
@@ -12504,7 +12508,10 @@ function accrueBondInterest(){
     if(!p.bondBalance) return;
     const interest = p.bondBalance*perRollRate;
     p.bondBalance += interest;
-    state.bank.cash -= interest;
+    // Section 314 — bogue 7 : plus de débit de la banque ici. La banque garde le dépôt (buyBonds l'encaisse) et paie
+    // capital + intérêts au retrait (withdrawBonds, vente forcée, bid) : l'intérêt n'est payé (ou reçu, pour une dette
+    // de bons remboursée par buyBonds) qu'une fois. Avant, il était aussi débité ici à chaque lancer sans être versé à
+    // personne : un placement détruisait de l'argent, un emprunt en créait.
     
     
     

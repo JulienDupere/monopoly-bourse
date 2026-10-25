@@ -326,8 +326,11 @@ async function derouler(env){
 // =====================================================================================================================
 // Invariants
 // =====================================================================================================================
+// Section 314 — bogue 7 corrigé : l'intérêt des bons ne débite plus la banque à chaque lancer (il est payé une seule
+// fois, au retrait). La masse est donc la simple somme des encaisses, sans la compensation par les intérêts cumulés
+// qu'exigeait l'ancien double paiement.
 const masse = (s) => (s.bank.cash || 0) + s.companies.reduce((t, c) => t + (c.cash || 0), 0)
-  + s.players.reduce((t, p) => t + (p.cash || 0) + (p.cumInterestReceived || 0) - (p.cumInterestPaid || 0), 0);
+  + s.players.reduce((t, p) => t + (p.cash || 0), 0);
 function canon(v){
   if(Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
   if(v && typeof v === 'object') return '{' + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';

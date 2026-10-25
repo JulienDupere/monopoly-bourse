@@ -14437,6 +14437,17 @@ async function mergeGroup(group){
       else log(`Assurance sous-standard sur ${p.name} remboursée (${premium.toFixed(2)} à ${insCo?insCo.name:'?'}) — le regroupement du lot met fin au contrat.`);
     }
   });
+  // Section 317 — bogue 88 : les statistiques d'affichage (coûts et loyers historiques par entreprise) passent de la clé de
+  // chaque terrain (« prop:… ») à celle du lot (« lot:… »), que lit « Mon Entreprise » après le regroupement. Aucune
+  // encaisse ne bouge ; parties déjà regroupées : historique perdu, rien à reporter (état inchangé).
+  props.forEach(p=>{
+    [['realEstateCapex', addRealEstateCapex], ['realEstateRevenue', addRealEstateRevenue]].forEach(([field, add])=>{
+      const old = state[field] && state[field]['prop:'+p.id];
+      if(!old) return;
+      Object.keys(old).forEach(cid=>add('lot:'+mergeId, cid, old[cid]));
+      delete state[field]['prop:'+p.id];
+    });
+  });
   props.forEach(p=>{ p.groupMergeId = mergeId; p.owners = newOwners.map(o=>({...o})); p.insurance = null; p.subInsurance = null; });
   log(`Le lot ${GROUPS[group].label} est regroupé (${newOwners.map(o=>`${companyById(o.companyId)?.name||'?'} ${o.share}%`).join(', ')}).`);
   return {ok:true};

@@ -64,7 +64,9 @@ async function setup(opts){
   }
   console.log('4 — contre-épreuve : contrôle retiré');
   {
-    const { eng, offers } = await setup({ transform: (src) => src.replace("  if(myCo && myCo.id===offer.toCompanyId) return null;", "  return null;") });
+    // Section 309-313 — intégration : le contrôle est mutualisé (offerResponderRefusal) ; la contre-épreuve le retire
+    // pour les offres de swap et de compensation.
+    const { eng, offers } = await setup({ transform: (src) => src.replace("function rentOfferResponderRefusal(offer){", "function rentOfferResponderRefusal(offer){ return null;") });
     const { run } = eng;
     run(`as(C)`);
     await run(`refuseRentSwapOffer('sw')`); await run(`refuseRentCompensationOffer('co')`);

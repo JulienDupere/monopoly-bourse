@@ -132,7 +132,8 @@ async function scenarioAudit(T, variant){
   });
 
   // Retouche de la revue : une offre devenue caduque est retirée dans l'action qui change la part (même écriture).
-  const SANS_RETRAIT = src => src.replace("      dropStaleMortgageOffers(); // Section 312 — retouche de la revue : offres d'hypothèque caduques retirées dans la même écriture\n", '');
+  // Section 309-313 — intégration : l'appel est désormais protégé par un try/catch dans runActionWithRetry.
+  const SANS_RETRAIT = src => src.replace("      try{ dropStaleMortgageOffers(); }\n", '      try{ }\n');
   async function caduques(T, variant){
     const { A, B } = T;
     const J = JSON.stringify;

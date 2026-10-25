@@ -2424,7 +2424,12 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
       finally{ actionApplyDepth--; }
       // {ok:false, persist:true} : refus dont le nettoyage (ex. annonce périmée retirée) doit être enregistré.
       if((!res || !res.ok) && !(res && res.persist===true)){ if(gen===actionGeneration) restoreActionBase(baseRaw, baseLocals); return res; }
-      dropStaleMortgageOffers(); // Section 312 — retouche de la revue : offres d'hypothèque caduques retirées dans la même écriture
+      // Section 312 — retouche de la revue : offres d'hypothèque caduques retirées dans la même écriture.
+      // Section 309-313 — intégration : ce nettoyage tourne après CHAQUE action réussie ; une exception ne doit jamais
+      // faire échouer l'action (toutes les actions seraient bloquées). Erreur journalisée dans la console ; les offres
+      // restent alors en place, et leur acceptation revérifie tout sur l'état frais.
+      try{ dropStaleMortgageOffers(); }
+      catch(e){ console.error('Nettoyage des offres d’hypothèque caduques impossible — action enregistrée quand même :', e); }
       recordActionId(actionId); // dans la même écriture que la mutation
     }
     if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
@@ -11833,7 +11838,9 @@ function expirePendingMortgageOffers(){
 function dropStaleMortgageOffers(){
   const offers = state.mortgageOffers;
   if(!Array.isArray(offers) || !offers.length) return;
-  const kept = [];
+  const kept = [], dropped = [];
+  // Section 309-313 — intégration : tous les motifs sont calculés AVANT toute écriture (journal, liste), pour qu'une
+  // exception (protégée dans runActionWithRetry) ne laisse pas un nettoyage à moitié fait.
   offers.forEach(o=>{
     const t = mortgageAssetTerms(o.kind, o.assetId, o.borrowerId);
     const reason = t.unavailable ? t.unavailable
@@ -11841,10 +11848,14 @@ function dropStaleMortgageOffers(){
       : (o.principal > t.principal+1e-9) ? `le montant (${fmt(o.principal)}) dépasse désormais le maximum hypothécable (${fmt(t.principal)})`
       : (!companyById(o.lenderId)) ? 'le prêteur n’existe plus' : null;
     if(!reason){ kept.push(o); return; }
+    dropped.push({o, reason});
+  });
+  if(!dropped.length) return;
+  state.mortgageOffers = kept;
+  dropped.forEach(({o, reason})=>{
     const borrower = companyById(o.borrowerId), lender = companyById(o.lenderId);
     log(`L'offre d'hypothèque de ${borrower?borrower.name:'?'} sur ${o.label} auprès de ${lender?lender.name:'?'} est retirée : ${reason}`);
   });
-  if(kept.length!==offers.length) state.mortgageOffers = kept;
 }
 function expirePendingLoanRequests(){
   const expired = state.loanRequests.filter(r=>state.gameClock.rollCount>r.createdAtRoll);
@@ -14220,7 +14231,11 @@ function shareSwapGiveRefusal(asset, giverId){
   const giverName = giver ? giver.name : 'Cette entreprise';
   const label = shareAssetLabel(asset);
   if((host.mortgages||[]).some(m=>m.companyId===giverId)) return `${giverName} a hypothéqué sa part de ${label} — remboursez l'hypothèque avant de pouvoir l'échanger.`;
-  if(isPropertyLockedByRevenueSwap(host.id, giverId)) return `${giverName} a cédé le revenu de ${label} (ABS / swap de revenu fixe/variable) — impossible de l'échanger tant que l'accord est actif.`;
+  // Section 309-313 — intégration : UN SEUL contrôle ABS pour l'échange (bogue 16 du lot 2 et bogue 21 du lot 4), avec
+  // le message du lot 4 (annonce en attente ou accord conclu), puis le verrou « swap de loyers spécifique » (lot 4).
+  if(isPropertyLockedByRevenueSwap(host.id, giverId)) return revenueSwapLockMessage(host.id, giverId, "de l'échanger");
+  const rentSwapLock = rentSwapSaleLockMessage(host.id, giverId, 'd’échanger');
+  if(rentSwapLock) return rentSwapLock;
   return null;
 }
 async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBType, assetBId, companyBId, pctB, opts){
@@ -14255,13 +14270,9 @@ async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBTy
   const labelA = tradableAssets().find(a=>a.type===assetAType && a.id===assetAId)?.label || '?';
   const labelB = tradableAssets().find(a=>a.type===assetBType && a.id===assetBId)?.label || '?';
   // Section 311 — bogue 21 : un échange cède une part comme une vente : refusé sur un terrain dont le donneur a vendu (ou
-  // annoncé) le revenu en ABS. Avant : aucun contrôle, l'échange vidait l'ABS de sa substance.
-  const absHostA = assetHostProperty(assetA), absHostB = assetHostProperty(assetB);
-  if(absHostA && isPropertyLockedByRevenueSwap(absHostA.id, companyAId)) return fail(revenueSwapLockMessage(absHostA.id, companyAId, "de l'échanger")); // Section 311 — retouche de la revue : message propre à l'annonce ou à l'accord conclu
-  if(absHostB && isPropertyLockedByRevenueSwap(absHostB.id, companyBId)) return fail(revenueSwapLockMessage(absHostB.id, companyBId, "de l'échanger"));
-  const rentSwapLockSwap = (absHostA && rentSwapSaleLockMessage(absHostA.id, companyAId, 'd’échanger')) || (absHostB && rentSwapSaleLockMessage(absHostB.id, companyBId, 'd’échanger')); // Section 311 — décision : swap spécifique
-  if(rentSwapLockSwap) return fail(rentSwapLockSwap);
-  
+  // annoncé) le revenu en ABS ; décision « swap spécifique » : refusé aussi sur un terrain engagé dans un swap de loyers
+  // spécifique. Section 309-313 — intégration : ces deux verrous sont dans shareSwapGiveRefusal (contrôle unique, plus haut).
+
   if(!transferAssetShare(assetA, companyAId, companyBId, pctA)) return fail('Échange impossible sur '+labelA+'.');
   if(!transferAssetShare(assetB, companyBId, companyAId, pctB)) return fail('Échange impossible sur '+labelB+'.');
   log(`${companyA.name} échange ${pctA}% de ${labelA} contre ${pctB}% de ${labelB} détenu par ${companyB.name}.`);
@@ -14769,7 +14780,8 @@ async function acceptAssetSaleOffer(offerId, expected){
     const o = (state.assetSaleOffers||[]).find(x=>x.id===offerId);
     if(!o) return {ok:false, error:'Cette offre n’existe plus (retirée par le vendeur, déjà acceptée ou refusée).'};
     const buyer = companyById(o.buyerId);
-    if(!buyer || myPlayerId!==buyer.ceoId) return {ok:false, error:`Seul le CEO de ${buyer?buyer.name:'l’entreprise acheteuse'} peut accepter cette offre.`};
+    const notResponder = offerResponderRefusal(o.buyerId, 'l’entreprise acheteuse', 'accepter cette offre'); // Section 309-313 — intégration : contrôle commun
+    if(notResponder) return notResponder;
     if(state.gameClock.rollCount!==o.roll) return {ok:false, error:`Cette offre, déposée au lancer ${o.roll}, a expiré au lancer de dés suivant — rien n'a été payé ni transféré.`}; // Section 309 — retouche de la revue
     if(expected && !sameConditions(expected, assetSaleOfferConditions(offerId))) return staleConditionsResult();
     const r = await executeAssetSaleOffer(o, {silent:true});
@@ -14795,7 +14807,8 @@ async function refuseAssetSaleOffer(offerId){
     const o = (state.assetSaleOffers||[]).find(x=>x.id===offerId);
     if(!o) return {ok:false, error:'Cette offre n’existe plus.'};
     const buyer = companyById(o.buyerId), seller = companyById(o.sellerId);
-    if(!buyer || myPlayerId!==buyer.ceoId) return {ok:false, error:`Seul le CEO de ${buyer?buyer.name:'l’entreprise acheteuse'} peut refuser cette offre.`};
+    const notResponder = offerResponderRefusal(o.buyerId, 'l’entreprise acheteuse', 'refuser cette offre'); // Section 309-313 — intégration : contrôle commun
+    if(notResponder) return notResponder;
     state.assetSaleOffers = state.assetSaleOffers.filter(x=>x.id!==offerId);
     log(`${buyer.name} refuse l'offre de ${seller?seller.name:'?'} : ${assetSaleOfferWhat(o)} pour ${fmt(assetSaleOfferTotal(o))}.`);
     return {ok:true};
@@ -15007,7 +15020,9 @@ function mortgageAssetTerms(kind, assetId, borrowerId){
   }
   const share = propertyOwnedShare(host, borrowerId);
   if(share<=0) return {unavailable:`${borrower.name} ne possède pas de part de ${label}.`};
-  if(isPropertyLockedByRevenueSwap(host.id, borrowerId)) return {unavailable:`Le revenu de ${label} a été vendu (swap de revenu fixe/variable) — impossible de l'hypothéquer tant que l'accord est actif.`};
+  // Section 309-313 — intégration : verrou ABS du lot 4 (ABS conclue OU annoncée, bogue 21) et son message ; couvre la
+  // proposition, l'acceptation (état frais) et le retrait des offres d'hypothèque devenues caduques.
+  if(isPropertyLockedByRevenueSwap(host.id, borrowerId)) return {unavailable:revenueSwapLockMessage(host.id, borrowerId, "de l'hypothéquer")};
   if((host.mortgages||[]).some(m=>m.companyId===borrowerId)) return {unavailable:`${borrower.name} a déjà hypothéqué sa part de ${label}.`};
   const principal = isLot ? maxMortgageLot(assetId, borrowerId) : maxMortgage(host, borrowerId);
   return {kind: isLot?'lot':'prop', assetId, label, share, principal, rate: riskAdjustedRate(state.settings.mortgageRate, borrower)};
@@ -15048,8 +15063,8 @@ async function acceptMortgageOffer(offerId, opts){
     const offer = (state.mortgageOffers||[]).find(o=>o.id===offerId);
     if(!offer) return {ok:false, error:'Cette offre d’hypothèque n’est plus disponible (retirée, refusée ou déjà acceptée).'};
     const lender = companyById(offer.lenderId), borrower = companyById(offer.borrowerId);
-    const myCo = myCompany();
-    if(!myCo || myCo.id!==offer.lenderId) return {ok:false, error:`Seul le CEO de ${lender?lender.name:'l’entreprise prêteuse'} peut accepter cette offre.`};
+    const notResponder = offerResponderRefusal(offer.lenderId, 'l’entreprise prêteuse', 'accepter cette offre'); // Section 309-313 — intégration : contrôle commun
+    if(notResponder) return notResponder;
     if(opts.expectedConditions && !sameConditions(opts.expectedConditions, mortgageOfferConditions(offerId))) return staleConditionsResult();
     if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucune action possible.'};
     // Section 312 — retouche de la revue : l'offre ne vaut que jusqu'au prochain lancer (comme une demande d'emprunt) ;
@@ -15077,8 +15092,8 @@ async function refuseMortgageOffer(offerId){
     const offer = (state.mortgageOffers||[]).find(o=>o.id===offerId);
     if(!offer) return {ok:false};
     const lender = companyById(offer.lenderId), borrower = companyById(offer.borrowerId);
-    const myCo = myCompany();
-    if(!myCo || myCo.id!==offer.lenderId) return {ok:false, error:`Seul le CEO de ${lender?lender.name:'l’entreprise prêteuse'} peut refuser cette offre.`};
+    const notResponder = offerResponderRefusal(offer.lenderId, 'l’entreprise prêteuse', 'refuser cette offre'); // Section 309-313 — intégration : contrôle commun
+    if(notResponder) return notResponder;
     state.mortgageOffers = state.mortgageOffers.filter(o=>o.id!==offerId);
     log(`${lender?lender.name:'?'} refuse l'offre d'hypothèque de ${borrower?borrower.name:'?'} sur ${offer.label} (${fmt(offer.principal)}).`);
     return {ok:true};
@@ -15570,11 +15585,16 @@ async function proposeRentSwap(propA, companyA, propB, companyB, years, capA, ca
 // compensation ne vérifiait pas QUI répondait : n'importe quel joueur pouvait refuser (effacer) l'offre, voire la signer
 // au nom de l'entreprise destinataire. Désormais seul le CEO de l'entreprise destinataire répond (contrôle dans
 // l'applyFn, état frais) ; l'auteur garde « Retirer » (cancelRentSwapOffer / cancelRentCompensationOffer).
+// Section 309-313 — intégration : contrôle commun « seul le CEO de l'entreprise destinataire répond », utilisé par les
+// offres de swap et de compensation (lot 4), les offres de vente de parts ou de maisons (lot 2) et les offres
+// d'hypothèque (lot 5). Renvoie null si le joueur de cet appareil est le CEO de companyId, sinon un refus.
+function offerResponderRefusal(companyId, fallbackLabel, actionText){
+  const co = companyById(companyId);
+  if(co && co.ceoId===myPlayerId) return null;
+  return {ok:false, error:`Seul le CEO de ${co?co.name:fallbackLabel} peut ${actionText}.`};
+}
 function rentOfferResponderRefusal(offer){
-  const myCo = myCompany();
-  if(myCo && myCo.id===offer.toCompanyId) return null;
-  const to = companyById(offer.toCompanyId);
-  return {ok:false, error:`Seul le CEO de ${to?to.name:'l’entreprise destinataire'} peut accepter ou refuser cette proposition (son auteur peut la retirer).`};
+  return offerResponderRefusal(offer.toCompanyId, 'l’entreprise destinataire', 'accepter ou refuser cette proposition (son auteur peut la retirer)'); // Section 309-313 — intégration
 }
 async function acceptRentSwapOffer(id){
   
@@ -18556,9 +18576,12 @@ function sellPropertyShare(pid, sellerId, buyerId, pct, price, opts){
   if((prop.mortgages||[]).some(m=>m.companyId===sellerId)){
     return fail(`${seller.name} a hypothéqué sa part de ${prop.name} — remboursez l'hypothèque (repayMortgage) avant de pouvoir la vendre.`);
   }
-  if(isPropertyLockedByRevenueSwap(pid, sellerId)){
-    return fail(`${seller.name} a vendu le revenu de ${prop.name} (swap de revenu fixe/variable) — impossible de le vendre tant que l'accord est actif.`);
-  }
+  // Section 309-313 — intégration : verrous du lot 4 (section 311) sur toutes les voies de vente du lot 2 (vente à la
+  // banque, dépôt à blanc et acceptation d'une offre) : ABS conclue OU annoncée (bogue 21), puis swap de loyers
+  // spécifique (décision « bloquer la vente du terrain concerné »). Revérifiés sur l'état frais à l'acceptation.
+  if(isPropertyLockedByRevenueSwap(pid, sellerId)) return fail(revenueSwapLockMessage(pid, sellerId, 'de le vendre'));
+  const rentSwapLock = rentSwapSaleLockMessage(pid, sellerId, 'de vendre');
+  if(rentSwapLock) return fail(rentSwapLock);
   if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
     return fail(`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie), sauf si vous vendez la totalité de votre part (${sellerOwn.share}%). Vendre à un autre joueur n'a pas de minimum.`);
   }

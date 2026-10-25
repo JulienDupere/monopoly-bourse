@@ -48,7 +48,8 @@ const SWAP_100 = `act(()=>executeShareSwap('prop','p0',C0.id,100,'prop','p1',C1.
   E = await setup();
   E.run(BRUN_SEPARE + `state.revenueSwaps.push({id:'abs1', sellerId:C1.id, propertyIds:['p1']});`);
   r = await E.run(SWAP_100);
-  ok(!r.ok && /Co Bob a cédé le revenu de Brun 2 \(ABS/.test(r.error) && E.run(`own('p1')`).includes(E.run('C1.id')), 'Brun 2 sous ABS : échange refusé, Co Bob garde Brun 2 (les porteurs continuent d’être payés)');
+  // Section 309-313 — intégration : un seul contrôle ABS dans l'échange (shareSwapGiveRefusal), avec le message du lot 4.
+  ok(!r.ok && /Co Bob a vendu le revenu de Brun 2 en ABS — impossible de l'échanger/.test(r.error) && E.run(`own('p1')`).includes(E.run('C1.id')), 'Brun 2 sous ABS : échange refusé, Co Bob garde Brun 2 (les porteurs continuent d’être payés) : « ' + r.error + ' »');
   // Sans blocage : l'échange fonctionne et conserve la monnaie.
   E = await setup();
   E.run(BRUN_SEPARE);
@@ -78,7 +79,9 @@ const SWAP_100 = `act(()=>executeShareSwap('prop','p0',C0.id,100,'prop','p1',C1.
   E.run(`mergeGroup('BRUN')`); await settle();   // l'administratrice regroupe le lot
   let c0 = E.run('C0.cash'); total0 = E.cash();
   await E.cliquer('#mOk');
-  ok(E.alerts.some(a => /Brun 2 fait désormais partie du lot Brun regroupé — rien n’a été fait ; hypothéquez votre part du lot entier/.test(a)), 'confirmation après le regroupement : refus clair (« hypothéquez votre part du lot entier »)');
+  // Section 309-313 — intégration : avec la fenêtre du lot 5 (confirmWithFreshConditions), le refus s'affiche dans la
+  // fenêtre redessinée « Les conditions ont changé », et non plus dans une alerte.
+  ok(/Les conditions ont changé/.test(E.fenetre()) && /Brun 2 fait désormais partie du lot Brun regroupé — rien n’a été fait ; hypothéquez votre part du lot entier/.test(E.fenetre()), 'confirmation après le regroupement : refus clair dans la fenêtre redessinée (« hypothéquez votre part du lot entier »)');
   ok(near(E.run('C0.cash'), c0) && E.json(`P('p1').mortgages||[]`).length === 0 && near(E.cash(), total0), 'aucun emprunt versé, aucune hypothèque inscrite (avant : 0,36 M$ sans intérêt ni saisie possible)');
   r = await E.run(`act(()=>issueMortgageLot(P('p0').groupMergeId, C0.id, 'BANK', {silent:true}))`);
   ok(r.ok, 'l’hypothèque de la part du lot reste possible (issueMortgageLot)');

@@ -576,7 +576,7 @@ const FEATURE_LIST = [
   
   {key:'revenueSwap', short:'Émission ABS', label:'Émission ABS (titrisation du revenu futur d’un panier de terrains, en tranches senior/junior — voir RESUME_ET_REGLES.md section 275)'},
   {key:'rentCompensation', short:'Compensation de loyer', label:'Accords de compensation de loyer (netting bilatéral)'},
-  {key:'loan', short:'Prêts', label:'Prêts (retenue automatique sur les loyers reçus)'},
+  {key:'loan', short:'Prêts', label:'Prêts (retenue automatique sur les loyers reçus) — le prêt de dernier recours reste offert et remboursé par retenue, même sans cette option'}, // Section 312 — bogue 23 (choix à valider par Julien)
   {key:'etf', short:'REIT de terrains', label:'REIT de terrains (réserve permanente de la banque, émise progressivement aux joueurs)'},
   {key:'subInsurance', short:'Assurance sous-standard', label:'Assurance sous-standard (1 seul lancé de dé, prime fortement majorée, terrains seulement, achetable en tout temps)'},
   {key:'houseSource', short:'Provenance des maisons', label:'Provenance des maisons (chaque construction retire une maison de la réserve d’un joueur, avec compensation possible entre copropriétaires)'},
@@ -2415,6 +2415,7 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
       finally{ actionApplyDepth--; }
       // {ok:false, persist:true} : refus dont le nettoyage (ex. annonce périmée retirée) doit être enregistré.
       if((!res || !res.ok) && !(res && res.persist===true)){ if(gen===actionGeneration) restoreActionBase(baseRaw, baseLocals); return res; }
+      dropStaleMortgageOffers(); // Section 312 — retouche de la revue : offres d'hypothèque caduques retirées dans la même écriture
       recordActionId(actionId); // dans la même écriture que la mutation
     }
     if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
@@ -3557,9 +3558,11 @@ function renderPortefeuilleTrading(me, company){
   
   
   
-  const pendingProposalsHtml = (loanRequestLines.length===0 && absPortefeuilleListings.length===0 && myPendingPreferredOffers.length===0) ? '' : `
+  const mortgageOfferLines = mortgageOfferFeedLines(me.id); // Section 312 — retouche de la revue
+  const pendingProposalsHtml = (loanRequestLines.length===0 && mortgageOfferLines.length===0 && absPortefeuilleListings.length===0 && myPendingPreferredOffers.length===0) ? '' : `
   <div class="section-title" style="margin-top:0;">Propositions en attente</div>
   ${loanRequestLines.join('')}
+  ${mortgageOfferLines.join('')}
   ${absPortefeuilleMarketHtml}
   ${myPendingPreferredOffers.length>0?`<div class="small" style="font-weight:600;margin-top:8px;margin-bottom:6px;">📈 Émission(s) de parts privilégiées</div><table><tr><th>Entreprise</th><th>Parts offertes</th><th>Prix d'émission</th><th>Taux annuel</th><th>Rachat</th><th></th></tr>${pendingPreferredRows}</table>`:''}
   `;
@@ -9893,6 +9896,7 @@ function advanceGameClock(){
   
   
   expirePendingLoanRequests();
+  expirePendingMortgageOffers(); // Section 312 — retouche de la revue
   
   
   
@@ -11669,6 +11673,38 @@ function resolvePendingPreferredIssuances(){
   });
 }
 
+// Section 312 — retouche de la revue : une offre d'hypothèque expire au lancer de dés suivant sa création (appelée au
+// même endroit du cycle que expirePendingLoanRequests).
+function expirePendingMortgageOffers(){
+  const offers = state.mortgageOffers||[];
+  const expired = offers.filter(o=>state.gameClock.rollCount > (o.createdAtRoll||0));
+  if(!expired.length) return;
+  expired.forEach(o=>{
+    const borrower = companyById(o.borrowerId), lender = companyById(o.lenderId);
+    log(`L'offre d'hypothèque de ${borrower?borrower.name:'?'} sur ${o.label} (${fmt(o.principal)}) auprès de ${lender?lender.name:'?'} expire sans avoir été acceptée avant le lancer de dés — retirée.`);
+  });
+  state.mortgageOffers = offers.filter(o=>!expired.includes(o));
+}
+// Section 312 — retouche de la revue : retire les offres d'hypothèque devenues caduques (part hypothéquée auprès de la
+// banque, vendue en tout ou en partie, terrain regroupé en lot, lot dissous, verrou ABS…), avec une trace au journal.
+// Appelée à la fin de chaque action réussie (runActionWithRetry), donc dans la même écriture que le changement.
+// L'encaisse du prêteur n'est pas un motif : elle peut remonter avant l'acceptation, où elle est vérifiée.
+function dropStaleMortgageOffers(){
+  const offers = state.mortgageOffers;
+  if(!Array.isArray(offers) || !offers.length) return;
+  const kept = [];
+  offers.forEach(o=>{
+    const t = mortgageAssetTerms(o.kind, o.assetId, o.borrowerId);
+    const reason = t.unavailable ? t.unavailable
+      : (t.share!==o.share) ? `la part est passée de ${o.share}% à ${t.share}%`
+      : (o.principal > t.principal+1e-9) ? `le montant (${fmt(o.principal)}) dépasse désormais le maximum hypothécable (${fmt(t.principal)})`
+      : (!companyById(o.lenderId)) ? 'le prêteur n’existe plus' : null;
+    if(!reason){ kept.push(o); return; }
+    const borrower = companyById(o.borrowerId), lender = companyById(o.lenderId);
+    log(`L'offre d'hypothèque de ${borrower?borrower.name:'?'} sur ${o.label} auprès de ${lender?lender.name:'?'} est retirée : ${reason}`);
+  });
+  if(kept.length!==offers.length) state.mortgageOffers = kept;
+}
 function expirePendingLoanRequests(){
   const expired = state.loanRequests.filter(r=>state.gameClock.rollCount>r.createdAtRoll);
   if(!expired.length) return;
@@ -14612,7 +14648,7 @@ function mortgageAssetTerms(kind, assetId, borrowerId){
   } else {
     host = state.properties.find(x=>x.id===assetId);
     if(!host) return {unavailable:'Terrain introuvable.'};
-    if(host.groupMergeId) return {unavailable:`${host.name} fait maintenant partie d'un lot — hypothéquez le lot.`};
+    if(host.groupMergeId) return {unavailable:`${host.name} fait désormais partie du lot ${GROUPS[host.group].label} regroupé — rien n’a été fait ; hypothéquez votre part du lot entier (menu Hypothéquer).`}; // Section 312 — retouche de la revue : message commun avec le lot 2
     label = host.name;
   }
   const share = propertyOwnedShare(host, borrowerId);
@@ -14662,6 +14698,9 @@ async function acceptMortgageOffer(offerId, opts){
     if(!myCo || myCo.id!==offer.lenderId) return {ok:false, error:`Seul le CEO de ${lender?lender.name:'l’entreprise prêteuse'} peut accepter cette offre.`};
     if(opts.expectedConditions && !sameConditions(opts.expectedConditions, mortgageOfferConditions(offerId))) return staleConditionsResult();
     if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucune action possible.'};
+    // Section 312 — retouche de la revue : l'offre ne vaut que jusqu'au prochain lancer (comme une demande d'emprunt) ;
+    // sinon le prêteur choisirait le moment (taux figé, part saisissable si l'emprunteuse ne peut plus payer l'intérêt).
+    if(state.gameClock.rollCount > (offer.createdAtRoll||0)) return {ok:false, error:'Cette offre d’hypothèque a expiré : elle ne valait que jusqu’au lancer de dés suivant sa création. L’emprunteuse peut en proposer une nouvelle.'};
     const keep = ' L’offre reste en attente : refusez-la si elle ne peut plus aboutir.';
     if(!borrower) return {ok:false, error:'L’entreprise emprunteuse n’existe plus.' + keep};
     const terms = mortgageAssetTerms(offer.kind, offer.assetId, offer.borrowerId);
@@ -14719,6 +14758,16 @@ function modalAcceptMortgageOffer(offerId){
     run: c=>acceptMortgageOffer(offerId, {expectedConditions: c, fromConfirm: true}),
   });
 }
+// Section 312 — retouche de la revue : offres d'hypothèque reçues par l'entreprise dont `playerId` est CEO, pour la
+// rubrique « Propositions en attente » du Portefeuille (là où apparaissent les demandes d'emprunt).
+function mortgageOfferFeedLines(playerId){
+  return (state.mortgageOffers||[]).filter(o=>{ const l = companyById(o.lenderId); return l && l.ceoId===playerId; }).map(o=>{
+    const from = companyById(o.borrowerId), lender = companyById(o.lenderId);
+    return `<div style="margin-bottom:4px;">🏦 Offre d'hypothèque reçue par ${esc(lender.name)} — ${esc(from?from.name:'?')} : ${esc(o.label)} (${o.share}%), ${fmt(o.principal)} à ${(o.rate*100).toFixed(1)}%/an (valable jusqu'au prochain lancer)
+      <button class="btn btn-primary btn-sm" data-accept-mortgage-offer="${o.id}">Accepter</button>
+      <button class="btn btn-brick btn-sm" data-refuse-mortgage-offer="${o.id}">Refuser</button></div>`;
+  });
+}
 // Offres d'hypothèque en attente, pour la rubrique « Propositions en attente » de l'onglet de l'entreprise.
 function mortgageOffersPendingHtml(myCoId){
   const offers = state.mortgageOffers||[];
@@ -14726,7 +14775,7 @@ function mortgageOffersPendingHtml(myCoId){
   return incoming.map(o=>{
     const from = companyById(o.borrowerId);
     return `<div class="deed-actions" style="margin-bottom:6px;">
-      <span class="ownerchip">🏦 Hypothèque demandée par ${esc(from?from.name:'?')} — ${esc(o.label)} (${o.share}%) : ${fmt(o.principal)} à ${(o.rate*100).toFixed(1)}%/an</span>
+      <span class="ownerchip">🏦 Hypothèque demandée par ${esc(from?from.name:'?')} — ${esc(o.label)} (${o.share}%) : ${fmt(o.principal)} à ${(o.rate*100).toFixed(1)}%/an (valable jusqu'au prochain lancer)</span>
       <button class="btn btn-primary btn-sm" data-accept-mortgage-offer="${o.id}">Accepter</button>
       <button class="btn btn-brick btn-sm" data-refuse-mortgage-offer="${o.id}">Refuser</button>
     </div>`;
@@ -14748,7 +14797,7 @@ async function issueMortgage(propId, borrowerId, lenderId, opts){
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const p = state.properties.find(x=>x.id===propId);
   if(!p) return fail(null);
-  if(p.groupMergeId) return fail(`${p.name} fait partie d'un lot — hypothéquez le lot.`); // Section 312 — bogue 50
+  if(p.groupMergeId) return fail(`${p.name} fait désormais partie du lot ${GROUPS[p.group].label} regroupé — rien n’a été fait ; hypothéquez votre part du lot entier (menu Hypothéquer).`); // Section 312 — bogue 50 (message commun avec le lot 2)
   const share = propertyOwnedShare(p, borrowerId);
   if(share<=0) return fail('Vous ne possédez pas de part de ce terrain.');
   
@@ -17514,6 +17563,9 @@ function bindTabEvents(t){
     
     
     
+    // Section 312 — retouche de la revue : offres d'hypothèque reçues, aussi dans le Portefeuille.
+    document.querySelectorAll('[data-accept-mortgage-offer]').forEach(b=>b.addEventListener('click', ()=>modalAcceptMortgageOffer(b.dataset.acceptMortgageOffer)));
+    document.querySelectorAll('[data-refuse-mortgage-offer]').forEach(b=>b.addEventListener('click', ()=>refuseMortgageOffer(b.dataset.refuseMortgageOffer)));
     document.querySelectorAll('[data-submit-loan-offer]').forEach(b=>b.addEventListener('click', ()=>{
       const requestId = b.dataset.submitLoanOffer;
       const meNow = state.players.find(p=>p.id===myPlayerId);
@@ -18946,7 +18998,7 @@ function modalMortgageAsset(kind, assetId){
     describe: c=>`<div class="small">Emprunteur: ${esc(myCo.name)} · Votre part: ${c.share}% · Montant: ${fmt(c.principal)} (${Math.round(state.settings.mortgageLTV*100)}% de votre part ${isLot ? 'de la valeur intrinsèque du lot' : 'du prix de base — la valeur normale du terrain au Monopoly'}) · Taux: ${(c.rate*100).toFixed(1)}%/an (inclut la prime de risque selon l'endettement). ${state.settings.mortgageRentContinues?'Le loyer continue d\u2019être perçu normalement pendant l\u2019hypothèque.':'Votre part ne rapportera plus de loyer tant que l\u2019hypothèque est active.'} Si l'intérêt annuel ne peut être payé, votre part est saisie par le prêteur${isLot ? ' sur tous les terrains du lot' : ''}.</div>
       <label>Prêteur (doit pouvoir avancer ${fmt(c.principal)})</label>
       <select id="mLender">${insurerOptionsHtml(companyId, c.principal).replace(`value="${chosenLender}"`, `value="${chosenLender}" selected`)}</select>
-      <div class="small" style="margin-top:6px;">Banque : l'hypothèque est immédiate. Autre entreprise : une <b>offre</b> est envoyée à son CEO, qui l'accepte ou la refuse dans l'onglet de son entreprise ; rien n'est versé avant son acceptation, et tout est revérifié à ce moment.</div>`,
+      <div class="small" style="margin-top:6px;">Banque : l'hypothèque est immédiate. Autre entreprise : une <b>offre</b> est envoyée à son CEO, qui l'accepte ou la refuse avant le prochain lancer de dés (sinon elle expire) ; rien n'est versé avant son acceptation, et tout est revérifié à ce moment.</div>`,
     okLabel: ()=>'Confirmer',
     run: c=>{
       const lenderId = chosenLender || 'BANK';
@@ -19030,6 +19082,8 @@ function modalMortgageCompany(){
     const merged = !!p.groupMergeId;
     const host = merged ? lotMortgageHost(p.groupMergeId) : p;
     const isMortgaged = (host.mortgages||[]).some(m=>m.companyId===myCo.id);
+    // Section 312 — retouche de la revue : une part déjà proposée en hypothèque (offre en attente) n'est pas éligible.
+    if(!isMortgaged && (state.mortgageOffers||[]).some(o=>o.borrowerId===myCo.id && o.kind===(merged?'lot':'prop') && o.assetId===(merged?p.groupMergeId:p.id))) return;
     (isMortgaged?mortgaged:eligible).push({p, merged, host});
   });
   if(eligible.length===0 && mortgaged.length===0){

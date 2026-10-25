@@ -33,6 +33,14 @@ const ANCIEN_23 = src => {
   const out = src.replace(/applyRentLoanWithholding\(([^;]*?)\)(?=;|\s*:)/g, (m, args) => `(state.settings.features.loan ? applyLoanWithholding(${args}) : {net:${args.split(',')[1].trim()}, totalWithheld:0, withholdings:[]})`);
   return out;
 };
+// Retouche de la revue : contre-épreuve chemin par chemin. Ancien code réintroduit sur les seuls appels d'indices
+// donnés, dans l'ordre du source : 0-1 ABS (loyer d'une entreprise), 2 compensation, 3 loyer ordinaire,
+// 4-5 ABS (pion neutre), 6 pion neutre ordinaire.
+const ANCIEN_23_SUR = indices => src => {
+  let i = -1;
+  return src.replace(/applyRentLoanWithholding\(([^;]*?)\)(?=;|\s*:)/g, (m, args) => (++i, indices.includes(i)
+    ? `(state.settings.features.loan ? applyLoanWithholding(${args}) : {net:${args.split(',')[1].trim()}, totalWithheld:0, withholdings:[]})` : m));
+};
 
 // Partie à deux, option « Prêts » DÉCOCHÉE. Alpha (A) possède seule Bleu foncé 2 avec 2 maisons (loyer 6 M$) ; Beta (B) y tombe.
 async function setup(transform, names = ['Alice', 'Bob']){
@@ -191,6 +199,15 @@ async function bug24(variant, transform){
     try{ await bug23(eng, 'ancien'); }catch(e){ failed = e.message; }
     ok(failed && /23 :/.test(failed), `contre-épreuve : l'ancien code échoue (${failed})`);
   });
+  for(const [nom, indices, motif] of [['loyer ordinaire', [3], /23 : loyer de 6 M\$ payé par Beta/], ['pion neutre', [6], /23 : pion neutre/],
+    ['ABS, loyer d’une entreprise', [0, 1], /23 : terrain sous ABS/], ['ABS, pion neutre', [4, 5], /23 : terrain sous ABS/], ['accord de compensation', [2], /23 : accord de compensation/]]){
+    await scenario(`B. Bogue 23 — contre-épreuve sur le seul chemin « ${nom} »`, async () => {
+      const { eng } = await setup(ANCIEN_23_SUR(indices));
+      let failed = null;
+      try{ await bug23(eng, 'ancien : ' + nom); }catch(e){ failed = e.message; }
+      ok(failed && motif.test(failed), `contre-épreuve (${nom}) : l'ancien code sur ce seul chemin fait échouer sa vérification (${failed})`);
+    });
+  }
   await scenario('E. Bogue 24 — offre de prêt modifiée : nouvelle confirmation avant toute signature', async () => {
     await bug24('corrigé');
   });

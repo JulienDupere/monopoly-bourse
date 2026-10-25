@@ -169,6 +169,7 @@ const FENETRE_RESTE_OUVERTE = src => src.replace('  if(res && res.uncertain){ cl
 const IMBRIQUE_WARN = src => src.replace("console.error('attemptActionWithRetry imbriqué : exécuté dans l’action en cours.');", "console.warn('attemptActionWithRetry imbriqué : exécuté dans l’action en cours.');");
 const REDESSIN_RELANCE = src => src.replace('  if(!redraw) lastModalOpenMs = Date.now();\n', '  lastModalOpenMs = Date.now();\n');
 // Vérification des retouches : contre-épreuves de R4b et R7b.
+const SANS_CONNEXION_LENTE = src => src.replace('const slow = !offline && actionSaveStartedMs>0 && nowMs - actionSaveStartedMs >= ACTION_SLOW_NETWORK_MS;', 'const slow = false;');
 const SANS_GRACE_REPRISE = src => src.replace(' && nowMs - lastBecameVisibleMs >= OFFLINE_RESUME_GRACE_MS;', ';');
 const MARQUE_GARDEE_AU_RENDU = src => src.replace('  restoredUncommittedFields = new WeakSet(); // Section 308 — vérification des retouches', '  // Section 308 — vérification des retouches');
 
@@ -346,6 +347,26 @@ const MARQUE_GARDEE_AU_RENDU = src => src.replace('  restoredUncommittedFields =
         ok(L.run('firebaseConnected = false; firebaseDisconnectedSinceMs = 0; isKnownOffline()') === false, 'R4 : mode local (window.storage) : jamais de refus « hors ligne »');
       } else {
         ok(r2 === null && enVol === 2, 'R4 : contre-épreuve — sans le refus, la 2e action part en file et attend la reconnexion sans limite');
+      }
+    }
+  });
+
+  // =====================================================================================================
+  await scenario('R4c. Coupure silencieuse (« .info/connected » reste vrai) : au-delà de 8 s, l’indicateur passe à « connexion lente ou perdue »', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const T = await partieSolo(variante === 'ancien' ? { transform: SANS_CONNEXION_LENTE } : {});
+      const A = T.A;
+      A.run('firebaseConnected = true; saveGame = function(){ return new Promise(()=>{}); };');   // l'écriture ne reçoit jamais de réponse
+      A.run(`attemptActionWithRetry(async ()=>{ state.players[0].cash += 1; state.bank.cash -= 1; return {ok:true}; }, {label:'Virement test'})`);
+      await tick(10);
+      const tot = A.json('actionStatusIndicatorState(Date.now() + 1000)');
+      const tard = A.json('actionStatusIndicatorState(Date.now() + 8001)');
+      console.log(`    [${variante}] après 1 s : « ${tot.main} » (rouge ${tot.offline}) ; après 8 s : « ${tard.main} » (rouge ${tard.offline})`);
+      if(variante === 'corrigé'){
+        ok(/Enregistrement en cours/.test(tot.main) && !tot.offline, 'R4c : écriture sans réponse depuis 1 s : « Enregistrement en cours… », pas encore en rouge');
+        ok(/Connexion lente ou perdue/.test(tard.main) && /Virement test/.test(tard.main) && tard.offline, 'R4c : au-delà de 8 s sans réponse : « Connexion lente ou perdue (Virement test) », en rouge');
+      } else {
+        ok(/Enregistrement en cours/.test(tard.main) && !tard.offline, 'R4c : contre-épreuve — sans le chien de garde, « Enregistrement en cours… » reste affiché sans limite');
       }
     }
   });

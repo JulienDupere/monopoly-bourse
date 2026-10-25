@@ -2418,7 +2418,9 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
     }
     if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
     if(label) setMyActionStatus(label, 'pending');
-    const saved = await saveGame({silent:true});
+    noteActionSaveStart(); // Section 308 — essai sur l'émulateur : connexion lente ou coupure silencieuse
+    let saved;
+    try{ saved = await saveGame({silent:true}); } finally { noteActionSaveEnd(); }
     if(saved===true){ if(label) setMyActionStatus(label, 'confirmed'); return res; }
     failure = (saved==='conflict') ? 'conflict' : 'network';
     if(saved==='conflict' && stateHasActionId(state, actionId)){ if(label) setMyActionStatus(label, 'confirmed'); return res; } // déjà écrite (accusé perdu) : pas de rejeu
@@ -2533,16 +2535,30 @@ function flashActionStatus(text){
   updateActionStatusIndicator();
   setTimeout(updateActionStatusIndicator, ACTION_STATUS_FLASH_MS + 50);
 }
+// Section 308 — essai sur l'émulateur : une coupure « silencieuse » (Wi-Fi sans Internet, 4G saturée) n'est pas vue
+// par « .info/connected », qui reste vrai ; l'écriture attend alors sans réponse. Au-delà de ACTION_SLOW_NETWORK_MS,
+// l'indicateur passe au rouge « connexion lente ou perdue » (affichage seulement : l'action part dès que le serveur
+// répond, et la clé d'idempotence empêche tout doublon).
+const ACTION_SLOW_NETWORK_MS = 8000;
+let actionSaveStartedMs = 0;
+function noteActionSaveStart(){
+  actionSaveStartedMs = Date.now();
+  setTimeout(updateActionStatusIndicator, ACTION_SLOW_NETWORK_MS + 50);
+}
+function noteActionSaveEnd(){ actionSaveStartedMs = 0; }
 function actionStatusIndicatorState(nowMs){
   if(nowMs===undefined) nowMs = Date.now();
   const offline = !window.storage && firebaseConnected===false;
+  const slow = !offline && actionSaveStartedMs>0 && nowMs - actionSaveStartedMs >= ACTION_SLOW_NETWORK_MS;
   let main = '';
   if(actionsInFlight>0){
     const lbl = (myLastActionStatus && myLastActionStatus.status==='pending' && myLastActionStatus.label) ? ` (${myLastActionStatus.label})` : '';
-    main = offline ? `⏳ Enregistrement en attente du réseau${lbl} : votre action partira au retour de la connexion.` : `⏳ Enregistrement en cours…${lbl}`;
+    main = offline ? `⏳ Enregistrement en attente du réseau${lbl} : votre action partira au retour de la connexion.`
+      : slow ? `⏳ Connexion lente ou perdue${lbl} : votre action partira dès que le serveur répondra, sans doublon.`
+      : `⏳ Enregistrement en cours…${lbl}`;
   }
   const flash = (actionStatusFlash && nowMs < actionStatusFlash.untilMs) ? actionStatusFlash.text : '';
-  return {main, flash, offline: offline && !!main};
+  return {main, flash, offline: (offline || slow) && !!main};
 }
 function updateActionStatusIndicator(){
   const el = (typeof document!=='undefined') ? document.getElementById('actionStatusIndicator') : null;

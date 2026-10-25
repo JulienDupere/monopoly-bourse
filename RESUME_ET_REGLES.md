@@ -822,9 +822,11 @@ porte le commentaire « Section 308 ».
    (et plus de 4 s après le dernier retour au premier plan, le temps que le SDK se reconnecte au réveil du
    téléphone) est refusée (« Pas de connexion au serveur : action non envoyée… ») ; indicateur `#actionStatusIndicator` en bas
    d'écran (« ⏳ Enregistrement en cours… », « en attente du réseau » en rouge, clic ignoré signalé) ; une action
-   déjà en vol s'enregistre à la reconnexion, revérifiée sur l'état frais. La relecture après un accusé perdu ne
-   conclut « non écrite » que si la version lue dépasse la base de l'action (le vrai SDK répond à `once` depuis son
-   cache) ; sinon issue incertaine, et la fenêtre se ferme.
+   déjà en vol s'enregistre à la reconnexion, revérifiée sur l'état frais. Coupure « silencieuse » (Wi-Fi sans
+   Internet, 4G saturée : `.info/connected` reste vrai) : au-delà de 8 s sans réponse, l'indicateur passe au rouge
+   « Connexion lente ou perdue » (affichage seulement : l'action part dès que le serveur répond, sans doublon). La
+   relecture après un accusé perdu ne conclut « non écrite » que si la version lue dépasse la base de l'action (le
+   vrai SDK répond à `once` depuis son cache) ; sinon issue incertaine, et la fenêtre se ferme.
 
 **Banc d'essai multi-appareils** : `tests/helpers/fake-firebase.js` (faux serveur partagé, un faux SDK compat par
 appareil, transactions comme le vrai SDK, coupures, refus, fermeture de page, ordonnanceur à graine),
@@ -836,8 +838,11 @@ par tour, jamais après la fin, convergence). Sur le code d'avant : 22 cas sur 5
 
 **Tests** : `tests/section308-transaction`, `-tour`, `-clics`, `-formulaires`, `-retouches`, `-sync` ;
 `audit-bug5` (scénario C) et `section250` (A, D) adaptés : l'achat non enregistré est retiré de l'appareil. Chaque
-correctif a sa contre-épreuve. **15 fichiers, 1 187 vérifications et 53 cas multi-appareils, 0 échec ; 320 cas
-multi-appareils avec `SYNC_SEEDS=40`.**
+correctif a sa contre-épreuve. **15 fichiers, 1 190 vérifications et 53 cas multi-appareils, 0 échec ; 320 cas
+multi-appareils avec `SYNC_SEEDS=40`.** **Essai réel** avec le vrai SDK Firebase 10.14.1 contre l'émulateur local
+(projet `demo-monopoly`, règles `auth != null`, outils hors dépôt dans `C:\Users\Julien\tools\firebase-emulateur`) : 88 cas
+(actions concurrentes, Tour Terminé contre Forcer le tour, doubles clics, coupures franches et silencieuses,
+accusés perdus, rechargements), aucun invariant violé ; essai au navigateur à deux appareils concluant.
 
 **Mise en production** : demander à tous les joueurs de recharger la page (un ancien onglet reste compatible, mais
 n'a ni la file d'actions, ni la clé d'idempotence, ni l'écran « Vous êtes »).

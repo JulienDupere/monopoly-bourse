@@ -85,7 +85,7 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 
 ## Tests
 
-- `node tests/run-all.js` lance tous les `tests/*.test.js` (15 fichiers, 1 187 vérifications et 53 cas
+- `node tests/run-all.js` lance tous les `tests/*.test.js` (15 fichiers, 1 190 vérifications et 53 cas
   multi-appareils au 2026-10-24). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
   `tests/helpers/fake-firebase.js`, mini-DOM `tests/helpers/fake-dom.js` ; `SYNC_SEEDS=40` pour un passage long). Il charge
   tout le script d'`index.html`, donc une erreur de syntaxe le fait échouer. Tout doit passer avant un push.

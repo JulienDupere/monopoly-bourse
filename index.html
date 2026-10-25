@@ -7010,7 +7010,11 @@ function etfReservedCollectedPct(prop){
   if(!etfDef) return 0;
   const etf = state.etfs.find(e=>e.id===etfDef.key);
   if(!etf) return 0;
-  return Math.max(0, Math.min(reservedPct, etfTotalHeldPct(etf)));
+  // Section 310 — décision (bogue 54) : le visiteur ne paie que la part VENDUE de la réserve (réserve 10 %, 50 % des
+  // parts du REIT vendues = 5 % du loyer), versée au fonds et partagée entre les détenteurs (processEtfLap) ; la part
+  // non vendue n'est pas payée. Avant : min(réserve, parts vendues), qui mélangeait % du terrain et % du REIT (10 % de
+  // réserve et 50 % vendus faisaient payer les 10 % entiers). Toutes les voies du loyer passent par cette fonction.
+  return reservedPct * Math.max(0, Math.min(100, etfTotalHeldPct(etf))) / 100;
 }
 
 function companyRealEstateValue(company){
@@ -7406,7 +7410,7 @@ async function openAllEtfs(){
     
     
     
-    log(`Les REIT sont ouverts par l'administrateur — la banque commence à collecter le loyer de sa réserve permanente. Le lot entier de chaque REIT sera mis aux enchères au prochain 1er lancer d'année financière.`);
+    log(`Les REIT sont ouverts par l'administrateur. Le lot entier de chaque REIT sera mis aux enchères au prochain 1er lancer d'année financière. La réserve permanente de la banque ne se paie qu'au prorata des parts vendues : tant qu'aucune entreprise n'en détient, le visiteur ne paie pas cette part du loyer ; ensuite, il en paie la part vendue (réserve de 10 %, 50 % des parts vendues = 5 % du loyer), versée au fonds du REIT et partagée entre les détenteurs.`); // Section 310 — décision (bogue 54)
     return {ok:true};
   }, {label:'Ouvrir les REIT'});
   if(!res.ok){ if(res.error) alert(res.error); return; }

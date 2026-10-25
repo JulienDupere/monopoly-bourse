@@ -1868,14 +1868,14 @@ function lastActionEntryForPlayer(playerId){
   return state.log.find(e=>e.actorPlayerId===playerId) || null;
 }
 
-function showTransactionPopup(title, entries){
+function showTransactionPopup(title, entries, balanceNote){ // Section 317 — bogue 84 : balanceNote = explication d'une somme non nulle voulue (ex. dividende immobilisé)
   if(!entries || entries.length===0) return;
   const total = entries.reduce((s,e)=>s+e.amount,0);
   const rows = entries.map(e=>`<tr><td>${esc(e.label)}</td><td class="money" style="color:${e.amount<0?'var(--brick)':'#047857'};">${e.amount>=0?'+':''}${e.amount.toFixed(2)}</td></tr>`).join('');
   openModal(`
     <h3>${esc(title)}</h3>
     <table><tr><th>Compte</th><th>Débit / Crédit</th></tr>${rows}</table>
-    <div class="small" style="margin-top:8px;">Somme des mouvements: ${total.toFixed(4)} ${Math.abs(total)<0.005?'(équilibré)':'(écart d\u2019arrondi)'}</div>
+    <div class="small" style="margin-top:8px;">Somme des mouvements: ${total.toFixed(4)} ${Math.abs(total)<0.005?'(équilibré)':Math.abs(total)>=0.01?(balanceNote?'('+esc(balanceNote)+')':''):'(écart d\u2019arrondi)'}</div>
     <div class="modal-actions"><button class="btn btn-primary" id="mOk">OK</button></div>
   `);
   const btn = document.getElementById('mOk');
@@ -9470,10 +9470,13 @@ function advanceGameClock(){
         
       });
       const unclaimed = ann.amount - paidTotal;
+      // Section 317 — bogue 83 : la part non versée se compose de la part de la banque (jamais porteuse « réelle ») et, le cas échéant, de celle des actionnaires ayant vendu depuis l'annonce ; texte et lignes seulement, aucun montant ne change.
+      const soldPart = ann.recordHolders.reduce((t,rec)=>{ const ce = co.shareholders.find(s=>s.playerId===rec.playerId); return t + perShare*Math.max(0, rec.shares - Math.min(ce?ce.shares:0, rec.shares)); }, 0);
+      const bankPart = Math.max(0, unclaimed - soldPart);
       if(unclaimed > 1e-9){
         co.cash += unclaimed; 
         logFin(co.id, 'dividend_forfeited_return', unclaimed);
-        entries.push({label:`${co.name} (portion de dividende non réclamée — retour trésorerie)`, amount:unclaimed});
+        entries.push({label:`${co.name} (portion de dividende non versée — part de la banque${soldPart>1e-9?" ou d'actionnaires ayant vendu":''} — retour trésorerie)`, amount:unclaimed}); // Section 317 — bogue 83
       }
       const bankPaid = settleBankDividendExcess(co, paidTotal, ann.amount, entries); // Section 307 — la banque paie sa position négative
       const dividendPerShare = perShare; // Section 307 — les découverts paient au même taux par part que les porteurs
@@ -9483,9 +9486,10 @@ function advanceGameClock(){
           const owed = dividendPerShare*shortPos.shares;
           pl.cash -= owed; state.bank.cash += owed;
           entries.push({label:`${pl.name} (paiement compensatoire — position à découvert sur ${co.name})`, amount:-owed});
+          entries.push({label:`Banque (paiement reçu du vendeur à découvert ${pl.name} — ${co.name})`, amount:owed}); // Section 317 — bogue 83 : la banque encaisse, elle apparaît au journal
         }
       });
-      log(`${co.name} verse son dividende annoncé de ${fmt(ann.amount)} (annoncé au lancer #${ann.announcedAtRoll}) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non réclamé (actionnaire(s) ayant vendu depuis l'annonce)`:''}${bankPaid>1e-9?`, dont ${fmt(bankPaid)} payé par la banque (position négative sur ${co.name})`:''}.`, entries); // Section 307 — mention du paiement de la banque
+      log(`${co.name} verse son dividende annoncé de ${fmt(ann.amount)} (annoncé au lancer #${ann.announcedAtRoll}) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non versé, rendu à la trésorerie (${[bankPart>1e-9?`${fmt(bankPart)} de part de la banque`:'', soldPart>1e-9?`${fmt(soldPart)} d'actionnaire(s) ayant vendu depuis l'annonce`:''].filter(Boolean).join(' et ')})`:''}${bankPaid>1e-9?`, dont ${fmt(bankPaid)} payé par la banque (position négative sur ${co.name})`:''}.`, entries); // Section 307 — mention du paiement de la banque
     });
     state.dividendAnnouncements = state.dividendAnnouncements.filter(a=>a.payAtRoll>state.gameClock.rollCount);
     
@@ -9548,6 +9552,7 @@ function advanceGameClock(){
               const owed = perShare*shortPos.shares;
               pl.cash -= owed; state.bank.cash += owed;
               entries.push({label:`${pl.name} (paiement compensatoire — position à découvert sur ${co.name})`, amount:-owed});
+              entries.push({label:`Banque (paiement reçu du vendeur à découvert ${pl.name} — ${co.name})`, amount:owed}); // Section 317 — bogue 83 : la banque encaisse, elle apparaît au journal
             }
           });
           log(`${co.name} verse automatiquement son dividende de ${fmt(autoAmount)} (auto-versement activé, benchmark ${fmtPrice(co.dividendBenchmarkPerShare)}/part) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non versé (part de la banque, retourné en trésorerie)`:''}${bankPaid>1e-9?`, dont ${fmt(bankPaid)} payé par la banque (position négative sur ${co.name})`:''}.`, entries); // Section 307 — mention du paiement de la banque
@@ -20615,7 +20620,7 @@ function modalAnnounceDividend(){
       }
       return {ok:true, entries, coName:co.name};
     });
-    if(res && res.ok && res.entries) showTransactionPopup(`Dividende annoncé — ${res.coName}`, res.entries);
+    if(res && res.ok && res.entries) showTransactionPopup(`Dividende annoncé — ${res.coName}`, res.entries, 'montant immobilisé jusqu\'au versement, il sera distribué aux actionnaires : ce n\'est pas un écart'); // Section 317 — bogue 84 : plus d'« écart d'arrondi » pour tout le dividende
   });
 }
 
@@ -20633,6 +20638,8 @@ function modalDividendRecurrentSettings(){
   
   
   const baseBenchmark = myCo.dividendRecurrentNeedsReset ? myCo.dividendBenchmarkFounding : myCo.dividendBenchmarkPerShare;
+  // Section 317 — bogue 82 : coût réel pour l'entreprise = montant par part × parts des porteurs réels (la part de la banque est rendue à la trésorerie) ; plafonné aux parts émises (une banque négative paie elle-même l'excédent).
+  const dividendPaidShares = Math.min(myCo.sharesIssued, myCo.shareholders.filter(s=>s.playerId!=='BANK' && s.shares>1e-9).reduce((t,s)=>t+s.shares,0));
   const resetNoticeHtml = myCo.dividendRecurrentNeedsReset
     ? `<div class="small" style="margin-bottom:10px;color:var(--brick,#C0392B);">⚠️ Le dividende récurrent a été suspendu (rien versé au dernier semestre) — le réactiver repart du niveau de fondation (${fmtPrice(myCo.dividendBenchmarkFounding)}/part), pas d'où il était avant la coupure. Les cubes, eux, restent intacts tant qu'ils ne sont pas piochés (ils doivent être tirés pour redevenir blancs).</div>`
     : '';
@@ -20649,7 +20656,7 @@ function modalDividendRecurrentSettings(){
     <div class="small" style="display:flex;justify-content:space-between;margin-top:2px;"><span>◀ Diminuer</span><span>Augmenter ▶</span></div>
     <div class="small" style="margin-top:10px;padding:8px 10px;background:var(--bg-alt,rgba(127,127,127,0.08));border-radius:6px;">
       Dividende par part: <b id="mDivPerShare">${fmtPrice(baseBenchmark)}</b>/part<br>
-      Coût total par semestre: <b id="mDivTotalCost">${fmt(baseBenchmark*myCo.sharesIssued)}</b>
+      Coût total par semestre (hors part de la banque, rendue à la trésorerie): <b id="mDivTotalCost">${fmt(baseBenchmark*dividendPaidShares)}</b>
     </div>
     <div class="small" id="mDivCutWarning" style="display:none;margin-top:8px;color:var(--brick,#C0392B);">${cutWarningHtml}</div>
     <div class="small" style="margin-top:8px;color:var(--muted);">Rappel : si les dividendes versés dans un semestre dépassent le bénéfice net de ce semestre, ${DIVIDEND_OVERPAYOUT_RED_CUBES} cubes de votre sac type passent au rouge à la clôture (les blancs d'abord, puis les verts).</div>
@@ -20667,7 +20674,7 @@ function modalDividendRecurrentSettings(){
     const perShare = baseBenchmark * pct;
     document.getElementById('mDivTierLabel').textContent = tierLabel(tier);
     document.getElementById('mDivPerShare').textContent = fmtPrice(perShare);
-    document.getElementById('mDivTotalCost').textContent = fmt(perShare*myCo.sharesIssued);
+    document.getElementById('mDivTotalCost').textContent = fmt(perShare*dividendPaidShares); // Section 317 — bogue 82
     const cutWarn = document.getElementById('mDivCutWarning');
     if(cutWarn) cutWarn.style.display = tier<3 ? 'block' : 'none';
   };

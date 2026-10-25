@@ -104,7 +104,7 @@ const CLIC_DIRECT = "  if(!sameConditions(shown, fresh)){ openFresh(); return {o
     await A.cliquer('#mOk');
     const t = A.json('state.taxInsurances');
     ok(t.length === 1 && t[0].deductible === 0 && near(t[0].premium, prime0), `2e clic : contrat à franchise 0 au prix ${f4(prime0)} (et non ${f4(prime19)})`);
-    ok(near(t[0].coveredAmount, 2), 'montant couvert enregistré : 2 (impôt plafonné à 2, franchise 0)');
+    ok(t[0].coveredAmount === null, 'aucun plafond enregistré sur la taxe (décision de Julien du 2026-10-25 : taxes non plafonnées)');
     ok(near(A.run('myCompany().cash'), cash0 - prime0) && near(A.eng.cashTotal(), m0), 'prime payée = prime confirmée ; monnaie conservée');
     ok(A.run('myCompany().currentDeductible') === 0, 'la franchise confirmée devient celle du tour');
     ok(!A.doc.trouver('mOk'), 'la fenêtre est fermée');

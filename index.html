@@ -8583,8 +8583,8 @@ async function payTax(companyId, taxPos, opts){
   const entries = [];
   if(ins){
     const deductible = Math.min(sanitizeDeductible(ins.deductible), cost); // Section 313 — bogue 14 : franchise bornée
-    const insurerPortion = insurerExists(ins.insurerId) ? insuranceIndemnity(cost, deductible, ins, null) : 0; // Section 313 — bogue 39 : plafond = montant couvert à la signature ; retouche de la revue : assureur introuvable = non assuré (avant : argent créé)
-    const beyondCover = cost - deductible - insurerPortion; // Section 313 — bogue 39 : payé par l'assuré
+    const insurerPortion = insurerExists(ins.insurerId) ? Math.max(0, cost - deductible) : 0; // Section 313 — décision de Julien (2026-10-25) : taxe non plafonnée (le plafond du bogue 39 ne vise que les loyers ; avant : l'assuré payait la hausse naturelle de l'Impôt sur le revenu) ; retouche de la revue : assureur introuvable = non assuré (avant : argent créé)
+    const beyondCover = cost - deductible - insurerPortion; // Section 313 — payé par l'assuré (assureur introuvable seulement, décision de Julien du 2026-10-25)
     
     
     
@@ -8602,7 +8602,7 @@ async function payTax(companyId, taxPos, opts){
     }
     state.bank.cash += cost;
     entries.push({label:'Banque (taxe perçue)', amount:cost});
-    log(`${co.name} devait payer « ${label} » (${fmt(cost)}) — assuré auprès de ${insurerLabel(ins.insurerId)}, ${fmt(deductible)} de franchise payée par ${co.name}${beyondCover>1e-12 ? `, plus ${fmt(beyondCover)} au-delà du montant couvert à la signature` : ''}.`, entries); // Section 313 — bogue 39
+    log(`${co.name} devait payer « ${label} » (${fmt(cost)}) — assuré auprès de ${insurerLabel(ins.insurerId)}, ${fmt(deductible)} de franchise payée par ${co.name}${beyondCover>1e-12 ? `, plus ${fmt(beyondCover)} à sa charge (assureur introuvable)` : ''}.`, entries); // Section 313 — décision de Julien (2026-10-25) : taxe non plafonnée
     if(ins.claimMode==='single') state.taxInsurances = state.taxInsurances.filter(t=>t!==ins); 
   } else {
     co.cash -= cost; state.bank.cash += cost;
@@ -8728,7 +8728,7 @@ async function purchaseInsuranceBundle(selections, claimMode, term, opts){
         
         p.insurance = {insuredCompanyId:myCo.id, premium:s.premium, insurerId, deductible, contractId, claimMode:fresh.claimMode, signedAtRoll:state.gameClock.rollCount, quotedTerm:term||null, coveredAmount:s.item.covered};
       } else {
-        state.taxInsurances.push({id:uid(), contractId, taxPos:s.item.id, insuredCompanyId:myCo.id, premium:s.premium, insurerId, deductible, claimMode:fresh.claimMode, signedAtRoll:state.gameClock.rollCount, quotedTerm:term||null, coveredAmount:s.item.covered});
+        state.taxInsurances.push({id:uid(), contractId, taxPos:s.item.id, insuredCompanyId:myCo.id, premium:s.premium, insurerId, deductible, claimMode:fresh.claimMode, signedAtRoll:state.gameClock.rollCount, quotedTerm:term||null, coveredAmount:null}); // Section 313 — décision de Julien (2026-10-25) : taxe non plafonnée
       }
     });
     myCo.cash -= totalPremium;
@@ -8955,7 +8955,7 @@ function liveTakeoverTaxQuote(taxPos, insuredCompanyId, claimMode, originalDeduc
   const co = companyById(insuredCompanyId);
   const dist = co ? distanceBetween(co.position, taxPos) : null;
   const prob = co && dist!=null ? (claimMode==='single' ? landingProbabilityOverRolls(dist, termRolls) : expectedLandingsOverRolls(dist, termRolls)) : 0;
-  const cost = capInsuredExposure(Math.max(0, taxSquareCost(taxPos, insuredCompanyId) - sanitizeDeductible(originalDeductible)), coveredAmount); // Section 313 — bogues 14 et 39
+  const cost = Math.max(0, taxSquareCost(taxPos, insuredCompanyId) - sanitizeDeductible(originalDeductible)); // Section 313 — bogue 14 ; décision de Julien (2026-10-25) : taxe non plafonnée, reprise sur le montant actuel
   const markup = state.settings.insuranceMarkup;
   const expectedLoss = prob*cost;
   return {dist, prob, exposure:cost, ceil: Math.max(0, expectedLoss*(1+markup)), termRolls};
@@ -20218,10 +20218,10 @@ function insuranceSubWarningHtml(it, term, companyId){
 function insuranceBundleDescribe(c){
   const termLabel = c.term==='sub' ? 'Assurance sous-standard (le tout prochain lancé)' : `${c.term==='semester' ? 'Semestre' : 'Année financière'} (${c.termRolls} lancé(s) restant(s))`;
   return `<div class="small" style="margin-bottom:6px;">${esc(c.companyName)} — ${esc(termLabel)}${c.claimMode ? ` — ${c.claimMode==='single' ? 'un seul sinistre par case' : 'sinistres récurrents'}` : ''} — franchise <b>${fmt(c.deductible)}</b> — vendeur : Banque.</div>
-    <table><tr><th>Case</th><th>Couvert au plus</th><th>Prime</th></tr>${c.items.map(i=>`<tr><td>${esc(i.label)}${insuranceSubWarningHtml(i, c.term)}</td><td class="money">${fmt(i.covered)}${insuranceItemIsService(i) ? ' pour un lancer de 7 (ajusté au lancer réel)' : ''}</td><td class="money">${fmt(i.premium)}</td></tr>`).join('')}</table>
+    <table><tr><th>Case</th><th>Couvert au plus</th><th>Prime</th></tr>${c.items.map(i=>`<tr><td>${esc(i.label)}${insuranceSubWarningHtml(i, c.term)}</td><td class="money">${fmt(i.covered)}${insuranceItemIsService(i) ? ' pour un lancer de 7 (ajusté au lancer réel)' : ''}${i.type==='tax' ? ' aujourd’hui (non plafonné)' : ''}</td><td class="money">${fmt(i.premium)}</td></tr>`).join('')}</table>
     <div class="small" style="margin-top:6px;font-weight:700;">Prime totale : ${fmt(c.total)}</div>
     ${c.dropped.length ? `<div class="small" style="margin-top:6px;color:var(--brick,#C0392B);">Retiré(e)s du contrat (déjà assuré(e)s entre-temps ou plus assurables depuis la position actuelle) : ${esc(c.dropped.join(', '))}.</div>` : ''}
-    <div class="small" style="margin-top:6px;">L’indemnité de chaque case est plafonnée au montant couvert ci-dessus, même si le loyer augmente ensuite (maisons construites…) ; l’excédent reste à votre charge (service : montant pour un lancer de 7, ajusté au lancer réel).</div>`;
+    <div class="small" style="margin-top:6px;">L’indemnité de chaque terrain est plafonnée au montant couvert ci-dessus, même si le loyer augmente ensuite (maisons construites…) ; l’excédent reste à votre charge (service : montant pour un lancer de 7, ajusté au lancer réel). Les cases taxe ne sont pas plafonnées : la taxe due au sinistre est couverte en entier (moins la franchise).</div>`; // Section 313 — décision de Julien (2026-10-25)
 }
 async function confirmInsuranceBundle(companyId, keys, claimMode, term, deductible, shown){
   const compute = ()=>insuranceBundleConditions(companyId, keys, claimMode, term, deductible);

@@ -5,7 +5,8 @@
 // 15 / 49 : la prime affichée à l'ouverture était réutilisée à la confirmation (nouvelle franchise, ou position
 //      changée par un lancer) : le moteur recalcule la prime sur l'état frais et refuse (« conditions changées »)
 //      si elle diffère de celle confirmée.
-// 39 (décision de Julien) : l'indemnité est plafonnée au montant couvert affiché à la signature.
+// 39 (décision de Julien) : l'indemnité est plafonnée au montant couvert affiché à la signature — loyers seulement,
+//      les cases taxe ne sont plus plafonnées (décision de Julien du 2026-10-25, tests/section313-decisions.test.js).
 // 40 : un type d'assurance désactivé par le créateur ne se vend plus.
 // 48 : une case taxe déjà assurée par l'entreprise n'est plus reproposée ni revendue.
 // 52 : pas d'assurance sous-standard sur un terrain déjà couvert par la propre assurance normale de l'entreprise.
@@ -141,7 +142,7 @@ const KEY_P = { type:'prop', id:'p21' };
     ok(near(s0.bank - s1.bank, 0.3) && near(s0.A - s1.A, 0.2), `terrain nu (0,5) : banque 0,3, A 0,2 — obtenu ${f4(s0.bank - s1.bank)} / ${f4(s0.A - s1.A)}`);
   });
 
-  await scenario('39c — sous-standard et taxe : même plafond', async () => {
+  await scenario('39c — sous-standard plafonnée ; taxe NON plafonnée (décision de Julien du 2026-10-25)', async () => {
     const eng = await partie();
     eng.run('state.gameClock.rollCount = 1; A.position = 30;');
     const r = await signer(eng, [KEY_P], 'sub', 0);
@@ -154,12 +155,12 @@ const KEY_P = { type:'prop', id:'p21' };
     // Impôt sur le revenu : 10 % de la valeur, au plus 2. Valeur 8 à la signature (impôt 0,8), 20 au sinistre (2).
     eng.run(`state.gameClock.rollCount = 0; globalThis.__val = 8; const __cv = companyValue; companyValue = c => (c && c.id===A.id) ? globalThis.__val : __cv(c);`);
     const rt = await signer(eng, [{ type:'tax', id:4 }], 'year', 0);
-    ok(rt.ok && near(eng.json('state.taxInsurances[0].coveredAmount'), 0.8), 'Impôt assuré avec une valeur de 8 : couvert 0,8');
+    ok(rt.ok && eng.json('state.taxInsurances[0].coveredAmount') === null, 'Impôt assuré avec une valeur de 8 (montant actuel 0,8) : aucun plafond enregistré');
     eng.run('globalThis.__val = 20;');
     s0 = snap(eng); const m0 = eng.cashTotal();
     await eng.run(`payTax(A.id, 4, {skipSave:true})`);
     s1 = snap(eng);
-    ok(near(s0.A - s1.A, 1.2) && near(s1.bank - s0.bank, 2 - 0.8) && near(eng.cashTotal(), m0), `impôt de 2 : assureur 0,8, A 1,2 ; monnaie conservée — obtenu A ${f4(s0.A - s1.A)}`);
+    ok(near(s0.A - s1.A, 0) && near(s1.bank - s0.bank, 0) && near(eng.cashTotal(), m0), `impôt de 2 : l’assureur (banque) paie 2, A rien ; monnaie conservée — obtenu A ${f4(s0.A - s1.A)} (avant la décision : 1,2)`);
   });
 
   await scenario('39d — service : plafond ramené au lancer réel (montant affiché pour 7) ; 2e service acheté ensuite', async () => {
@@ -227,7 +228,7 @@ const KEY_P = { type:'prop', id:'p21' };
     ok(near(s0.bank - snap(eng).bank, 20), 'contre-épreuve : la banque paie 20 avec l’ancien code');
   });
 
-  await scenario('39g — contre-épreuves : plafond du sous-standard et des taxes retirés', async () => {
+  await scenario('39g — contre-épreuves : plafond du sous-standard retiré ; plafond des taxes réintroduit', async () => {
     let eng = await partie({ transform: s => s.replace("insurerExists(subInsured.insurerId) ? insuranceIndemnity(payable, deductible, subInsured, p.type==='service' ? diceTotal : null) : 0;", "payable - deductible;") });
     eng.run('state.gameClock.rollCount = 1;');
     await signer(eng, [KEY_P], 'sub', 0);
@@ -235,13 +236,13 @@ const KEY_P = { type:'prop', id:'p21' };
     let s0 = snap(eng);
     await eng.run(`settlePropertyRent(P, A.id, 9, {skipSave:true})`);
     ok(near(s0.bank - snap(eng).bank, 20), 'contre-épreuve sous-standard : la banque paie 20 (au lieu de 0,5)');
-    eng = await partie({ transform: s => s.replace("insurerExists(ins.insurerId) ? insuranceIndemnity(cost, deductible, ins, null) : 0;", "cost - deductible;") });
+    eng = await partie({ transform: s => s.replace("insurerExists(ins.insurerId) ? Math.max(0, cost - deductible) : 0;", "insurerExists(ins.insurerId) ? insuranceIndemnity(cost, deductible, ins, null) : 0;").replace("coveredAmount:null}); // Section 313 — décision de Julien (2026-10-25) : taxe non plafonnée", "coveredAmount:s.item.covered});") });
     eng.run(`globalThis.__val = 8; const __cv = companyValue; companyValue = c => (c && c.id===A.id) ? globalThis.__val : __cv(c);`);
     await signer(eng, [{ type:'tax', id:4 }], 'year', 0);
     eng.run('globalThis.__val = 20;');
     s0 = snap(eng);
     await eng.run(`payTax(A.id, 4, {skipSave:true})`);
-    ok(near(s0.A - snap(eng).A, 0), 'contre-épreuve taxe : A ne paie rien, l’assureur paie l’impôt entier (2 au lieu de 0,8)');
+    ok(near(s0.A - snap(eng).A, 1.2), 'contre-épreuve taxe (plafond réintroduit) : A paie 1,2 de l’impôt de 2 — 39c détecte la régression');
   });
 
   // ---------------------------------------------------------------- Retouches de la revue
@@ -263,12 +264,12 @@ const KEY_P = { type:'prop', id:'p21' };
     ok(near(eng.cashTotal(), m0) && near(s0.A - s1.A, 1) && near(s1.bank - s0.bank, 1), `taxe : A paie 1, la banque perçoit 1, monnaie conservée (écart ${f4(eng.cashTotal() - m0)})`);
     ok(eng.json('state.log.slice(0, 3)').some(e => /introuvable/.test(JSON.stringify(e))), 'le journal signale l’assureur introuvable');
   });
-  await scenario('R4b — contre-épreuve : ancien code, l’indemnité n’est débitée de personne (+0,4 créé)', async () => {
-    const eng = await partie({ transform: s => s.replace("insurerExists(ins.insurerId) ? insuranceIndemnity(cost, deductible, ins, null) : 0;", "insuranceIndemnity(cost, deductible, ins, null);") });
+  await scenario('R4b — contre-épreuve : ancien code, l’indemnité n’est débitée de personne (+1 créé, taxe non plafonnée)', async () => {
+    const eng = await partie({ transform: s => s.replace("insurerExists(ins.insurerId) ? Math.max(0, cost - deductible) : 0;", "Math.max(0, cost - deductible);") });
     eng.run(`state.taxInsurances = [{id:'t', contractId:'k2', taxPos:38, insuredCompanyId:A.id, premium:0.1, insurerId:'disparue', deductible:0, claimMode:'recurring', signedAtRoll:0, quotedTerm:'year', coveredAmount:0.4}];`);
     const m0 = eng.cashTotal();
     await eng.run(`payTax(A.id, 38, {skipSave:true})`);
-    ok(near(eng.cashTotal() - m0, 0.4), `contre-épreuve : ${f4(eng.cashTotal() - m0)} M$ créés`);
+    ok(near(eng.cashTotal() - m0, 1), `contre-épreuve : ${f4(eng.cashTotal() - m0)} M$ créés`);
   });
 
   await scenario('R5 — franchise changée par la confirmation : journalisée ; contrats affichés avec une franchise bornée', async () => {

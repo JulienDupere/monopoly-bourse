@@ -5705,7 +5705,7 @@ function renderEntreprise(){
       return `<tr><td>${statusLabel}</td><td>${fmtShares(i.qty)}</td><td class="money">${fmtPrice(i.issuePrice)}</td><td>${(i.dividendRate*100).toFixed(2)}%/an</td><td class="money">${fmtPrice(i.callPrice)}</td><td>${fmtShares(i.qtyOutstanding)}</td><td>${callBtn}</td></tr>`;
     }).join('');
     const dueHtml = company.preferredDividendDueThisYear
-      ? `<div class="small" style="margin-bottom:6px;">Dividende préférentiel dû (année financière ${company.preferredDividendDueThisYear.year}): <b class="money">${fmt(company.preferredDividendDueThisYear.amount)}</b> <button class="btn btn-pale-success btn-sm" data-pay-preferred-due="${company.id}">Payer maintenant</button></div>`
+      ? `<div class="small" style="margin-bottom:6px;">Dividende préférentiel dû (année financière ${displayGameYear(company.preferredDividendDueThisYear.year)}): <b class="money">${fmt(company.preferredDividendDueThisYear.amount)}</b> <button class="btn btn-pale-success btn-sm" data-pay-preferred-due="${company.id}">Payer maintenant</button></div>`
       : '';
     const arrearsHtml = (company.preferredDividendArrears>0)
       ? `<div class="small" style="margin-bottom:6px;color:var(--brick,#C0392B);">⚠️ Arriérage de dividende préférentiel: <b>${fmt(company.preferredDividendArrears)}</b> — le dividende ordinaire est bloqué tant qu'il n'est pas réglé. <button class="btn btn-brick btn-sm" data-pay-preferred-arrears="${company.id}">Payer l'arriérage</button></div>`
@@ -7428,7 +7428,7 @@ async function submitEtfBid(companyId, etfId, price){
     if(clampedPrice>co.cash+1e-9) return {ok:false, error:`${co.name} ne peut pas miser plus que son encaisse actuelle (${fmt(co.cash)}).`};
     etf.bids = (etf.bids||[]).filter(b=>b.companyId!==companyId);
     if(clampedPrice>=ETF_MIN_BID) etf.bids.push({companyId, price:clampedPrice});
-    log(`${co.name} soumet une mise pour le ${etfLabel(etfId)} de l'année ${currentGameYear()}: ${clampedPrice>=ETF_MIN_BID?fmt(clampedPrice):'aucune mise (pas intéressée)'}.`);
+    log(`${co.name} soumet une mise pour le ${etfLabel(etfId)} de l'année ${displayGameYear()}: ${clampedPrice>=ETF_MIN_BID?fmt(clampedPrice):'aucune mise (pas intéressée)'}.`);
     return {ok:true};
   }, {label:'Mise REIT'});
   if(!res.ok){ if(res.error) alert(res.error); return; }
@@ -7483,7 +7483,7 @@ function resolveEtfAuction(etf, year){
   if(!etf.priceHistory) etf.priceHistory = [];
   etf.priceHistory.push({roll: state.gameClock.rollCount, year, price: winner.price});
   if(etf.priceHistory.length>500) etf.priceHistory.shift();
-  log(`${winnerCo.name} remporte l'enchère du ${etfLabel(etf.id)} de l'année ${year} à ${fmt(winner.price)} pour l'ensemble du lot.`, entries);
+  log(`${winnerCo.name} remporte l'enchère du ${etfLabel(etf.id)} de l'année ${displayGameYear(year)} à ${fmt(winner.price)} pour l'ensemble du lot.`, entries);
 }
 
 function maybeResolveEtfAuctions(){
@@ -7955,7 +7955,7 @@ function render(){
         ${state.players.map(p=>`<option value="${p.id}" ${p.id===myPlayerId?'selected':''}>${esc(p.name)}</option>`).join('')}
       </select>
     </div>
-    <div>Banque: <b>${fmt(state.bank.cash)}</b> &nbsp;|&nbsp; Année : <b>${currentGameYear()}</b> (semestre ${currentSemesterInYear()}/2 — ${rollsInCurrentSemester()}/3)${readyHeaderHtml}${gameEndedHeaderHtml}${bankGraceHeaderHtml} &nbsp;|&nbsp; <span style="cursor:pointer;text-decoration:underline;" id="leaveGame">quitter la partie</span></div>
+    <div>Banque: <b>${fmt(state.bank.cash)}</b> &nbsp;|&nbsp; Année : <b>${displayGameYear()}</b> (semestre ${currentSemesterInYear()}/2 — ${rollsInCurrentSemester()}/3 lancers faits)${readyHeaderHtml}${gameEndedHeaderHtml}${bankGraceHeaderHtml} &nbsp;|&nbsp; <span style="cursor:pointer;text-decoration:underline;" id="leaveGame">quitter la partie</span></div>
   </div>
   ${actionStatusRowHtml}
   ${periodEndBannerHtml}
@@ -9151,6 +9151,8 @@ function pushHistorySnapshot(roll, year){
 
 
 function currentGameYear(){ return Math.floor(state.gameClock.rollCount/6); } 
+// Section 317 — bogue 95 : currentGameYear() reste l'indice interne (0 = première année ; il sert de clé aux enchères, au plafond de vente CEO, à la durée cachée de la partie) ; tout ce que le joueur LIT passe par displayGameYear() : année 1 = première année, comme dans les états financiers.
+function displayGameYear(y){ return (y===undefined || y===null ? currentGameYear() : y) + 1; }
 function currentSemesterInYear(){ return Math.floor((state.gameClock.rollCount%6)/3) + 1; } 
 function rollsInCurrentSemester(){ return state.gameClock.rollCount % 3; } 
 
@@ -9212,7 +9214,7 @@ async function submitTerrainLotBid(companyId, price, loyer, numSquares){
     const clampedPrice = Math.max(0, price||0);
     state.terrainLot.bids = state.terrainLot.bids.filter(b=>b.companyId!==companyId);
     state.terrainLot.bids.push({companyId, price: clampedPrice, loyer: clampedLoyer, numSquares: clampedSquares});
-    log(`${co.name} soumet une mise pour le lot commercial de l'année ${currentGameYear()}: prix ${fmt(clampedPrice)}, loyer ${fmt(clampedLoyer)}/case, ${clampedSquares} case(s).`);
+    log(`${co.name} soumet une mise pour le lot commercial de l'année ${displayGameYear()}: prix ${fmt(clampedPrice)}, loyer ${fmt(clampedLoyer)}/case, ${clampedSquares} case(s).`);
     return {ok:true};
   }, {label:'Mise — lot commercial'});
   if(!res.ok){ if(res.error) alert(res.error); return; }
@@ -9228,7 +9230,7 @@ function resolveTerrainLotAuction(year){
   const squares = TERRAIN_LOT_CANDIDATE_POSITIONS.slice(0, winner.numSquares);
   state.terrainLot.active = {companyId: winner.companyId, price: winner.price, loyer: winner.loyer, numSquares: winner.numSquares, squares, accrued: 0, year};
   const co = companyById(winner.companyId);
-  log(`${co?co.name:'?'} remporte l'enchère du lot commercial de l'année ${year}: prix ${fmt(winner.price)}, loyer ${fmt(winner.loyer)}/case, ${winner.numSquares} case(s) (positions ${squares.join(', ')}).`);
+  log(`${co?co.name:'?'} remporte l'enchère du lot commercial de l'année ${displayGameYear(year)}: prix ${fmt(winner.price)}, loyer ${fmt(winner.loyer)}/case, ${winner.numSquares} case(s) (positions ${squares.join(', ')}).`);
 }
 
 function maybeResolveTerrainLotAuction(){
@@ -9245,7 +9247,7 @@ function settleTerrainLotYearEnd(endedYear, roll){
   const balance = active.accrued - active.price;
   state.terrainLot.lastResult = {year: endedYear, companyId: active.companyId, price: active.price, loyer: active.loyer, numSquares: active.numSquares, squares: active.squares, accrued: active.accrued, balance};
   if(!winner || others.length===0 || Math.abs(balance)<1e-9){
-    log(`Lot commercial de l'année ${endedYear} réglé: solde nul ou aucune autre entreprise active — aucun mouvement.`);
+    log(`Lot commercial de l'année ${displayGameYear(endedYear)} réglé: solde nul ou aucune autre entreprise active — aucun mouvement.`);
     return;
   }
   const share = Math.abs(balance) / others.length;
@@ -9258,7 +9260,7 @@ function settleTerrainLotYearEnd(endedYear, roll){
     logFin(winner.id, 'terrain_lot_revenue', share*others.length, roll);
     addTerrainLotRevenue(winner.id, share*others.length);
     entries.push({label:`${winner.name} (lot commercial — profit encaissé)`, amount: share*others.length});
-    log(`Lot commercial de l'année ${endedYear} réglé: ${winner.name} empoche un profit de ${fmt(balance)} (prix ${fmt(active.price)}, loyers commerciaux accumulés ${fmt(active.accrued)}) — financé à parts égales de ${fmt(share)} par ${others.map(o=>o.name).join(', ')}.`, entries);
+    log(`Lot commercial de l'année ${displayGameYear(endedYear)} réglé: ${winner.name} empoche un profit de ${fmt(balance)} (prix ${fmt(active.price)}, loyers commerciaux accumulés ${fmt(active.accrued)}) — financé à parts égales de ${fmt(share)} par ${others.map(o=>o.name).join(', ')}.`, entries);
   } else {
     
     
@@ -9267,7 +9269,7 @@ function settleTerrainLotYearEnd(endedYear, roll){
     addTerrainLotCapex(winner.id, share*others.length);
     entries.push({label:`${winner.name} (lot commercial — pari raté, versé aux autres)`, amount: -share*others.length});
     others.forEach(o=>{ o.cash += share; logFin(o.id, 'terrain_lot_revenue', share, roll); addTerrainLotRevenue(o.id, share); entries.push({label:`${o.name} (lot commercial — part reçue)`, amount: share}); });
-    log(`Lot commercial de l'année ${endedYear} réglé: ${winner.name} rate son pari de ${fmt(Math.abs(balance))} (prix ${fmt(active.price)}, loyers commerciaux accumulés ${fmt(active.accrued)}) — verse ${fmt(share)} chacun à ${others.map(o=>o.name).join(', ')}.`, entries);
+    log(`Lot commercial de l'année ${displayGameYear(endedYear)} réglé: ${winner.name} rate son pari de ${fmt(Math.abs(balance))} (prix ${fmt(active.price)}, loyers commerciaux accumulés ${fmt(active.accrued)}) — verse ${fmt(share)} chacun à ${others.map(o=>o.name).join(', ')}.`, entries);
   }
 }
 
@@ -9318,7 +9320,7 @@ function processYearEnd(year){
   
   
   resolvePreferredDividendsYearEnd(year);
-  log(`L'année financière ${year} commence (2 semestres de 3 lancers de dés complétés) — intérêts hypothécaires, dividendes REIT, accords de compensation de loyer (réglés puis clôturés) et contrats d'assurance normale (expirés) traités.`);
+  log(`L'année financière ${displayGameYear(year)} commence (2 semestres de 3 lancers de dés complétés) — intérêts hypothécaires, dividendes REIT, accords de compensation de loyer (réglés puis clôturés) et contrats d'assurance normale (expirés) traités.`);
 }
 
 // Section 307 — dividende ORDINAIRE (annoncé ou auto-versé) quand la banque a une position NÉGATIVE (elle a vendu au-delà
@@ -12042,7 +12044,7 @@ function resolvePreferredDividendsYearEnd(year){
       (co.preferredDividendDueThisYear.items||[]).forEach(it=>co.preferredDividendArrearsItems.push({issuanceId:it.issuanceId, amount:it.amount}));
       co.preferredDividendArrears = (co.preferredDividendArrears||0) + lapsed;
       injectStockCube(co, 'red', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
-      log(`${co.name} n'a pas versé son dividende préférentiel de ${fmt(lapsed)} (année financière ${co.preferredDividendDueThisYear.year}) avant la fin de l'année financière suivante — arriérage cumulé désormais ${fmt(co.preferredDividendArrears)}.`);
+      log(`${co.name} n'a pas versé son dividende préférentiel de ${fmt(lapsed)} (année financière ${displayGameYear(co.preferredDividendDueThisYear.year)}) avant la fin de l'année financière suivante — arriérage cumulé désormais ${fmt(co.preferredDividendArrears)}.`);
       co.preferredDividendDueThisYear = null;
     }
     
@@ -13972,7 +13974,7 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   if(state.settings.features.terrainLot && terrainPosInYear===0){
     const myBid = state.terrainLot.bids.find(b=>b.companyId===co.id);
     terrainLotSectionHtml = `
-    <div class="section-title" style="margin-top:16px;">🏙️ Lot commercial — mise pour l'année ${currentGameYear()}</div>
+    <div class="section-title" style="margin-top:16px;">🏙️ Lot commercial — mise pour l'année ${displayGameYear()}</div>
     <div class="small" style="margin-bottom:6px;">Combien ${esc(co.name)} est prêt à payer pour obtenir le droit sur le lot commercial de cette année financière (connu dès le prochain lancer). Le gagnant est celui dont Prix / (Loyer × Nombre de cases) est le plus élevé.</div>
     <label>Prix (en ${esc(state.unit)})</label>
     <input type="number" min="0" step="0.01" id="mTerrainBidPrice" value="${myBid?myBid.price:0}">
@@ -13984,8 +13986,8 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   } else if(state.settings.features.terrainLot && terrainPosInYear===1){
     const active = state.terrainLot.active;
     const activeInfoHtml = active
-      ? `Lot commercial de l'année ${currentGameYear()} remporté par <b>${esc(companyById(active.companyId) ? companyById(active.companyId).name : '?')}</b> — loyer ${fmt(active.loyer)}/case, ${active.numSquares} case(s).`
-      : `Aucune mise n'a été soumise pour le lot commercial de l'année ${currentGameYear()} — aucun lot actif cette année.`;
+      ? `Lot commercial de l'année ${displayGameYear()} remporté par <b>${esc(companyById(active.companyId) ? companyById(active.companyId).name : '?')}</b> — loyer ${fmt(active.loyer)}/case, ${active.numSquares} case(s).`
+      : `Aucune mise n'a été soumise pour le lot commercial de l'année ${displayGameYear()} — aucun lot actif cette année.`;
     terrainLotSectionHtml = `
     <div class="section-title" style="margin-top:16px;">🏙️ Lot commercial</div>
     <div class="small">${activeInfoHtml}</div>`;
@@ -13997,7 +13999,7 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   const openedEtfs = state.etfs.filter(e=>e.opened);
   if(state.settings.features.etf && openedEtfs.length>0 && terrainPosInYear===0){
     etfSectionHtml = `
-    <div class="section-title" style="margin-top:16px;">📈 REIT — mises pour l'année ${currentGameYear()}</div>
+    <div class="section-title" style="margin-top:16px;">📈 REIT — mises pour l'année ${displayGameYear()}</div>
     <div class="small" style="margin-bottom:6px;">Le plus offrant remporte 100% du lot de chaque REIT au prochain lancer, en rachetant les détenteurs actuels au prorata. Laissez à 0 (ou sous ${fmt(ETF_MIN_BID)}) si ${esc(co.name)} n'est pas intéressée cette année. Une mise ne peut jamais dépasser l'encaisse actuelle (${fmt(co.cash)}).</div>
     ${openedEtfs.map(e=>{
       const myBid = (e.bids||[]).find(b=>b.companyId===co.id);
@@ -14066,7 +14068,7 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   const preferredSectionHtml = (co.preferredDividendDueThisYear || co.preferredDividendArrears>0) ? `
     <div class="section-title" style="margin-top:16px;">🎫 Parts privilégiées</div>
     <table>
-      ${co.preferredDividendDueThisYear ? `<tr><td>Dividende préférentiel dû (année ${co.preferredDividendDueThisYear.year}) :</td><td class="money">${fmt(co.preferredDividendDueThisYear.amount)}</td><td><button class="btn btn-pale-success btn-sm" id="mPopupPayPreferredDue">Payer</button></td></tr>` : ''}
+      ${co.preferredDividendDueThisYear ? `<tr><td>Dividende préférentiel dû (année ${displayGameYear(co.preferredDividendDueThisYear.year)}) :</td><td class="money">${fmt(co.preferredDividendDueThisYear.amount)}</td><td><button class="btn btn-pale-success btn-sm" id="mPopupPayPreferredDue">Payer</button></td></tr>` : ''}
       ${co.preferredDividendArrears>0 ? `<tr><td style="color:var(--brick);">⚠️ Arriérage de dividende préférentiel :</td><td class="money" style="color:var(--brick);">${fmt(co.preferredDividendArrears)}</td><td><button class="btn btn-brick btn-sm" id="mPopupPayPreferredArrears">Payer</button></td></tr>` : ''}
     </table>` : '';
   openModal(`
@@ -16892,9 +16894,9 @@ function renderEtfCard(etf, isCreator){
     statusHtml = `<div class="small" style="margin-top:10px;">Pas encore ouvert par le créateur.</div>`;
   } else if(inBidWindow){
     const bidCount = (etf.bids||[]).length;
-    statusHtml = `<div class="small" style="margin-top:10px;">Enchère de l'année ${currentGameYear()} en cours — ${bidCount} mise(s) scellée(s) soumise(s) jusqu'ici, résultat connu au prochain lancer. Misez depuis le pop-up de fin de tour.</div>`;
+    statusHtml = `<div class="small" style="margin-top:10px;">Enchère de l'année ${displayGameYear()} en cours — ${bidCount} mise(s) scellée(s) soumise(s) jusqu'ici, résultat connu au prochain lancer. Misez depuis le pop-up de fin de tour.</div>`;
   } else {
-    statusHtml = `<div class="small" style="margin-top:10px;">${etf.lastAuctionYear!=null?`Dernière enchère remportée en année ${etf.lastAuctionYear} à ${fmt(etf.lastAuctionPrice)} pour l'ensemble du lot.`:totalHeld<=0.001?`Aucune entreprise ne détient encore ce lot — en attente de la toute première enchère.`:''} Prochaine (ré-)enchère au 1er lancer de l'année prochaine.</div>`;
+    statusHtml = `<div class="small" style="margin-top:10px;">${etf.lastAuctionYear!=null?`Dernière enchère remportée en année ${displayGameYear(etf.lastAuctionYear)} à ${fmt(etf.lastAuctionPrice)} pour l'ensemble du lot.`:totalHeld<=0.001?`Aucune entreprise ne détient encore ce lot — en attente de la toute première enchère.`:''} Prochaine (ré-)enchère au 1er lancer de l'année prochaine.</div>`;
   }
   
   
@@ -17319,8 +17321,8 @@ function tvSlideLeaderboard(){
 function tvSlideYear(){
   return `
   <div class="tv-title">Année financière en cours</div>
-  <div class="tv-big">${currentGameYear()}</div>
-  <div class="tv-sub">Semestre ${currentSemesterInYear()}/2 · ${rollsInCurrentSemester()}/3 lancés de dés ce semestre</div>
+  <div class="tv-big">${displayGameYear()}</div>
+  <div class="tv-sub">Semestre ${currentSemesterInYear()}/2 · ${rollsInCurrentSemester()}/3 lancers de dés faits ce semestre</div>
   <div class="tv-sub" style="margin-top:30px;">Banque: <b>${fmt(state.bank.cash)}</b> · Argent total en circulation: <b>${fmt(totalCashPool())}</b></div>
   `;
 }
@@ -17509,9 +17511,9 @@ function tvSlideEtfDutch(etfId){
     statusLine = "Pas encore ouvert par le créateur";
   } else if(inBidWindow){
     const bidCount = (etf.bids||[]).length;
-    statusLine = `Enchère de l'année ${currentGameYear()} en cours — ${bidCount} mise(s) scellée(s), résultat au prochain lancer`;
+    statusLine = `Enchère de l'année ${displayGameYear()} en cours — ${bidCount} mise(s) scellée(s), résultat au prochain lancer`;
   } else if(etf.lastAuctionYear!=null){
-    statusLine = `Dernière enchère — année ${etf.lastAuctionYear}, ${fmt(etf.lastAuctionPrice)} pour l'ensemble du lot`;
+    statusLine = `Dernière enchère — année ${displayGameYear(etf.lastAuctionYear)}, ${fmt(etf.lastAuctionPrice)} pour l'ensemble du lot`;
   } else {
     statusLine = "En attente de la toute première enchère";
   }

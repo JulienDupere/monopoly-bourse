@@ -4475,14 +4475,14 @@ function renderEntreprise(){
     const host = merged ? lotMortgageHost(p.groupMergeId) : p;
     const lotProps = merged ? lotProperties(p.groupMergeId) : [p];
     const sh = propertyOwnedShare(host, company.id);
-    const iv = merged ? intrinsicValueLot(p.groupMergeId) : intrinsicValue(p);
+    const iv = merged ? intrinsicValueLot(p.groupMergeId, company.id) : intrinsicValue(p, company.id); // Section 311 — retouche de la revue (bogue 30) : palier de cette entreprise
     
     
     
     
     
     
-    const rentValues = lotProps.map(x=>x.type==='color' ? colorRentAt(x, x.houses) : expectedRentValue(x));
+    const rentValues = lotProps.map(x=>x.type==='color' ? colorRentAt(x, x.houses) : expectedRentValue(x, company.id)); // Section 311 — retouche (bogue 30)
     const rentShareLabel = rentValues.map(v=>fmt(v*sh/100)).join(' / ');
     
     
@@ -8440,7 +8440,7 @@ function expectedRentValue(p, companyId){
   if(p.type==='color') return colorRentAt(p, p.houses);
   if(companyId===undefined){
     const ownedPct = p.owners.reduce((s,o)=>s+o.share, 0);
-    if(ownedPct>0) return p.owners.reduce((s,o)=>s + expectedRentValue(p, o.companyId)*o.share, 0) / ownedPct;
+    if(ownedPct>0) return p.owners.reduce((s,o)=>s + expectedRentValue(p, o.companyId ?? null)*o.share, 0) / ownedPct; // Section 311 — retouche : jamais undefined (récursion infinie)
     companyId = null;
   }
   if(p.type==='airport') return rentFor(p, companyId) || 0;
@@ -14504,8 +14504,8 @@ function lotProperties(mergeId){
 function lotMortgageHost(mergeId){
   return lotProperties(mergeId)[0] || null;
 }
-function intrinsicValueLot(mergeId){
-  return lotProperties(mergeId).reduce((s,p)=>{ const iv=intrinsicValue(p); return s+(iv!=null?iv:p.basePrice); }, 0);
+function intrinsicValueLot(mergeId, companyId){
+  return lotProperties(mergeId).reduce((s,p)=>{ const iv=intrinsicValue(p, companyId); return s+(iv!=null?iv:p.basePrice); }, 0); // Section 311 — retouche (bogue 30) : companyId facultatif
 }
 
 
@@ -14779,7 +14779,7 @@ function swapAssetValueSummary(propId, companyId, isGeneral){
       anyOwned = true;
       const host = assetHostProperty(asset);
       if(!host) return;
-      ivTotal += (asset.type==='lot' ? intrinsicValueLot(asset.id) : intrinsicValue(host, companyId)) * sh/100; // Section 311 — bogue 30
+      ivTotal += (asset.type==='lot' ? intrinsicValueLot(asset.id, companyId) : intrinsicValue(host, companyId)) * sh/100; // Section 311 — bogue 30
       assetProperties(asset).forEach(x=>{ if(x) rentTotal += (x.type==='color'?colorRentAt(x,x.houses):expectedRentValue(x, companyId)) * sh/100; });
     });
     const ivLabel = anyOwned ? `${fmt(ivTotal)} actuellement (variera avec les achats/ventes futurs)` : 'aucun terrain possédé actuellement (le swap général s’appliquera aux futurs achats)';
@@ -14792,7 +14792,7 @@ function swapAssetValueSummary(propId, companyId, isGeneral){
   const host = merged ? lotMortgageHost(p.groupMergeId) : p;
   const lotProps = merged ? lotProperties(p.groupMergeId) : [p];
   const sh = propertyOwnedShare(host, companyId);
-  const iv = merged ? intrinsicValueLot(p.groupMergeId) : intrinsicValue(p, companyId); // Section 311 — bogue 30
+  const iv = merged ? intrinsicValueLot(p.groupMergeId, companyId) : intrinsicValue(p, companyId); // Section 311 — bogue 30
   const rentValues = lotProps.map(x=>x.type==='color' ? colorRentAt(x, x.houses) : expectedRentValue(x, companyId));
   const rentShareLabel = rentValues.map(v=>fmt(v*sh/100)).join(' / ');
   const label = merged ? `Lot ${GROUPS[p.group].label}` : p.name;

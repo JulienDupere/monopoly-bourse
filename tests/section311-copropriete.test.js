@@ -56,6 +56,27 @@ function measure(eng){
     const cut = run(`groupRentSettlement(AE[0], state.companies[2].id, null).cuts.find(c=>c.companyId===C1.id).amount`);
     ok(near(cut, rent1 * run(`maxPlayerOwnPct()/2/100`)), `loyer réellement versé à Co1 par visite : ${f(cut)} (palier 1), cohérent avec le prix`);
   }
+  console.log('1b — retouches de la revue : tableau des terrains de l’onglet Entreprise, copropriétaire sans entreprise');
+  const rowFor = (eng) => { const html = eng.run(`myPlayerId = C1.ceoId; renderEntreprise()`); const i = html.indexOf('Aéroport 1'); return html.slice(i, html.indexOf('</tr>', i)); };
+  {
+    const eng = await setup();
+    const { run } = eng;
+    const row = rowFor(eng), good = run(`fmt(AE[0].rent[0] * maxPlayerOwnPct()/2/100)`), avg = run(`fmt(expectedRentValue(AE[0]) * maxPlayerOwnPct()/2/100)`);
+    ok(row.includes(good) && !row.includes(avg), `onglet Entreprise de Co1 : loyer de sa part au palier 1 (${good}), pas à la moyenne des copropriétaires (${avg})`);
+    run(`AE[0].owners.push({share:10})`);
+    let v = null, err = null;
+    try { v = run(`expectedRentValue(AE[0])`); } catch(e){ err = String(e); }
+    ok(err === null && isFinite(v), `copropriétaire sans entreprise : pas de récursion infinie (valeur ${v === null ? '–' : f(v)})`);
+  }
+  {
+    const eng = await setup({ transform: (src) => src.replace("expectedRentValue(p, o.companyId ?? null)", "expectedRentValue(p, o.companyId)") });
+    eng.run(`AE[0].owners.push({share:10})`);
+    let err = null; try { eng.run(`expectedRentValue(AE[0])`); } catch(e){ err = String(e); }
+    ok(err !== null && /call stack/i.test(err), 'contre-épreuve : sans « ?? null », récursion infinie (pile dépassée)');
+    const eng2 = await setup({ transform: (src) => src.replace(": expectedRentValue(x, company.id)); // Section 311 — retouche (bogue 30)", ": expectedRentValue(x));") });
+    const row2 = rowFor(eng2);
+    ok(row2.includes(eng2.run(`fmt(expectedRentValue(AE[0]) * maxPlayerOwnPct()/2/100)`)), 'contre-épreuve : sans company.id, l’onglet affiche le loyer moyen des copropriétaires');
+  }
   console.log('2 — contre-épreuve : palier du premier copropriétaire réintroduit');
   {
     const eng = await setup({ transform: (src) => src.replace("  if(companyId===undefined){\n    const ownedPct",

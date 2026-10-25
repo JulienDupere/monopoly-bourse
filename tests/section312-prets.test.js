@@ -3,6 +3,11 @@
 //              remboursé : la retenue de 50 % des loyers dépendait de l'option. Décision : le prêt de dernier recours
 //              reste offert (il ne relève pas de l'option « Prêts », qui concerne le marché des obligations entre
 //              joueurs et entreprises) et il est TOUJOURS remboursé par sa retenue, sur les quatre chemins du loyer.
+//   Bogue 24 : quand le prêteur modifiait son offre (même identifiant), la fenêtre déjà ouverte chez le CEO montrait
+//              encore les anciennes conditions et « Accepter » signait les nouvelles. Désormais « Accepter » ouvre une
+//              confirmation (confirmWithFreshConditions) qui part des conditions affichées sur la ligne : si l'offre a
+//              changé, rien n'est signé, la fenêtre montre les nouvelles conditions et redemande confirmation ;
+//              acceptLoanOffer revérifie les conditions confirmées sur l'état frais (staleConditionsResult).
 //   Bogue 47 : le prêt saisi par l'administrateur (arbitrage) n'appliquait pas les bornes affichées par le formulaire
 //              (5 à 40 %, 1 à 2,5×) : 0 % = prêt jamais remboursé, % négatif = plafond de retenue contourné, multiple
 //              négatif = capital perdu. Le moteur (issueLoan) applique désormais les bornes des réglages de la partie et
@@ -10,6 +15,8 @@
 // Chaque correctif a sa contre-épreuve (ancien code réintroduit par loadEngine({transform}) : le test échoue).
 // Lancer depuis la racine du dépôt :  node tests/section312-prets.test.js
 const { loadEngine, check, near } = require('./helpers/engine');
+const { partie } = require('./helpers/appareils-312');
+const ESC = x => JSON.stringify(x);
 
 let n = 0;
 const ok = (cond, msg) => { check(cond, msg); n++; };
@@ -115,6 +122,64 @@ async function bug47(eng){
     '47 : réglages 10–20 % et 1,5–2× : 30 % refusé, 2,2× refusé, 15 % à 1,8× accepté');
 }
 
+// Ancien code du bogue 24 : « Accepter » signe directement l'offre courante, sans revérification des conditions vues.
+const ANCIEN_24 = src => src
+  .replace("b.addEventListener('click', ()=>modalAcceptLoanOffer(b.dataset.acceptLoanOffer, shownOfferConditions[b.dataset.acceptLoanOffer]))", "b.addEventListener('click', ()=>{ closeModal(); acceptLoanOffer(b.dataset.acceptLoanOffer); })")
+  .replace('if(opts.expectedConditions && !sameConditions(opts.expectedConditions, loanOfferConditions(offerId))) return staleConditionsResult();', '');
+
+async function bug24(variant, transform){
+  const T = await partie({ transform });
+  const { A, B, ids } = T;
+  const BOB = `state.players.find(p=>p.id===${ESC(ids[1])})`;
+  // Alice (Co Alice) publie une demande de 2 M$ ; Bob offre 5 % / 1× / non garanti.
+  await A.run(`attemptActionWithRetry(async ()=>{ state.loanRequests.push({id:'req-1', borrowerId: myCompany().id, principal:2, createdAt:'t', createdAtRoll: state.gameClock.rollCount}); return {ok:true}; })`);
+  await B.sonder();
+  const r1 = await B.run(`submitLoanOffer('req-1', ${BOB}, 0.05, 1, false)`);
+  ok(r1 && r1.ok, `24 [${variant}] : Bob offre 5 % / 1× / non garanti`);
+  await A.sonder(); await A.calme();
+  const offerId = A.run('state.loanOffers[0].id');
+  A.run('modalIssueLoan()');
+  const html1 = A.fenetre();
+  ok(/<td>5%<\/td><td>1×<\/td><td>Non garantie<\/td>/.test(html1), `24 [${variant}] : la fenêtre d’Alice affiche 5 % / 1× / non garantie`);
+  // Bob modifie son offre : 30 % / 2,5× / garantie (même identifiant).
+  await B.sonder();
+  const r2 = await B.run(`submitLoanOffer('req-1', ${BOB}, 0.3, 2.5, true)`);
+  ok(r2 && r2.ok && B.run('state.loanOffers[0].id') === offerId, `24 [${variant}] : Bob met à jour son offre à 30 % / 2,5× / garantie, même identifiant`);
+  await A.sonder(); await A.calme();
+  ok(A.fenetre() === html1, `24 [${variant}] : la fenêtre d’Alice reste ouverte et inchangée (section 308)`);
+  const T0 = A.eng.cashTotal();
+  await A.cliquer(`[data-accept-loan-offer="${offerId}"]`);
+  const loans1 = T.serveur().loans.filter(l=>l.lenderId===ids[1]);
+  console.log(`    [${variant}] après le clic « Accepter » sur la ligne 5 % / 1× : ${loans1.length} prêt(s) enregistré(s)${loans1.length ? ` à ${loans1[0].withholdingPct*100} % / ${loans1[0].multiple}× / ${loans1[0].secured ? 'garanti' : 'non garanti'}` : ''}`);
+  ok(loans1.length === 0, `24 [${variant}] : « Accepter » ne signe rien sans que le CEO ait vu les conditions (obtenu : ${loans1.length} prêt)`);
+  const html2 = A.fenetre();
+  ok(/5%/.test(html2) && /1×/.test(html2) && !/Les conditions ont changé/.test(html2), '24 : la confirmation reprend les conditions affichées sur la ligne (5 % / 1×)');
+  await A.cliquer('mOk');
+  const html3 = A.fenetre();
+  ok(T.serveur().loans.length === 0 && /Les conditions ont changé/.test(html3) && /30%/.test(html3) && /2\.5×/.test(html3) && /GARANTI/.test(html3),
+    '24 : à la confirmation, rien n’est signé ; la fenêtre montre 30 % / 2,5× / GARANTI et redemande confirmation');
+  await A.cliquer('mOk');
+  const S = T.serveur();
+  const loan = S.loans.find(l=>l.lenderId===ids[1]);
+  ok(loan && near(loan.withholdingPct, 0.3) && near(loan.multiple, 2.5) && loan.secured === true && near(loan.principal, 2) && A.fenetre() === '',
+    '24 : 2e confirmation : prêt signé aux conditions vues la 2e fois (2 M$, 30 %, 2,5×, garanti) ; fenêtre fermée');
+  ok(near(A.eng.cashTotal(), T0) && S.loanOffers.length === 0 && S.loanRequests.length === 0, '24 : monnaie conservée ; demande et offres retirées');
+  // Course : l'offre change ENTRE la vérification de la fenêtre et l'enregistrement (sauvegarde concurrente).
+  await A.run(`attemptActionWithRetry(async ()=>{ state.loanRequests.push({id:'req-2', borrowerId: myCompany().id, principal:1, createdAt:'t', createdAtRoll: state.gameClock.rollCount}); return {ok:true}; })`);
+  await B.sonder();
+  await B.run(`submitLoanOffer('req-2', ${BOB}, 0.05, 1, false)`);
+  await A.sonder(); await A.calme();
+  const offer2 = A.run(`state.loanOffers.find(o=>o.requestId==='req-2').id`);
+  A.run('modalIssueLoan()');
+  await A.cliquer(`[data-accept-loan-offer="${offer2}"]`);
+  await B.sonder();
+  await B.run(`submitLoanOffer('req-2', ${BOB}, 0.1, 2, false)`);
+  A.run(`adoptLatestRemoteState = function(){ return false; }`);
+  await A.cliquer('mOk');
+  ok(T.serveur().loans.length === 1 && /Les conditions ont changé/.test(A.fenetre()) && /10%/.test(A.fenetre()) && A.alerts.length === 0,
+    '24 : changement découvert à l’enregistrement (conflit) : rien n’est signé, nouvelles conditions (10 % / 2×) et 2e confirmation, sans alerte');
+}
+
 (async () => {
   await scenario('A. Bogue 23 — le prêt de dernier recours est remboursé même sans l’option « Prêts »', async () => {
     const { eng } = await setup();
@@ -125,6 +190,19 @@ async function bug47(eng){
     let failed = null;
     try{ await bug23(eng, 'ancien'); }catch(e){ failed = e.message; }
     ok(failed && /23 :/.test(failed), `contre-épreuve : l'ancien code échoue (${failed})`);
+  });
+  await scenario('E. Bogue 24 — offre de prêt modifiée : nouvelle confirmation avant toute signature', async () => {
+    await bug24('corrigé');
+  });
+  await scenario('F. Bogue 24 — contre-épreuve (« Accepter » signe l’offre courante)', async () => {
+    let failed = null;
+    try{ await bug24('ancien', ANCIEN_24); }catch(e){ failed = e.message; }
+    ok(failed && /24 \[ancien\] : « Accepter » ne signe rien/.test(failed), `contre-épreuve : l'ancien code signe les conditions non vues (${failed})`);
+  });
+  await scenario('G. Bogue 24 — contre-épreuve (sans la revérification dans acceptLoanOffer)', async () => {
+    let failed = null;
+    try{ await bug24('sans garde', src => src.replace('if(opts.expectedConditions && !sameConditions(opts.expectedConditions, loanOfferConditions(offerId))) return staleConditionsResult();', '')); }catch(e){ failed = e.message; }
+    ok(failed && /24 : changement découvert à l’enregistrement/.test(failed), `contre-épreuve : sans la garde de l'applyFn, la course signe les nouvelles conditions (${failed})`);
   });
   await scenario('C. Bogue 47 — prêt d’arbitrage : bornes appliquées par le moteur', async () => {
     const { eng } = await setup(undefined, ['Alice', 'Bob', 'Chloé']);

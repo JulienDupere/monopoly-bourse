@@ -15664,7 +15664,31 @@ async function cancelLoanOffer(offerId){
   render();
 }
 
-async function acceptLoanOffer(offerId){
+// Section 312 — bogue 24 : conditions d'une offre de prêt telles que le CEO emprunteur les voit (recalculées sur
+// l'état courant ; comparées par confirmWithFreshConditions et par acceptLoanOffer).
+function loanOfferConditions(offerId){
+  const offer = state.loanOffers.find(o=>o.id===offerId);
+  if(!offer) return {unavailable:'Cette offre n’est plus disponible (retirée, expirée ou déjà acceptée).'};
+  const req = state.loanRequests.find(r=>r.id===offer.requestId);
+  if(!req) return {unavailable:'Cette demande d’emprunt n’est plus disponible.'};
+  const pl = state.players.find(p=>p.id===offer.playerId);
+  const co = companyById(req.borrowerId);
+  return {lenderId: offer.playerId, lenderName: pl?pl.name:'?', borrowerName: co?co.name:'?', principal: req.principal,
+    withholdingPct: offer.withholdingPct, multiple: offer.multiple, secured: !!offer.secured};
+}
+function modalAcceptLoanOffer(offerId, shown){
+  return confirmWithFreshConditions({
+    title: 'Accepter une offre de prêt',
+    initial: shown,
+    compute: ()=>loanOfferConditions(offerId),
+    describe: c=>`<div class="small" style="margin-bottom:10px;">${esc(c.lenderName)} prête <b>${fmt(c.principal)}</b> à ${esc(c.borrowerName)}. En retour, <b>${Math.round(c.withholdingPct*100)}%</b> de tous les loyers reçus par ${esc(c.borrowerName)} seront retenus automatiquement jusqu'à <b>${fmt(c.principal*c.multiple)}</b> au total (<b>${c.multiple}×</b> le capital).</div>
+      <div class="small" style="margin-bottom:10px;">${c.secured ? `🔒 Offre <b>GARANTIE</b> : si le prêt n'est pas remboursé en fin de partie, la valeur de vos parts de CEO sert à le rembourser.` : 'Offre <b>non garantie</b> : aucun risque pour vos parts de CEO.'}</div>`,
+    okLabel: c=>`Accepter le prêt (${fmt(c.principal)})`,
+    run: c=>acceptLoanOffer(offerId, {expectedConditions: c, fromConfirm: true}),
+  });
+}
+async function acceptLoanOffer(offerId, opts){
+  opts = opts || {}; // Section 312 — bogue 24
   
   
   
@@ -15675,6 +15699,8 @@ async function acceptLoanOffer(offerId){
     if(!req) return {ok:false, error:'Cette demande d’emprunt n’est plus disponible.'};
     const myCo = myCompany();
     if(!myCo || myCo.id!==req.borrowerId) return {ok:false, error:'Seule l’entreprise auteure de la demande peut accepter une offre.'};
+    // Section 312 — bogue 24 : l'offre doit être exactement celle que le CEO a confirmée (revérifié sur l'état frais).
+    if(opts.expectedConditions && !sameConditions(opts.expectedConditions, loanOfferConditions(offerId))) return staleConditionsResult();
     
     if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucune action de prêt n’est possible.'};
     const remainingCap = loanCapRemaining(req.borrowerId);
@@ -15690,8 +15716,9 @@ async function acceptLoanOffer(offerId){
     state.loanOffers = state.loanOffers.filter(o=>o.requestId!==req.id);
     return {ok:true};
   }, {label:'Acceptation d\'une offre de prêt'});
-  if(!res.ok){ if(res.error) alert(res.error); return; }
+  if(!res.ok){ if(res.error && !opts.fromConfirm) alert(res.error); return res; } // Section 312 — bogue 24 : la confirmation affiche le refus
   render();
+  return res;
 }
 
 // Section 312 — bogue 47 : bornes du % de retenue et du multiple appliquées par le moteur, pour tout prêt ordinaire
@@ -20853,7 +20880,12 @@ function modalIssueLoan(){
     </div>`);
     document.getElementById('mCancel').addEventListener('click', closeModal);
     document.getElementById('mCancelRequest').addEventListener('click', ()=>{ closeModal(); cancelLoanRequest(request.id); });
-    document.querySelectorAll('[data-accept-loan-offer]').forEach(b=>b.addEventListener('click', ()=>{ closeModal(); acceptLoanOffer(b.dataset.acceptLoanOffer); }));
+    // Section 312 — bogue 24 : « Accepter » ouvre une confirmation qui part des conditions AFFICHÉES sur la ligne ; si
+    // le prêteur a modifié son offre entre-temps (même identifiant), rien n'est signé : nouvelles conditions et 2e
+    // confirmation. Avant : le clic signait l'offre courante, que le CEO n'avait pas vue.
+    const shownOfferConditions = {};
+    offers.forEach(o=>{ shownOfferConditions[o.id] = loanOfferConditions(o.id); });
+    document.querySelectorAll('[data-accept-loan-offer]').forEach(b=>b.addEventListener('click', ()=>modalAcceptLoanOffer(b.dataset.acceptLoanOffer, shownOfferConditions[b.dataset.acceptLoanOffer])));
     return;
   }
   const capLeft = loanCapRemaining(myCo.id);

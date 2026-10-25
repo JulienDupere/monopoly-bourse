@@ -957,6 +957,10 @@ function fmtShares(n){
   return sign + withThousands + '.' + parts[1];
 }
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Section 317 — bogue 101 : un logo n'est accepté que sous forme de data URL d'image (png, jpeg, gif, webp) en base64 ; tout autre texte est écarté (null)
+function safeLogoDataUrl(v){
+  return (typeof v==='string' && /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+\/=]+$/.test(v)) ? v : null;
+}
 function nowLabel(){ const d=new Date(); return d.toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'}); }
 
 
@@ -1883,6 +1887,37 @@ function showTransactionPopup(title, entries){
 }
 
 
+// Section 317 — bogues 96 et 99 : contrôle des noms de joueurs et des réglages de création. Renvoie un message d'erreur clair, ou null si tout est valide.
+function validateNewGameInputs(names, startCash, bankCash, s){
+  const seen = new Set();
+  for(const n of (names||[])){
+    const key = String(n).trim().toLowerCase();
+    if(seen.has(key)) return `Deux joueurs portent le même nom (« ${String(n).trim()} »). Les historiques sont rangés par nom : donnez un nom différent à chacun.`;
+    seen.add(key);
+  }
+  const num = v=>typeof v==='number' && isFinite(v);
+  if(!num(startCash) || startCash<0) return 'L’encaisse de départ des joueurs doit être un nombre positif ou nul.';
+  if(!num(bankCash) || bankCash<0) return 'L’encaisse de départ de la banque doit être un nombre positif ou nul.';
+  const inRange = (v, lo, hi)=>num(v) && v>=lo-1e-12 && v<=hi+1e-12;
+  if(!(num(s.companyCeoStartPct) && s.companyCeoStartPct>0 && s.companyCeoStartPct<=1+1e-12)) return `Le % des parts acheté par le CEO à la fondation doit être compris entre 1 et 100 % (reçu : ${(s.companyCeoStartPct*100).toFixed(1)} %).`;
+  if(!inRange(s.etfBankReservePct, 0, 99)) return 'Le % de chaque terrain réservé à la banque (REIT) doit être compris entre 0 et 99 %.';
+  if(!inRange(s.bankMinSellPct, 0, 100)) return 'Le pourcentage minimum de rachat par la banque doit être compris entre 0 et 100 %.';
+  if(!inRange(s.mortgageLTV, 0, 1)) return 'L’emprunt hypothécaire maximal doit être compris entre 0 et 100 %.';
+  if(!inRange(s.distressDebtThreshold, 0, 1)) return 'Le seuil d’endettement de détresse doit être compris entre 0 et 100 %.';
+  if(!inRange(s.loanOfferWithholdingPctMin, 0, 1) || !inRange(s.loanOfferWithholdingPctMax, 0, 1)) return 'Les % de loyers retenus pour les prêts doivent être compris entre 0 et 100 %.';
+  if(s.loanOfferWithholdingPctMin>s.loanOfferWithholdingPctMax+1e-12) return 'Prêts : le % de loyers retenu minimum dépasse le maximum.';
+  if(!(num(s.loanOfferMultipleMin) && s.loanOfferMultipleMin>=1)) return 'Prêts : le multiple du capital minimum doit être d’au moins 1.';
+  if(!(num(s.loanOfferMultipleMax) && s.loanOfferMultipleMax>=s.loanOfferMultipleMin-1e-12)) return 'Prêts : le multiple du capital maximum doit être au moins égal au minimum.';
+  if(!inRange(s.dividendPayoutRatioMin, 0, 1) || !inRange(s.dividendPayoutRatioFull, 0, 1)) return 'Les ratios dividende/bénéfice doivent être compris entre 0 et 100 %.';
+  if(s.dividendPayoutRatioMin>s.dividendPayoutRatioFull+1e-12) return 'Le ratio dividende/bénéfice « plancher » dépasse le ratio « plein ».';
+  if(!(num(s.maxOwners) && s.maxOwners>=1)) return 'Le nombre maximal de copropriétaires doit être d’au moins 1.';
+  if(!(num(s.housesBeforeHotel) && s.housesBeforeHotel>=1)) return 'Le nombre de maisons avant l’hôtel doit être d’au moins 1.';
+  if(!(num(s.companyTotalShares) && s.companyTotalShares>=2)) return 'Le nombre de parts par entreprise doit être d’au moins 2.';
+  if(!(num(s.companyInitialInvestment) && s.companyInitialInvestment>0)) return 'La valorisation de fondation d’une entreprise doit être positive.';
+  if(!(num(s.maxGameYearsMin) && s.maxGameYearsMin>=0) || !(num(s.maxGameYearsMax) && s.maxGameYearsMax>=0)) return 'La durée de partie doit être un nombre d’années positif ou nul.';
+  if(s.maxGameYearsMax>0 && s.maxGameYearsMin>s.maxGameYearsMax) return 'Durée de partie : l’année minimale dépasse l’année maximale.';
+  return null;
+}
 async function createGame(names, startCash, bankCash, unit, settings, neutralPawnNames){
   const code = Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*24)]).join('');
   
@@ -1913,6 +1948,8 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
   
   
   const mergedSettings = Object.assign({}, DEFAULT_SETTINGS, {features:{insurance:true,houseAuction:true,goAdvance:true,mortgage:true,rentSwap:true,revenueSwap:true,rentCompensation:true,loan:true,etf:false,subInsurance:true,houseSource:false,terrainLot:true}}, settings||{});
+  const newGameError = validateNewGameInputs(names, startCash, bankCash, mergedSettings); // Section 317 — bogues 96 et 99
+  if(newGameError){ alert(newGameError); return false; }
   
   
   
@@ -2653,6 +2690,8 @@ async function createCompany(playerId, name, description, type, dividendPromised
   
   
   if(state.companies.some(c=>c.name.trim().toLowerCase()===name.toLowerCase())) return {ok:false, error:`Une entreprise nommée « ${name} » existe déjà — choisissez un autre nom.`};
+  // Section 317 — bogue 99 : les historiques sont rangés par nom ; une entreprise ne peut pas porter le nom d'un joueur
+  if(state.players.some(p=>p.name.trim().toLowerCase()===name.toLowerCase())) return {ok:false, error:`« ${name} » est le nom d'un joueur de la partie — choisissez un autre nom pour l'entreprise (les historiques sont rangés par nom).`};
   if(!COMPANY_TYPES.some(t=>t.key===type)) return {ok:false, error:'Type d’entreprise invalide.'};
   
   
@@ -2730,7 +2769,7 @@ async function createCompany(playerId, name, description, type, dividendPromised
     
     
     
-    logoDataUrl: logoDataUrl || null,
+    logoDataUrl: safeLogoDataUrl(logoDataUrl), // Section 317 — bogue 101
   };
   
   
@@ -2942,11 +2981,13 @@ function renderPortefeuille(){
       const co = companyById(pos.companyId);
       if(!co) return;
       const isBuy = (pos.type==='call' && pos.side==='long') || (pos.type==='put' && pos.side==='short');
-      if(!isBuy) return;
+      // Section 317 — bogue 79 : une jambe de stratégie réglée en argent ne livre jamais de parts — elle crédite (longue) ou débite (écrite) sa valeur intrinsèque
+      if(!isBuy && !pos.cashSettled) return;
       const intrinsic = pos.type==='call' ? Math.max(0, co.stockPrice-pos.strike) : Math.max(0, pos.strike-co.stockPrice);
       if(intrinsic<=0) return;
       anyItm = true;
-      projected -= pos.shares * OPTION_CONTRACT_MULTIPLIER * pos.strike;
+      if(pos.cashSettled) projected += (pos.side==='long' ? 1 : -1) * optionNotional(pos.shares, intrinsic);
+      else projected -= pos.shares * OPTION_CONTRACT_MULTIPLIER * pos.strike;
     });
     
     
@@ -3325,8 +3366,11 @@ function renderPortefeuilleTrading(me, company){
   
   
   
-  const bondInterestNow = me.cumBondInterest||0;
-  const bondPrincipalNow = bondBalanceNow - bondInterestNow;
+  // Section 317 — bogue 86 : après un retrait, le cumul d'intérêts peut dépasser le solde (10 M$ placés, 10,15 M$ retirés : solde 0, cumul 0,15) ;
+  // sans plafond, le « solde initial » devenait −0,15 (fausse « dette empruntée » en rouge). Les intérêts affichés sont plafonnés au solde positif.
+  const bondInterestRaw = me.cumBondInterest||0;
+  const bondInterestNow = (bondBalanceNow>=-1e-9 && bondInterestRaw>0) ? Math.min(bondInterestRaw, Math.max(0, bondBalanceNow)) : bondInterestRaw;
+  const bondPrincipalNow = Math.abs(bondBalanceNow - bondInterestNow)<1e-9 ? 0 : bondBalanceNow - bondInterestNow; // Section 317 — bogue 86 : résidu flottant ignoré
   const bondInterestRowLabel = bondInterestNow<0 ? 'Intérêts payés' : 'Intérêts reçus';
   const bondInterestColor = bondInterestNow<0 ? 'color:var(--brick);' : '';
   const bondPrincipalRowLabel = bondPrincipalNow<0 ? 'Solde initial (dette empruntée)' : 'Solde initial';
@@ -3489,15 +3533,16 @@ function renderPortefeuilleTrading(me, company){
   });
   const sectorSlices = [
     ...COMPANY_TYPES.map(t=>({label:t.label, value: sectorTotalsByType[t.key]||0, color: SECTOR_TYPE_COLORS[t.key]||'#999'})),
-    {label:'Sans risque (bons gouvernementaux)', value: me.bondBalance||0, color: 'var(--muted)'},
+    {label:'Sans risque (bons gouvernementaux)', value: Math.max(0, me.bondBalance||0), color: 'var(--muted)'}, // Section 317 — bogue 98 : une dette en bons n'est pas une tranche (elle faisait dépasser 100 %)
   ];
   const sectorTotal = sectorSlices.reduce((sum,s)=>sum+s.value, 0);
   const sectorLegendHtml = sectorSlices.filter(s=>s.value>1e-9).map(s=>{
     const pct = sectorTotal>1e-9 ? (s.value/sectorTotal*100) : 0;
     return `<div class="small" style="display:flex;align-items:center;gap:6px;margin:3px 0;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.color};flex:none;"></span>${esc(s.label)} — ${fmt(s.value)} (${pct.toFixed(1)}%)</div>`;
   }).join('');
+  const sectorDebtNoteHtml = (me.bondBalance||0)<-1e-9 ? `<div class="small" style="margin-top:6px;opacity:0.8;">Dette en bons gouvernementaux : ${fmt(-(me.bondBalance||0))} (non comprise dans la répartition).</div>` : ''; // Section 317 — bogue 98
   const sectorMixHtml = sectorTotal>1e-9
-    ? `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;">${svgPieChart(sectorSlices)}<div>${sectorLegendHtml}</div></div>`
+    ? `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;">${svgPieChart(sectorSlices)}<div>${sectorLegendHtml}${sectorDebtNoteHtml}</div></div>`
     : '<div class="empty">Aucune position boursière ni bon gouvernemental pour le moment — rien à répartir.</div>';
 
   
@@ -7282,6 +7327,8 @@ function showPortfolioEvolutionPopup(){
     {label:'Dividendes reçus', value:r.dividendsReceived},
     {label:'P&L réalisé', value:r.realizedPnl},
     {label:'P&L non réalisé', value:r.unrealizedPnl},
+    // Section 317 — bogue 77 : le gain ou la perte des options clôturées / expirées / réglées en argent avait un poste dans le total mais aucune ligne ici
+    ...(Math.abs(r.optionRealizedPnl)>1e-9 ? [{label:'P&L options clôturées', value:r.optionRealizedPnl}] : []),
     {label:'Intérêt reçu', value:r.interestReceived},
     {label:'Intérêt payé', value:-r.interestPaid},
   ];
@@ -11621,6 +11668,8 @@ function fillPendingBid(player, company, bid){
     return {filled:0};
   }
   bid.qty -= qtyToFill;
+  // Section 317 — bogue 87 : bons vendus pour payer ce bid = échange bons contre actions, pas une perte du portefeuille (non sauvegardé : lu par computePlayerPortfolioDeltas)
+  if(bondsNeeded>1e-9) bidBondsSoldThisRoll[player.id] = (bidBondsSoldThisRoll[player.id]||0) + bondsNeeded;
   return {filled:qtyToFill, entries:r.entries, amount, qty:qtyToFill};
 }
 
@@ -13118,9 +13167,11 @@ function settleOptionStrategyLegCash(player, pos, company, intrinsic){
   if(pos.side==='long'){
     player.cash += amount;
     state.bank.cash -= amount;
+    player.cumOptionNetPremium = (player.cumOptionNetPremium||0) + amount; // Section 317 — bogue 78 : gain réglé en argent rangé dans le P&L des options (comme une clôture), plus dans « Autres / ajustement »
   } else {
     player.cash -= amount;
     state.bank.cash += amount;
+    player.cumOptionNetPremium = (player.cumOptionNetPremium||0) - amount; // Section 317 — bogue 78
   }
   return `réglée EN CASH (valeur intrinsèque) — ${fmt(amount)} ${pos.side==='long'?'crédité':'débité'}, aucune livraison de parts`;
 }
@@ -13551,7 +13602,10 @@ async function corePerformNeutralPawnRoll(pawn){
   return {d1, d2, total, oldPos, newPos: pawn.position, jailed, rentEntries, rentPropertyName};
 }
 
+// Section 317 — bogue 87 : cumul (hors état sauvegardé) des bons vendus pour payer des bids depuis le dernier instantané
+let bidBondsSoldThisRoll = {};
 function snapshotPlayerBondsAndLoans(){
+  bidBondsSoldThisRoll = {};
   const bondBalanceByPlayer = {};
   state.players.forEach(p=>{ bondBalanceByPlayer[p.id] = p.bondBalance||0; });
   const loanRepaidByLoan = {};
@@ -13586,7 +13640,7 @@ function computePlayerPortfolioDeltas(snap){
       });
     });
     const bondBefore = (snap.bondBalanceByPlayer && snap.bondBalanceByPlayer[pl.id]) || 0;
-    const bondVar = (pl.bondBalance||0) - bondBefore;
+    const bondVar = (pl.bondBalance||0) - bondBefore + (bidBondsSoldThisRoll[pl.id]||0); // Section 317 — bogue 87
     let loanRepayVar = 0;
     state.loans.forEach(loan=>{
       if(loan.lenderKind!=='player' || loan.lenderId!==pl.id) return;
@@ -17457,7 +17511,8 @@ function tvSlideCompanyShowcase(companyId){
   
   
   
-  const logoHtml = co.logoDataUrl ? `<img src="${co.logoDataUrl}" alt="Logo" style="max-height:180px;max-width:360px;border-radius:12px;">` : '';
+  const safeLogo = safeLogoDataUrl(co.logoDataUrl); // Section 317 — bogue 101 : validé aussi à l'affichage (parties déjà sauvegardées) et échappé
+  const logoHtml = safeLogo ? `<img src="${esc(safeLogo)}" alt="Logo" style="max-height:180px;max-width:360px;border-radius:12px;">` : '';
   return `
   <div style="text-align:center;padding:16px 0;">
     ${logoHtml ? `<div style="margin-bottom:24px;">${logoHtml}</div>` : ''}
@@ -21028,6 +21083,7 @@ function modalPlaceBidOrder(){
     </select>
     <label id="mBidQtyLabel">Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
     <input type="number" step="0.01" min="0" id="mBidQty" value="0">
+    <div class="small" id="mBidQtyHint" style="margin-bottom:8px;"></div>
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -21041,6 +21097,16 @@ function modalPlaceBidOrder(){
   const refreshInfo = ()=>{
     const co = companyById(document.getElementById('mBidCompany').value);
     document.getElementById('mBidInfo').textContent = co ? `Prix courant: ${fmtPrice(co.stockPrice||0)}/part.` : '';
+  };
+  // Section 317 — bogue 85 : l'ordre réellement placé (parts et montant) est affiché sous le champ, quelle que soit l'unité saisie
+  const refreshBidQtyHint = ()=>{
+    const unit = document.getElementById('mBidUnit').value;
+    const limitPrice = (parseFloat(document.getElementById('mBidPrice').value)||0)/1e6;
+    const raw = parseFloat(document.getElementById('mBidQty').value)||0;
+    const hintEl = document.getElementById('mBidQtyHint');
+    if(!(limitPrice>0) || !(raw>0)){ hintEl.textContent = ''; return; }
+    const qty = unit==='shares' ? raw : raw/limitPrice;
+    hintEl.textContent = `Ordre placé : ${fmtShares(qty)} part(s) à ${fmtPrice(limitPrice)}/part au plus, soit ${fmt(qty*limitPrice)}.`;
   };
   refreshInfo();
   document.getElementById('mBidCompany').addEventListener('change', refreshInfo);
@@ -21056,11 +21122,15 @@ function modalPlaceBidOrder(){
     if(limitPrice>0){
       const qty = lastBidUnit==='shares' ? raw : raw/limitPrice;
       const amt = lastBidUnit==='shares' ? raw*limitPrice : raw;
-      document.getElementById('mBidQty').value = (newUnit==='shares' ? qty : amt).toFixed(newUnit==='shares'?4:2);
+      // Section 317 — bogue 85 : le montant converti n'est plus arrondi à 0,01 (10 000 $) — 4 000 parts à 1,50 $ donnaient 0.01 (6 666 parts) et 3 000 parts donnaient 0.00 (ordre refusé) ; 6 décimales = au dollar près
+      document.getElementById('mBidQty').value = newUnit==='shares' ? qty.toFixed(4) : String(Number(amt.toFixed(6)));
     }
     lastBidUnit = newUnit;
     updateQtyLabel();
+    refreshBidQtyHint();
   });
+  document.getElementById('mBidQty').addEventListener('input', refreshBidQtyHint);
+  document.getElementById('mBidPrice').addEventListener('input', refreshBidQtyHint);
   document.getElementById('mCancel').addEventListener('click', closeModal);
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const companyId = document.getElementById('mBidCompany').value;
@@ -21243,7 +21313,9 @@ function modalShortShares(mode){
       const amount = unit==='shares' ? raw*(co.stockPrice||0) : raw;
       const r = mode==='open' ? openShortPosition(co, pl, amount) : closeShortPosition(co, pl, amount);
       if(!r.ok) return r;
-      log(`${pl.name} ${mode==='open'?'vend à découvert':'rachète pour clôturer'} des actions de ${co.name} pour ${fmt(amount)} (${r.qty.toFixed(4)} part(s), au prix courant de ${fmtPrice(co.stockPrice)}/part).`, r.entries);
+      // Section 317 — bogue 91 : au rachat, le montant réellement payé (plafonné à la position à découvert) et non le montant saisi
+      const paidAmount = mode==='open' ? amount : r.qty*(co.stockPrice||0);
+      log(`${pl.name} ${mode==='open'?'vend à découvert':'rachète pour clôturer'} des actions de ${co.name} pour ${fmt(paidAmount)} (${r.qty.toFixed(4)} part(s), au prix courant de ${fmtPrice(co.stockPrice)}/part).`, r.entries);
       return {...r, coName:co.name};
     });
     if(res && res.ok && res.entries) showTransactionPopup(`${dirLabel} — ${res.coName}`, res.entries);

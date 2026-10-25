@@ -215,8 +215,11 @@ const OLD_VALUATION = s => OLD_310(s).replace('etf.valuationPrice = valuationPri
         // Règle de Julien appliquée telle quelle : la revente à 19,8 réalise un gain de 17,82 pour Co Alice (coût sorti
         // 1,98) ; au rachat, elle paie réellement 19,8 et porte le lot à 0,02 + 19,8 = 19,82. Le gain passe par une
         // vente à un prix convenu entre complices : point signalé à Julien.
-        ok(near(aMid, 39.82) && near(bMid, 20), 'après la revente : Co Alice 22 → 39,82 (gain réalisé 17,82), Co Bob inchangé (paie 19,8, porte 19,8)');
-        ok(near(E.run('C0.etfCost.rue1'), 19.82) && near(a1, 39.82) && near(b1, 20), 'après le rachat : valeur d’achat 19,82, Co Alice reste à 39,82, Co Bob à 20 (la valeur d’achat ne protège pas d’un prix convenu entre complices)');
+        // Décision de Julien (2026-10-25, option b) : Co Bob, qui achète de gré à gré, porte ses 99 % au plus à sa part du
+        // dernier prix d'enchère (99 % × 2 = 1,98), pas aux 19,8 payés : la valeur totale des deux complices ne monte pas.
+        ok(near(aMid, 39.82) && near(bMid, 2.18), 'après la revente : Co Alice 22 → 39,82 (gain réalisé 17,82), Co Bob 20 → 2,18 (paie 19,8, porte 1,98 = 99 % du dernier prix d’enchère) : total 42 inchangé');
+        // Le rachat passe par une ENCHÈRE : comptée au prix payé (décision de Julien), Co Bob réalise son gain à la sortie.
+        ok(near(E.run('C0.etfCost.rue1'), 19.82) && near(a1, 39.82) && near(b1, 20), 'après le rachat à l’enchère : valeur d’achat 19,82 (prix payé à l’enchère), Co Alice reste à 39,82, Co Bob revient à 20 (coût 1,98 sorti contre 19,8 reçus)');
       } else {
         ok(near(a1, 22), 'contre-épreuve : avec la valorisation du lot 3, le lot revient à 2 et Co Alice à 22');
       }

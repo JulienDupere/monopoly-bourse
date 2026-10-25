@@ -1563,6 +1563,56 @@ lot commercial comptée avec les mises REIT (points 1 et 5) ; formule de la rés
 
 **Intégration** (vague 3, branche `serie-310`, fusion dans l'ordre lots 7, 3, 8, 9, 10a, 10b) : quatre conflits avec la section 317 (bogue 95, numérotation des années) dans le code de cette section, résolus en gardant les deux intentions : `submitEtfBid` délègue à `applyEtfBids` (point 1), dont la ligne « soumet une mise pour le … de l'année » passe à `displayGameYear()` (report fait à la main : la ligne avait été déplacée, git ne signalait rien) ; journal enrichi de `resolveEtfAuction` (point 2) avec `displayGameYear(year)` ; titres « Lot commercial » et « REIT » de la fenêtre de fin de tour : textes de cette section avec `displayGameYear()`. Le règlement du pari du lot commercial (point 5) sert tel quel à la fin de partie en cours d'année de la section 316, au prix ramené au prorata (sonde de la revue : lot gagné au lancer 7, fin au lancer 8, prix 1,50 au lieu de 9, Co Alice 50 → 48,50, les deux autres 50 → 50,75, monnaie conservée). `createGame` : `valuationPrice` à la création (point 2), validation des réglages de la section 317 et remise à zéro du mode consultation de la section 316 cohabitent. Sonde de la revue sur la branche intégrée (mises, ordre de résolution, complice, CEO seul, retrait à encaisse négative, migration) : résultats conformes aux points 1, 2 et 5 (Co Alice à 3,00 après la Première rue et Co Bob gagnant la Deuxième rue, lot valorisé 2,00 après la remise sur son propre REIT, mise REIT refusée après la mise du lot, monnaie conservée). Test : `tests/section310-integration.test.js` I2 (au lancer 7, la mise et le résultat de l'enchère disent « de l'année 2 », comme la barre du haut ; contre-épreuves avec l'indice interne : « année 1 »). **Suite intégrée : 68 fichiers, 2 786 vérifications et 53 cas multi-appareils, 0 échec ; 320 cas multi-appareils avec `SYNC_SEEDS=40`.**
 
+**Réponses de Julien (2026-10-25)** aux décisions à valider de cette section, verbatim :
+1) « Non le REIT garde par exemple 10% donc les joueurs peuvent acheter 90%. Si le REIT n'est pas acheter les loyers
+sont seulement le part de 90%. Si un joueur prend possession du REIT pour un tour à hauteur de 50% (10%*50%=5%), les
+loyers tombes à 95% et 100% du 5% est distribuer aux joueurs du REIT », puis, sur la façon de détenir 50 % du REIT :
+« C'est correct d'acheter 100% du REIT c'est bien parfait » ;
+2) « Un REIT peut varier à la hausse ou la baisse si un joueur OVERPAID il va faire une perte lors de la disposition un
+REIT est évalué à sa valeur d'achat », confirmé par « Exact » ;
+3) « Non, si je possède 2M en encaisse mais que je mise 4M pour le lot commercial c'est correct. CAR le lot commercial
+est règlé à la fin, si plusieurs personne tombe sur les terrains en question et génère 2,5M au moment de la
+résolution j'aurais une perte de 1,5M et donc la je devrais trouver une manière de financer mais ne pas bloquer
+initialement. c'est pas un vrai transfert d'argent jusqua la toute fin. », confirmé par « Oui ».
+Mécanique retenue (chaque changement du code porte « Section 310 — réponse de Julien (2026-10-25) ») :
+- **Réserve REIT (point 3), aucun code** : la formule réserve × parts du REIT détenues / 100 (`etfReservedCollectedPct`)
+  est celle que décrit Julien. Vérifié : le jeu n'a aucun moyen d'acquérir une partie seulement du REIT (l'enchère donne
+  100 % au gagnant, voulu par Julien ; les reventes entre entreprises gardent le total à 100 % ; aucune entreprise
+  n'est jamais supprimée) ; une détention totale partielle ne vient que d'anciennes parties. Aucune mécanique ajoutée.
+  Exemple exact (Vert 1, loyer 9, réserve 10 %) : REIT non acheté, le visiteur paie 90 % (8,1) ; Co Carl détient 50 %
+  du REIT, il paie 95 % (8,55), dont 0,45 au fonds, et 100 % de ces 0,45 vont à Co Carl en fin d'année. Par revente
+  (Co Carl gagne l'enchère puis revend 50 % à Co Dan) : détention totale 100 %, le visiteur paie 9 dont 0,9, partagés
+  0,45 / 0,45.
+- **Valeur d'achat (remplace la valorisation du point 2)** : nouveau champ `co.etfCost` (coût d'acquisition des parts
+  détenues, par REIT ; `{}` à la création). Valeur des parts au bilan = quote-part du fonds + valeur d'achat
+  (`companyEtfHoldingValue`, utilisée par `companyEtfValue`, donc valeur de l'entreprise, prix par action, classement,
+  ratio d'endettement, impôt, tableau des actifs). À l'enchère, le gagnant ajoute à son coût ce qu'il paie réellement
+  (sa propre part n'est pas payée : coût inchangé) ; les entreprises rachetées sortent leur coût. À la revente, le
+  vendeur sort son coût au prorata des parts vendues (gain ou perte réalisé = prix − coût sorti), l'acheteur ajoute le
+  prix payé. `etf.valuationPrice` n'est plus calculé (lu seulement par la migration). La carte du REIT affiche la
+  valeur d'achat de chaque détenteur. **Parties en cours** : `migrateState` pose la valeur d'achat = valeur retenue
+  jusqu'ici (`valuationPrice`, sinon dernier prix d'enchère) × part détenue ; le bilan ne bouge pas à la mise à jour.
+  Scénarios : Co Alice détient 100 % payés 2 et mise 20 sur son REIT : elle ne paie rien, valeur 22 → 22 (inchangé).
+  Co Alice 60 % (payés 1,2), Co Bob 40 % (0,8), Co Alice gagne à 20 et paie 8 à Co Bob : avant, sa valeur baissait de
+  7,2 ; après, valeur d'achat 9,2, valeur inchangée (21,2), Co Bob réalise +7,2. Elle revend 50 % à Co Carl pour 3 :
+  coût sorti 4,6, perte réalisée 1,6 (21,2 → 19,6) ; Co Carl porte ses parts à 3. Premier achat à 6 : valeur 6.
+  **Complice** (point ouvert) : Co Alice (100 % payés 2) revend 99 % à Co Bob pour 19,8 puis remise 20 et lui reverse
+  19,8 ; encaisses revenues à 20 / 20. Avant (lot 3) : Co Alice restait à 22 ; après : 39,82 (gain de 17,82 réalisé
+  à la revente, puis lot racheté 19,8 réellement payés), Co Bob inchangé à 20. La valeur d'achat ne protège pas d'un
+  prix convenu entre complices (même effet sans enchère : une revente puis un rachat au même prix gonflé).
+- **Lot commercial (points 1 et 5)** : la limite « mise ≤ encaisse » est retirée, seule et cumulée avec les mises REIT,
+  au dépôt (`submitTerrainLotBid`) comme à la résolution (`resolveTerrainLotAuction` ; `resolveEtfAuction` ne déduit
+  plus le pari en cours de l'encaisse ; `terrainLotCommittedBid` et `terrainLotActiveExposure` supprimées). La limite
+  des mises REIT elles-mêmes (bogue 28) reste, sans la mise du lot. Textes de la fenêtre de fin de tour mis à jour.
+  Scénario de Julien : Co Alice (2 M$) mise 4 M$ : avant, refusée ; après, acceptée, rien ne bouge à l'enchère, 2,5 M$
+  comptés, elle verse 1,5 en fin d'année (0,5 à chacune des 3 autres), 2 → 0,5. Lot 20 + REIT 20 avec 20 M$ : avant,
+  mise REIT refusée ; après, les deux passent, pari raté, Co Alice finit l'année à −20 (elle finance la perte).
+Tests : `section310-reit-reserve` E (exemple exact et revente, contre-épreuve avec l'ancienne formule) ; `section310-
+reit-mises` D à G réécrits (mise sur sa propre part, rachat cher puis revente avec perte, premier achat et migration,
+complice ; contre-épreuves avec la valorisation du lot 3 ou d'avant la section 310) ; `section310-lot-commercial` B, C,
+E, F réécrits (contre-épreuves qui réintroduisent la limite du lot 3). Changements visibles (cahiers 5 et 7) : la mise
+du lot commercial n'est plus bornée par l'encaisse ; la carte du REIT montre la valeur d'achat de chaque détenteur.
+
 ## 314. Marché : intérêt des bons payé une seule fois, bid payé avec les bons, montants non finis refusés, marge du CEO juste, encaisse personnelle bloquante au semestre, options simples distinctes des stratégies, plafond des options écrites, cubes de trading plafonnés au cumul — 2026-10-25
 
 Contexte : lot 7 de la série de corrections de l'audit du 2026-10-19 (bogues 7, 11, 31, 36, 37, 38, 67 et 75, plus

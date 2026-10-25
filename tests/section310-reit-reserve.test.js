@@ -130,6 +130,47 @@ const OLD_FORMULA = s => s.replace(/  \/\/ Section 310 — décision \(bogue 54\
     ok(!/commence à collecter/.test(txt) && /avant la première enchère/.test(txt) && /réserve entière/.test(txt), `message : « ${txt} »`);
   });
 
+  // Réponse de Julien (2026-10-25), verbatim : « Non le REIT garde par exemple 10% donc les joueurs peuvent acheter 90%.
+  // Si le REIT n'est pas acheter les loyers sont seulement le part de 90%. Si un joueur prend possession du REIT pour un
+  // tour à hauteur de 50% (10%*50%=5%), les loyers tombes à 95% et 100% du 5% est distribuer aux joueurs du REIT » ;
+  // précision : « C'est correct d'acheter 100% du REIT c'est bien parfait » (enchère à 100 % voulue, aucune mécanique
+  // d'acquisition partielle). La formule réserve × parts détenues / 100 est gardée telle quelle.
+  await scenario('E. Exemple exact de Julien — Vert 1 (loyer 9), réserve 10 %, détention partielle du REIT', async () => {
+    for(const variant of ['corrigé', 'ancien']){
+      const E = await setup(variant === 'ancien' ? { transform: OLD_FORMULA } : {});
+      const none = await visit(E, '');
+      const half = await visit(E, 'C.etfHoldings.rue4 = 50'); // détention partielle (seulement possible dans une ancienne partie)
+      const c0 = E.run('C.cash'), m0 = E.run('masse()');
+      E.run('processEtfLap()');
+      const carlGot = E.run('C.cash') - c0;
+      console.log(`    [${variant}] REIT non acheté : paie ${none.paid.toFixed(3)} (${(none.paid / 9 * 100).toFixed(1)} %) ; Co Carl à 50 % : paie ${half.paid.toFixed(3)} (${(half.paid / 9 * 100).toFixed(1)} %), dont ${half.fund.toFixed(3)} au fonds ; dividende de Co Carl ${carlGot.toFixed(3)}`);
+      if(variant === 'corrigé'){
+        ok(near(none.paid, 8.1) && near(none.fund, 0), 'REIT non acheté : le visiteur ne paie que les 90 % (8,1)');
+        ok(near(half.paid, 8.55) && near(half.paid / 9, 0.95) && near(half.fund, 0.45), 'Co Carl détient 50 % du REIT : 10 % × 50 % = 5 %, le visiteur paie 95 % (8,55), dont 0,45 au fonds');
+        ok(near(carlGot, 0.45) && near(E.run('R4.fundCash'), 0) && near(E.run('masse()'), m0), '100 % des 5 % (0,45) vont au détenteur du REIT en fin d’année ; monnaie conservée');
+      } else {
+        ok(near(half.paid, 9), 'contre-épreuve : avec min(réserve, parts détenues), le visiteur paierait 100 % (9)');
+      }
+    }
+    // Détention partielle par revente : Co Carl gagne l'enchère (100 %), puis revend 50 % à Co Dan (offre acceptée).
+    const E = await setup();
+    E.run(`state.gameClock.rollCount = 1; C.cash = 50; as(C);`);
+    await E.run(`submitEtfBids(C.id, [{etfId:'rue4', price:4}])`);
+    await E.run(`act(async ()=>{ maybeResolveEtfAuctions(); return {ok:true}; })`);
+    await E.run(`sellEtfUnits('rue4', C.id, D.id, 50, 2)`);
+    E.run('as(D)'); await E.run(`acceptAssetSaleOffer(state.assetSaleOffers[0].id)`);
+    ok(E.run('C.etfHoldings.rue4') === 50 && E.run('D.etfHoldings.rue4') === 50, 'enchère à 100 % pour Co Carl, puis revente de 50 % à Co Dan : 50 % / 50 %');
+    const a0 = E.run('A.cash'), m0 = E.run('masse()');
+    E.run('R4.fundCash = 0');
+    await E.run(`act(async ()=>{ await settlePropertyRent(V1, A.id, 7, {skipSave:true}); return {ok:true}; })`);
+    const paid = a0 - E.run('A.cash'), fund = E.run('R4.fundCash');
+    const c0 = E.run('C.cash'), d0 = E.run('D.cash');
+    E.run('processEtfLap()');
+    console.log(`    revente : Co Carl 50 %, Co Dan 50 % (détention totale 100 %) : le visiteur paie ${paid.toFixed(3)}, dont ${fund.toFixed(3)} au fonds ; dividendes ${(E.run('C.cash') - c0).toFixed(3)} / ${(E.run('D.cash') - d0).toFixed(3)}`);
+    ok(near(paid, 9) && near(fund, 0.9), 'la revente ne change pas la détention totale (100 %) : le visiteur paie la réserve entière (9, dont 0,9 au fonds)');
+    ok(near(E.run('C.cash') - c0, 0.45) && near(E.run('D.cash') - d0, 0.45) && near(E.run('masse()'), m0), 'les deux détenteurs se partagent les 0,9 (0,45 chacun) ; monnaie conservée');
+  });
+
   if(failures.length){ console.log(`\nÉCHEC : section 310 (réserve REIT) — ${failures.length} scénario(s) en échec :`); failures.forEach(f => console.log('  ' + f)); process.exit(1); }
   console.log(`\nOK : section 310 (réserve REIT) — ${n} vérifications, 0 scénario(s) en échec`);
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

@@ -3,9 +3,11 @@
 // entre revenus comptés et mise est réglé (vérifier et corriger si besoin) ».
 // 1. Vérification : c'est déjà le cas (aucun mouvement à l'enchère ni au passage sur une case du lot ; en fin
 //    d'année, seul l'écart loyers comptés − mise passe entre le gagnant et les autres entreprises).
-// 2. Question de conception de l'audit (« la mise n'a aucune limite et aucun lien avec la trésorerie, si bien qu'une
-//    entreprise peut finir à −2 M$ après avoir gagné ») : la mise, qui est la perte maximale du gagnant, ne dépasse
-//    plus son encaisse (au dépôt, revérifié à la résolution).
+// 2. Question de conception de l'audit (« la mise n'a aucune limite et aucun lien avec la trésorerie ») : le lot 3 avait
+//    ajouté une limite « mise ≤ encaisse » (seule et cumulée avec les mises REIT). Réponse de Julien (2026-10-25),
+//    verbatim : « Non, si je possède 2M en encaisse mais que je mise 4M pour le lot commercial c'est correct. […] c'est
+//    pas un vrai transfert d'argent jusqua la toute fin. » La limite est retirée (dépôt, résolution, total des mises
+//    REIT) ; les scénarios B, C, E, F le prouvent, avec contre-épreuve qui réintroduit la limite du lot 3.
 // 3. Le règlement du pari est une fonction réutilisable (settleTerrainLotYearEnd), à brancher en fin de partie par
 //    la section 316 : appelée en cours d'année, elle règle les loyers comptés jusque-là, une seule fois.
 // Lancer depuis la racine du dépôt :  node tests/section310-lot-commercial.test.js
@@ -71,45 +73,56 @@ async function landOnLot(E){
     ok(near(E.cash(), T0), 'monnaie conservée');
   });
 
-  await scenario('B. Limite de la mise — Co Alice (5 M$) mise 8 M$ sur le lot', async () => {
+  // Ancien code du lot 3 (contre-épreuves) : limite « mise ≤ encaisse » au dépôt (seule et cumulée) et à la résolution.
+  const LOT3_DEPOT = src => src.replace("    // Section 310 — réponse de Julien (2026-10-25) : « c'est pas un vrai transfert d'argent jusqu'à la toute fin ». Plus\n",
+    "    if(clampedPrice>0 && clampedPrice>co.cash+1e-9) return {ok:false, error:'mise supérieure à l\\'encaisse (perte maximale)'};\n" +
+    "    { const etfC = state.settings.features.etf ? etfCommittedBidTotal(companyId) : 0; const prevB = ((state.terrainLot.bids||[]).find(x=>x.companyId===companyId)||{}).price||0;\n" +
+    "      if(clampedPrice>0 && clampedPrice+etfC>co.cash+1e-9 && clampedPrice>prevB+1e-9) return {ok:false, error:'lot commercial et mises REIT au-delà de l\\'encaisse'}; }\n" +
+    "    // Section 310 — réponse de Julien (2026-10-25) : « c'est pas un vrai transfert d'argent jusqu'à la toute fin ». Plus\n");
+  const LOT3_RESOLUTION = src => src.replace("  const bids = state.terrainLot.bids;\n  state.terrainLot.bids = [];",
+    "  const bids = state.terrainLot.bids.filter(b=>{ const bidder = companyById(b.companyId); if(b.price>0 && b.price>bidder.cash+1e-9){ log('La mise de '+bidder.name+' sur le lot commercial est écartée'); return false; } return true; });\n  state.terrainLot.bids = [];");
+
+  await scenario('B. Réponse de Julien — Co Alice (2 M$ d’encaisse) mise 4 M$ sur le lot ; 2,5 M$ comptés', async () => {
     for(const variant of ['corrigé', 'ancien']){
-      const E = await setup(variant === 'ancien' ? { transform: s => s.replace(/    \/\/ Section 310 — décision « lot commercial » : la mise[\s\S]*?\/\/ fin limite \(dépôt\)\n/, '')
-        .replace(/  \/\/ Section 310 — décision « lot commercial » : chaque mise est revérifiée[\s\S]*?\/\/ fin limite \(résolution\)\n/, '  const bids = state.terrainLot.bids;\n') } : {});
-      E.run('as(A)'); await E.run(`submitTerrainLotBid(A.id, 8, 0.1, 1)`);
+      const E = await setup(variant === 'ancien' ? { transform: s => LOT3_RESOLUTION(LOT3_DEPOT(s)) } : {});
+      E.run('A.cash = 2; as(A)'); await E.run(`submitTerrainLotBid(A.id, 4, 0.5, 2)`);
       const bids = E.run('state.terrainLot.bids.length');
-      const T0 = E.cash();
+      const T0 = E.cash(), c0 = E.cashes();
       await resolve(E);
-      await yearEnd(E); // personne n'est tombé sur le lot
-      console.log(`    [${variant}] mises enregistrées : ${bids} ; encaisse de Co Alice après la fin d'année : ${E.run('A.cash').toFixed(2)} M$`);
+      const won = E.run('!!state.terrainLot.active && state.terrainLot.active.companyId === A.id');
+      const afterAuction = E.cashes();
+      if(won) E.run('state.terrainLot.active.accrued = 2.5'); // plusieurs passages : 2,5 M$ comptés
+      await yearEnd(E);
+      const c1 = E.cashes();
+      console.log(`    [${variant}] mise ${bids ? 'acceptée' : 'refusée'} ; lot ${won ? 'gagné' : 'non gagné'} ; encaisses ${c0.map(x => x.toFixed(4)).join(' / ')} → ${c1.map(x => x.toFixed(4)).join(' / ')}`);
       if(variant === 'corrigé'){
-        ok(bids === 0 && E.alerts.length === 1 && /encaisse/.test(E.alerts[0]) && /perte maximale/.test(E.alerts[0]), `mise refusée : « ${E.alerts[0]} »`);
-        ok(near(E.run('A.cash'), 5) && near(E.cash(), T0), 'Co Alice garde 5 M$ (avant : −3 M$ après avoir gagné)');
-        E.alerts.length = 0;
-        await E.run(`submitTerrainLotBid(A.id, 5, 0.1, 1)`);
-        ok(E.run('state.terrainLot.bids.length') === 1 && E.alerts.length === 0, 'une mise égale à l’encaisse (5 M$) est acceptée');
-        E.run('A.cash = -1');
-        await E.run(`submitTerrainLotBid(A.id, 0, 0.1, 1)`);
-        ok(E.run('state.terrainLot.bids[0].price') === 0, 'une mise de 0 (aucune perte possible) reste permise, même à encaisse négative');
+        ok(bids === 1 && E.alerts.length === 0, 'mise de 4 M$ avec 2 M$ d’encaisse : acceptée (avant : refusée, « mise ≤ encaisse »)');
+        ok(won && JSON.stringify(afterAuction) === JSON.stringify(c0), 'Co Alice gagne le lot ; rien n’est transféré à l’enchère');
+        ok(near(c1[0], 0.5) && [1, 2, 3].every(i => near(c1[i], 5.5)), 'fin d’année : perte 4 − 2,5 = 1,5 versée (0,5 à chacune des 3 autres) ; Co Alice 2 → 0,5');
+        ok(near(E.cash(), T0), 'monnaie conservée');
+        E.run('state.gameClock.rollCount = 7; A.cash = -1;'); E.alerts.length = 0;
+        await E.run(`submitTerrainLotBid(A.id, 3, 0.5, 2)`);
+        ok(E.run('state.terrainLot.bids.length') === 1 && E.alerts.length === 0, 'même à encaisse négative, la mise est acceptée (aucun transfert avant la fin d’année)');
       } else {
-        ok(bids === 1 && near(E.run('A.cash'), -3), 'contre-épreuve : sans la limite, Co Alice gagne et finit à −3 M$');
+        ok(bids === 0 && !won && near(c1[0], 2), 'contre-épreuve : avec la limite du lot 3, la mise de 4 M$ est refusée');
       }
     }
   });
 
-  await scenario('C. Limite revérifiée à la résolution : la mise que l’encaisse ne couvre plus est écartée', async () => {
+  await scenario('C. Réponse de Julien — à la résolution, plus de mise écartée faute d’encaisse', async () => {
     for(const variant of ['corrigé', 'ancien']){
-      const E = await setup(variant === 'ancien' ? { transform: s => s.replace(/  \/\/ Section 310 — décision « lot commercial » : chaque mise est revérifiée[\s\S]*?\/\/ fin limite \(résolution\)\n/, '  const bids = state.terrainLot.bids;\n') } : {});
+      const E = await setup(variant === 'ancien' ? { transform: LOT3_RESOLUTION } : {});
       E.run('as(A)'); await E.run(`submitTerrainLotBid(A.id, 4, 0.1, 1)`);
       E.run('as(B)'); await E.run(`submitTerrainLotBid(B.id, 1, 0.1, 1)`);
       E.run('A.cash -= 3; state.bank.cash += 3;'); // Co Alice dépense 3 M$ avant la résolution : il lui reste 2
+      const T0 = E.cash();
       await resolve(E);
       const winner = E.run('state.terrainLot.active && companyById(state.terrainLot.active.companyId).name');
       console.log(`    [${variant}] lot gagné par ${winner}`);
       if(variant === 'corrigé'){
-        ok(winner === 'Co Bob', 'la mise de 4 M$ de Co Alice (encaisse 2 M$) est écartée, Co Bob l’emporte');
-        ok(E.json('state.log.some(l=>l.text.includes("La mise de Co Alice sur le lot commercial") && l.text.includes("écartée"))'), 'le journal explique la mise écartée');
+        ok(winner === 'Co Alice' && near(E.run('A.cash'), 2) && near(E.cash(), T0), 'la meilleure mise (4 M$, Co Alice, encaisse 2) l’emporte ; rien n’est payé');
       } else {
-        ok(winner === 'Co Alice', 'contre-épreuve : sans la revérification, Co Alice gagne avec une mise que son encaisse ne couvre plus');
+        ok(winner === 'Co Bob', 'contre-épreuve : avec la revérification du lot 3, la mise de Co Alice est écartée et Co Bob gagne');
       }
     }
   });
@@ -127,28 +140,34 @@ async function landOnLot(E){
     ok(JSON.stringify(E.cashes()) === JSON.stringify(c1) && near(E.cash(), T0), '2e appel : rien ne bouge (pari déjà clos), monnaie conservée');
   });
 
-  // Retouche de la revue : la mise du lot compte dans le même total que les mises REIT (dépôt et résolution).
-  const NO_CUMUL = s => s.replace('  const lotBid = terrainLotCommittedBid(companyId);', '  const lotBid = 0;')
-    .replace(/    if\(clampedPrice>0 && clampedPrice\+etfCommitted>[^\n]*\n/, '')
-    .replace('    const lotExposure = terrainLotActiveExposure(co.id);', '    const lotExposure = 0;');
+  // Réponse de Julien (2026-10-25) : la mise du lot ne compte plus dans le total des mises REIT (dépôt et résolution).
+  // Contre-épreuve : le cumul du lot 3 réintroduit.
+  const LOT3_CUMUL = src => LOT3_DEPOT(src)
+    .replace("  const totalBefore = etfCommittedBidTotal(companyId);\n  const total = etfCommittedBidTotal(companyId, overrides);",
+      "  const lotBid = ((state.terrainLot.bids||[]).find(x=>x.companyId===companyId)||{}).price||0;\n  const totalBefore = etfCommittedBidTotal(companyId) + lotBid;\n  const total = etfCommittedBidTotal(companyId, overrides) + lotBid;")
+    .replace("    if(due>co.cash+1e-9){ // Section 310 — réponse de Julien (2026-10-25) : le pari du lot commercial n'est plus déduit de l'encaisse",
+      "    const lotA = state.terrainLot.active; const lotExposure = (lotA && lotA.companyId===co.id) ? Math.max(0, lotA.price - (lotA.accrued||0)) : 0;\n    if(due>co.cash-lotExposure+1e-9){");
   const withEtf = E => E.run(`state.settings.features.etf = true; state.etfs.forEach(e=>{ e.opened = true; }); A.cash = 20; B.cash = 20;`);
   const resolveAll = E => E.run(`act(async ()=>{ maybeResolveTerrainLotAuction(); maybeResolveEtfAuctions(); return {ok:true}; })`);
-  await scenario('E. Retouche de la revue — Co Alice (20 M$) mise 20 sur le lot ET 20 sur un REIT', async () => {
+  await scenario('E. Réponse de Julien — Co Alice (20 M$) mise 20 sur le lot ET 20 sur un REIT', async () => {
     for(const variant of ['corrigé', 'ancien']){
-      const E = await setup(variant === 'ancien' ? { transform: NO_CUMUL } : {});
+      const E = await setup(variant === 'ancien' ? { transform: LOT3_CUMUL } : {});
       withEtf(E);
       E.run('as(A)');
       await E.run(`submitTerrainLotBid(A.id, 20, 0.1, 1)`);
       const r = await E.run(`submitEtfBids(A.id, [{etfId:'rue1', price:20}])`);
-      const T0 = E.cash();
+      const T0 = E.cash(), committed = E.run('etfCommittedBidTotal(A.id)');
       await resolveAll(E);
+      const lotWon = E.run('!!state.terrainLot.active && state.terrainLot.active.companyId === A.id');
+      const reitWon = E.run('A.etfHoldings.rue1') === 100;
       await yearEnd(E); // personne n'est tombé sur le lot
-      console.log(`    [${variant}] mise REIT ${r.ok ? 'acceptée' : 'refusée'} ; encaisse de Co Alice après la fin d'année : ${E.run('A.cash').toFixed(2)} M$`);
+      console.log(`    [${variant}] mise REIT ${r.ok ? 'acceptée' : 'refusée'} ; lot ${lotWon ? 'gagné' : 'non'} ; Première rue ${reitWon ? 'gagnée' : 'non'} ; encaisse de Co Alice après la fin d'année : ${E.run('A.cash').toFixed(2)} M$`);
       if(variant === 'corrigé'){
-        ok(!r.ok && /lot commercial/.test(r.error) && /40[,.]00/.test(r.error), `la mise REIT est refusée : total engagé 40 pour 20 d'encaisse (« ${r.error} »)`);
-        ok(near(E.run('A.cash'), 0) && near(E.cash(), T0), 'Co Alice gagne le lot, rate son pari et finit à 0 (avant : −20)');
+        ok(r.ok && committed === 20, 'la mise REIT est acceptée : le total des mises REIT (20) ne compte plus le lot');
+        ok(lotWon && reitWon, 'Co Alice gagne le lot et la Première rue (20 M$ payés pour le REIT)');
+        ok(near(E.run('A.cash'), -20) && near(E.cash(), T0), 'pari raté : la mise du lot (20) est réglée en fin d’année, Co Alice finance −20 (voulu par Julien)');
       } else {
-        ok(r.ok && near(E.run('A.cash'), -20), 'contre-épreuve : sans le cumul, les deux mises passent et Co Alice finit à −20');
+        ok(!r.ok && /encaisse/.test(r.error), 'contre-épreuve : avec le cumul du lot 3, la mise REIT est refusée (total 40)');
       }
     }
     // Ordre inverse : REIT d'abord, puis le lot.
@@ -157,26 +176,27 @@ async function landOnLot(E){
     await E.run(`submitEtfBids(A.id, [{etfId:'rue1', price:20}])`);
     E.alerts.length = 0;
     await E.run(`submitTerrainLotBid(A.id, 20, 0.1, 1)`);
-    ok(E.run('state.terrainLot.bids.length') === 0 && /mises REIT/.test(E.alerts[0] || ''), `ordre inverse : la mise sur le lot est refusée (« ${E.alerts[0]} »)`);
-    await E.run(`submitTerrainLotBid(A.id, 0, 0.1, 1)`);
-    ok(E.run('state.terrainLot.bids.length') === 1, 'une mise de 0 sur le lot reste permise');
+    ok(E.run('state.terrainLot.bids.length') === 1 && E.alerts.length === 0, 'ordre inverse : la mise de 20 sur le lot est acceptée après 20 de mises REIT');
+    const r = await E.run(`submitEtfBids(A.id, [{etfId:'rue1', price:20}, {etfId:'rue2', price:1}])`);
+    ok(!r.ok && /21[,.]00/.test(r.error) && !/lot commercial/.test(r.error), `la limite des mises REIT elles-mêmes (bogue 28) reste : 21 refusé (« ${r.error} »)`);
   });
 
-  await scenario('F. Retouche de la revue — résolution : le lot (résolu d’abord) réduit l’encaisse disponible pour les REIT', async () => {
+  await scenario('F. Réponse de Julien — résolution : le lot gagné juste avant ne réduit plus l’encaisse disponible pour les REIT', async () => {
     for(const variant of ['corrigé', 'ancien']){
-      const E = await setup(variant === 'ancien' ? { transform: NO_CUMUL } : {});
+      const E = await setup(variant === 'ancien' ? { transform: LOT3_CUMUL } : {});
       withEtf(E);
       E.run('as(A)'); await E.run(`submitTerrainLotBid(A.id, 10, 0.1, 1)`); await E.run(`submitEtfBids(A.id, [{etfId:'rue1', price:10}])`);
       E.run('as(B)'); await E.run(`submitEtfBids(B.id, [{etfId:'rue1', price:3}])`);
-      E.run('A.cash -= 5; state.bank.cash += 5;'); // Co Alice dépense 5 avant l'enchère : 15 pour 20 engagés
+      E.run('A.cash -= 5; state.bank.cash += 5;'); // Co Alice dépense 5 avant l'enchère : 15
+      const T0 = E.cash();
       await resolveAll(E);
       const rue1 = E.run(`state.companies.find(c=>(c.etfHoldings.rue1||0)>=100).name`);
       console.log(`    [${variant}] lot à ${E.run('companyById(state.terrainLot.active.companyId).name')}, Première rue à ${rue1} ; encaisse de Co Alice ${E.run('A.cash').toFixed(2)}`);
       if(variant === 'corrigé'){
-        ok(E.run('state.terrainLot.active.companyId === A.id') && rue1 === 'Co Bob' && near(E.run('A.cash'), 15), 'lot gagné par Co Alice (10 engagés) ; sa mise REIT de 10 dépasse les 5 restants : écartée, Co Bob gagne');
-        ok(E.json('state.log.some(l=>l.text.includes("engagés sur le lot commercial"))'), 'le journal explique la part engagée sur le lot');
+        ok(E.run('state.terrainLot.active.companyId === A.id') && rue1 === 'Co Alice' && near(E.run('A.cash'), 5), 'lot gagné par Co Alice ; sa mise REIT de 10 est couverte par ses 15 M$ : elle gagne aussi la Première rue (15 → 5)');
+        ok(near(E.cash(), T0), 'monnaie conservée');
       } else {
-        ok(rue1 === 'Co Alice' && near(E.run('A.cash'), 5), 'contre-épreuve : sans le cumul, Co Alice gagne aussi le REIT (5 M$ pour 10 engagés sur le lot)');
+        ok(rue1 === 'Co Bob', 'contre-épreuve : avec le cumul du lot 3, la mise REIT est écartée (10 engagés sur le lot) et Co Bob gagne');
       }
     }
   });

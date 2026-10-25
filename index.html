@@ -1646,6 +1646,14 @@ function migrateState(s){
   
   s.companies.forEach(co=>{ if(co.ready===undefined) co.ready = false; });
   s.companies.forEach(co=>{ if(co.tradeImpactBudget===undefined) co.tradeImpactBudget = {window:null, used:{}}; }); // Section 314 — bogue 67 : budget d'impact cumulé de la fenêtre de marché
+  // Section 310 — réponse de Julien (2026-10-25) : un REIT est évalué à sa valeur d'achat (etfCost = coût d'acquisition
+  // des parts détenues). Partie en cours : valeur du lot retenue jusqu'ici (valuationPrice, sinon dernier prix d'enchère)
+  // × part détenue, pour que le bilan ne saute pas à la mise à jour.
+  s.companies.forEach(co=>{
+    if(co.etfCost && typeof co.etfCost==='object') return;
+    co.etfCost = {};
+    (s.etfs||[]).forEach(e=>{ const held = (co.etfHoldings && co.etfHoldings[e.id])||0; if(held>0) co.etfCost[e.id] = ((e.valuationPrice!=null ? e.valuationPrice : e.lastAuctionPrice)||0) * held/100; });
+  });
   
   
   
@@ -2789,7 +2797,7 @@ async function createCompany(playerId, name, description, type, dividendPromised
     
     
     
-    position: 0, inJail: false, jailTurnsLeft: 0, goAdvancesOwed: 0, etfHoldings: {}, houseReserve: 0,
+    position: 0, inJail: false, jailTurnsLeft: 0, goAdvancesOwed: 0, etfHoldings: {}, etfCost: {}, houseReserve: 0, // Section 310 — réponse de Julien (2026-10-25) : etfCost
     
     
     ready: false,
@@ -4702,7 +4710,7 @@ function renderEntreprise(){
   const etfRowsForOwnedTable = f.etf ? state.etfs.map(e=>{
     const held = company.etfHoldings[e.id]||0;
     const def = ETF_DEFS.find(d=>d.key===e.id);
-    const etfValue = (e.fundCash + etfLotValuationPrice(e)) * (held/100); // Section 310 — bogue 29
+    const etfValue = companyEtfHoldingValue(company, e); // Section 310 — réponse de Julien (2026-10-25) : valeur d'achat
     const etfBadge = `<span style="background:var(--metal);color:#fff;padding:1px 7px;border-radius:4px;white-space:nowrap;">📊 ${esc(def?def.label:e.id)}</span>`;
     const etfRevenue = companyEtfRevenue(e.id, company.id);
     const etfCapex = companyEtfCapex(e.id, company.id);
@@ -7131,9 +7139,25 @@ function companyEtfValue(company){
   state.etfs.forEach(etf=>{
     const held = company.etfHoldings[etf.id]||0;
     if(held<=0) return;
-    v += (etf.fundCash + etfLotValuationPrice(etf)) * (held/100); // Section 310 — bogue 29
+    v += companyEtfHoldingValue(company, etf); // Section 310 — réponse de Julien (2026-10-25) : valeur d'achat
   });
   return v;
+}
+// Section 310 — réponse de Julien (2026-10-25) : « un REIT est évalué à sa valeur d'achat ». Valeur d'une part au bilan =
+// ce que l'entreprise a réellement payé pour les parts qu'elle détient (etfCost), plus sa quote-part du fonds (loyers
+// collectés, pas encore distribués). Avant : (fonds + valuationPrice) × part, valuationPrice étant le plus petit de la mise
+// et de l'ancienne valeur. Le gain ou la perte se réalise à la revente (encaisse reçue − coût sorti).
+function etfCostOf(company, etfId){
+  return (company && company.etfCost && company.etfCost[etfId]) || 0;
+}
+function companyEtfHoldingValue(company, etf){
+  const held = (company && company.etfHoldings && company.etfHoldings[etf.id])||0;
+  if(held<=0) return 0;
+  return etf.fundCash * (held/100) + etfCostOf(company, etf.id);
+}
+function setEtfCost(company, etfId, amount){
+  if(!company.etfCost) company.etfCost = {};
+  company.etfCost[etfId] = Math.max(0, amount);
 }
 
 function etfValue(player){
@@ -7570,14 +7594,14 @@ function applyEtfBids(companyId, bids){
     clamped.push({etf, price:clampedPrice});
   }
   // Section 310 — bogue 28 : plafond sur le TOTAL des mises de l'entreprise (avant : mise par mise, 4 × l'encaisse).
-  // Retouche de la revue : la mise du lot commercial compte dans le même total ; baisser ou retirer des mises reste
-  // toujours permis (seul un envoi qui AUGMENTE l'engagement au-delà de l'encaisse est refusé).
+  // Baisser ou retirer des mises reste toujours permis (seul un envoi qui AUGMENTE l'engagement au-delà de l'encaisse est
+  // refusé). Section 310 — réponse de Julien (2026-10-25) : la mise du lot commercial ne compte plus dans ce total (le
+  // lot n'est pas un vrai transfert d'argent avant la fin d'année).
   const overrides = {};
   clamped.forEach(x=>{ overrides[x.etf.id] = x.price; });
-  const lotBid = terrainLotCommittedBid(companyId);
-  const totalBefore = etfCommittedBidTotal(companyId) + lotBid;
-  const total = etfCommittedBidTotal(companyId, overrides) + lotBid;
-  if(total>co.cash+1e-9 && total>totalBefore+1e-9) return {ok:false, error:`${co.name} ne peut pas s'engager au-delà de son encaisse : le total de ses mises REIT (ce qu'elle paierait en les gagnant toutes, hors part déjà détenue)${lotBid>0?` et de sa mise sur le lot commercial (${fmt(lotBid)})`:''} atteindrait ${fmt(total)} pour une encaisse de ${fmt(co.cash)}. Rien n'a été modifié.`};
+  const totalBefore = etfCommittedBidTotal(companyId);
+  const total = etfCommittedBidTotal(companyId, overrides);
+  if(total>co.cash+1e-9 && total>totalBefore+1e-9) return {ok:false, error:`${co.name} ne peut pas s'engager au-delà de son encaisse : le total de ses mises REIT (ce qu'elle paierait en les gagnant toutes, hors part déjà détenue) atteindrait ${fmt(total)} pour une encaisse de ${fmt(co.cash)}. Rien n'a été modifié.`};
   // fin bogue 28 (dépôt)
   clamped.forEach(({etf, price})=>{
     etf.bids = (etf.bids||[]).filter(b=>b.companyId!==companyId);
@@ -7586,22 +7610,12 @@ function applyEtfBids(companyId, bids){
   });
   return {ok:true};
 }
-// Section 310 — retouche de la revue : la mise du lot commercial est la perte maximale de l'entreprise ; elle compte dans
-// le même total que ses mises REIT (total engagé ≤ encaisse). terrainLotActiveExposure : perte maximale restante d'un
-// pari en cours (mise − loyers déjà comptés), déduite de l'encaisse disponible à la résolution des REIT.
-function terrainLotCommittedBid(companyId){
-  if(!state.settings.features.terrainLot || !state.terrainLot) return 0;
-  const b = (state.terrainLot.bids||[]).find(x=>x.companyId===companyId);
-  return b ? Math.max(0, b.price||0) : 0;
-}
-function terrainLotActiveExposure(companyId){
-  const a = state.settings.features.terrainLot && state.terrainLot ? state.terrainLot.active : null;
-  return (a && a.companyId===companyId) ? Math.max(0, (a.price||0) - (a.accrued||0)) : 0;
-}
-// Section 310 — bogue 29 : valeur du lot entier retenue au bilan (companyEtfValue). Une partie d'avant la section 310
-// sans valuationPrice : dernier prix d'enchère (c'est aussi le défaut posé par migrateState).
+// Section 310 — réponse de Julien (2026-10-25) : terrainLotCommittedBid et terrainLotActiveExposure (mise du lot commercial
+// comptée avec les mises REIT, au dépôt et à la résolution) sont retirées avec la limite du lot commercial.
+// Section 310 — réponse de Julien (2026-10-25) : valeur du lot retenue au bilan = somme des valeurs d'achat des parts
+// détenues (etfCost). etf.valuationPrice (bogue 29) n'est plus lu que par migrateState, pour le coût des parties en cours.
 function etfLotValuationPrice(etf){
-  return (etf.valuationPrice!==undefined && etf.valuationPrice!==null) ? etf.valuationPrice : (etf.lastAuctionPrice||0);
+  return state.companies.reduce((s, co)=>s + (((co.etfHoldings && co.etfHoldings[etf.id])||0)>0 ? etfCostOf(co, etf.id) : 0), 0);
 }
 
 function resolveEtfAuction(etf, year){
@@ -7613,9 +7627,8 @@ function resolveEtfAuction(etf, year){
     const co = companyById(b.companyId);
     if(!co) return;
     const due = etfBidPayable(co, etf.id, b.price);
-    const lotExposure = terrainLotActiveExposure(co.id); // Section 310 — retouche de la revue : lot commercial résolu juste avant
-    if(due>co.cash-lotExposure+1e-9){
-      log(`La mise de ${co.name} sur le ${etfLabel(etf.id)} (${fmt(b.price)}, soit ${fmt(due)} à payer) est écartée : son encaisse au moment de l'enchère (${fmt(co.cash)}${lotExposure>0?`, dont ${fmt(lotExposure)} engagés sur le lot commercial`:''}) ne la couvre plus.`);
+    if(due>co.cash+1e-9){ // Section 310 — réponse de Julien (2026-10-25) : le pari du lot commercial n'est plus déduit de l'encaisse
+      log(`La mise de ${co.name} sur le ${etfLabel(etf.id)} (${fmt(b.price)}, soit ${fmt(due)} à payer) est écartée : son encaisse au moment de l'enchère (${fmt(co.cash)}) ne la couvre plus.`);
       return;
     }
     bids.push(b);
@@ -7643,6 +7656,7 @@ function resolveEtfAuction(etf, year){
   otherHolders.forEach(h=>{
     const share = winner.price * (h.pct/100);
     h.co.cash += share;
+    setEtfCost(h.co, etf.id, 0); // Section 310 — réponse de Julien (2026-10-25) : parts cédées, coût sorti (gain ou perte réalisé)
     logFin(h.co.id, 'etf_sale', share);
     if(share>0) addEtfCapex(etf.id, h.co.id, -share); 
     entries.push({label:`${h.co.name} (vente ${etfLabel(etf.id)})`, amount:share});
@@ -7656,18 +7670,13 @@ function resolveEtfAuction(etf, year){
   if(winnerPl && payable>0) winnerPl.stats.spentBuying += payable;
   state.companies.forEach(co=>{ if(co.etfHoldings) co.etfHoldings[etf.id] = 0; });
   winnerCo.etfHoldings[etf.id] = 100;
-  // Section 310 — bogue 29 : la part que le gagnant détenait déjà n'est pas payée ; elle garde sa valeur précédente.
-  // Seule la part réellement achetée est valorisée au prix de la mise. Avant, le lot entier prenait le prix de la mise :
-  // le détenteur unique misait toute son encaisse sur son propre REIT, ne payait rien et gonflait la valeur de son
-  // entreprise (classement, ratio, impôt). La mise reste le dernier prix d'enchère.
-  // Retouche de la revue (complice) : un détenteur qui revend d'abord 99 % à une entreprise amie puis remise lui
-  // reversait le prix et gonflait quand même le lot. Quand le gagnant détenait déjà une part, la part rachetée à
-  // d'AUTRES entreprises est valorisée au plus petit de la mise et de l'ancienne valeur ; la part achetée à la banque
-  // reste au prix de la mise. Sans part détenue au départ, le lot entier prend le prix payé, comme avant.
-  const prevValuation = etfLotValuationPrice(etf);
-  const fromCompaniesValue = winnerPriorPct>1e-9 ? Math.min(winner.price, prevValuation) : winner.price; // Section 310 — retouche (complice)
-  const valuationPrice = prevValuation*(winnerPriorPct/100) + fromCompaniesValue*(otherCompanyPctTotal/100) + winner.price*(bankPct/100);
-  etf.valuationPrice = valuationPrice; // Section 310 — bogue 29
+  // Section 310 — réponse de Julien (2026-10-25) : « un REIT est évalué à sa valeur d'achat ». Le gagnant ajoute à son
+  // coût ce qu'il paie réellement (la part qu'il détenait déjà n'est pas payée : son coût ne change pas) ; les autres
+  // détenteurs sortent leur coût (gain ou perte réalisé). Remplace la valorisation du bogue 29 (valuationPrice).
+  const winnerPriorCost = winnerPriorPct>1e-9 ? etfCostOf(winnerCo, etf.id) : 0;
+  state.companies.forEach(co=>{ if(co.id!==winnerCo.id && co.etfCost && co.etfCost[etf.id]) co.etfCost[etf.id] = 0; });
+  setEtfCost(winnerCo, etf.id, winnerPriorCost + payable);
+  const valuationPrice = etfCostOf(winnerCo, etf.id);
   etf.lastAuctionPrice = winner.price;
   etf.lastAuctionYear = year;
   
@@ -7679,7 +7688,7 @@ function resolveEtfAuction(etf, year){
   if(!etf.priceHistory) etf.priceHistory = [];
   etf.priceHistory.push({roll: state.gameClock.rollCount, year, price: winner.price});
   if(etf.priceHistory.length>500) etf.priceHistory.shift();
-  log(`${winnerCo.name} remporte l'enchère du ${etfLabel(etf.id)} de l'année ${displayGameYear(year)} à ${fmt(winner.price)} pour l'ensemble du lot.${winnerPriorPct>1e-9 ? ` ${winnerCo.name} détenait déjà ${+winnerPriorPct.toFixed(4)}% du lot, non payés : cette part garde sa valeur précédente${otherCompanyPctTotal>1e-9?' et la part rachetée aux autres entreprises est valorisée au plus à cette valeur précédente':''} ; le lot est valorisé à ${fmt(valuationPrice)}.` : ''}`, entries); // Section 310 — bogue 29
+  log(`${winnerCo.name} remporte l'enchère du ${etfLabel(etf.id)} de l'année ${displayGameYear(year)} à ${fmt(winner.price)} pour l'ensemble du lot.${winnerPriorPct>1e-9 ? ` ${winnerCo.name} détenait déjà ${+winnerPriorPct.toFixed(4)}% du lot, non payés : leur valeur d'achat ne change pas ; le lot est porté à son bilan pour ${fmt(valuationPrice)} (ce qu'elle a réellement payé).` : ''}`, entries); // Section 310 — réponse de Julien (2026-10-25) : valeur d'achat
 }
 
 // Section 310 — retouche de la revue (bogue 28) : ordre de résolution au lancer qui suit la fenêtre de mise : le lot
@@ -7761,6 +7770,11 @@ function executeEtfSale(etfId, sellerId, buyerId, pct, price, opts){
   if(!(Number.isFinite(price) && price>0)) return fail('Le prix convenu doit être un nombre strictement positif.'); // Section 310 — bogue 46
   if(!opts.dryRun && buyer.cash<price-1e-9) return fail(`${buyer.name} n'a pas assez d'encaisse pour payer ${fmt(price)} (encaisse : ${fmt(buyer.cash)}).`);
   if(opts.dryRun) return {ok:true};
+  // Section 310 — réponse de Julien (2026-10-25) : le vendeur sort son coût au prorata des parts vendues (gain ou perte
+  // réalisé = prix − coût sorti) ; l'acheteur ajoute à son coût le prix payé.
+  const sellerCost = etfCostOf(seller, etfId);
+  setEtfCost(seller, etfId, held-pct>1e-9 ? sellerCost * (1 - pct/held) : 0);
+  setEtfCost(buyer, etfId, ((buyer.etfHoldings[etfId]||0)>0 ? etfCostOf(buyer, etfId) : 0) + price);
   seller.etfHoldings[etfId] = held-pct;
   buyer.etfHoldings[etfId] = (buyer.etfHoldings[etfId]||0) + pct;
   seller.cash += price;
@@ -9439,17 +9453,11 @@ async function submitTerrainLotBid(companyId, price, loyer, numSquares){
     const clampedLoyer = Math.min(maxL, Math.max(minL, loyer||minL));
     const clampedSquares = Math.min(TERRAIN_LOT_CANDIDATE_POSITIONS.length, Math.max(1, Math.round(numSquares)||1));
     const clampedPrice = Math.max(0, price||0);
-    // Section 310 — décision « lot commercial » : la mise est la perte maximale du gagnant (aucun loyer compté : il
-    // verse toute la mise aux autres en fin d'année). Elle ne peut plus dépasser l'encaisse de l'entreprise (avant :
-    // aucune limite, une entreprise pouvait finir à −2 M$ après avoir gagné). Une mise de 0 reste permise.
     const notCeo = offerResponderRefusal(companyId, 'cette entreprise', 'miser pour elle'); // Section 310 — retouche de la revue : seul le CEO mise
     if(notCeo) return notCeo;
-    if(clampedPrice>0 && clampedPrice>co.cash+1e-9) return {ok:false, error:`${co.name} ne peut pas miser plus que son encaisse actuelle (${fmt(co.cash)}) sur le lot commercial : la mise est sa perte maximale si personne ne tombe sur le lot (rien n'est payé à l'enchère ; en fin d'année, seul l'écart entre les loyers commerciaux comptés et la mise est réglé).`};
-    // Retouche de la revue : la mise du lot compte dans le même total que les mises REIT (sinon 20 sur le lot et 20 sur
-    // un REIT passaient avec 20 d'encaisse). Baisser ou retirer sa mise reste permis.
-    const etfCommitted = state.settings.features.etf ? etfCommittedBidTotal(companyId) : 0;
-    if(clampedPrice>0 && clampedPrice+etfCommitted>co.cash+1e-9 && clampedPrice>terrainLotCommittedBid(companyId)+1e-9) return {ok:false, error:`${co.name} ne peut pas s'engager au-delà de son encaisse : sa mise sur le lot commercial (${fmt(clampedPrice)}) et ses mises REIT (${fmt(etfCommitted)}) atteindraient ${fmt(clampedPrice+etfCommitted)} pour une encaisse de ${fmt(co.cash)}.`};
-    // fin limite (dépôt)
+    // Section 310 — réponse de Julien (2026-10-25) : « c'est pas un vrai transfert d'argent jusqu'à la toute fin ». Plus
+    // de limite « mise ≤ encaisse » sur le lot commercial, ni seule ni ajoutée aux mises REIT (retirée) : on peut miser
+    // 4 M$ avec 2 M$ d'encaisse ; rien ne bouge avant le règlement de fin d'année, où le gagnant finance sa perte éventuelle.
     state.terrainLot.bids = state.terrainLot.bids.filter(b=>b.companyId!==companyId);
     state.terrainLot.bids.push({companyId, price: clampedPrice, loyer: clampedLoyer, numSquares: clampedSquares});
     log(`${co.name} soumet une mise pour le lot commercial de l'année ${displayGameYear()}: prix ${fmt(clampedPrice)}, loyer ${fmt(clampedLoyer)}/case, ${clampedSquares} case(s).`);
@@ -9460,18 +9468,9 @@ async function submitTerrainLotBid(companyId, price, loyer, numSquares){
 }
 
 function resolveTerrainLotAuction(year){
-  // Section 310 — décision « lot commercial » : chaque mise est revérifiée à la résolution ; une mise que l'encaisse
-  // de l'entreprise ne couvre plus (perte maximale) est écartée, la meilleure mise restante l'emporte.
-  const bids = state.terrainLot.bids.filter(b=>{
-    const bidder = companyById(b.companyId);
-    if(!bidder) return false;
-    if(b.price>0 && b.price>bidder.cash+1e-9){
-      log(`La mise de ${bidder.name} sur le lot commercial (${fmt(b.price)}) est écartée : son encaisse au moment de l'enchère (${fmt(bidder.cash)}) ne couvre plus cette perte maximale.`);
-      return false;
-    }
-    return true;
-  });
-  // fin limite (résolution)
+  // Section 310 — réponse de Julien (2026-10-25) : plus de revérification « mise ≤ encaisse » à la résolution (limite
+  // retirée) : la meilleure mise l'emporte, quelle que soit l'encaisse du moment.
+  const bids = state.terrainLot.bids;
   state.terrainLot.bids = [];
   if(bids.length===0) return;
   let winner = bids[0];
@@ -14472,9 +14471,10 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   let terrainLotSectionHtml = '';
   if(state.settings.features.terrainLot && terrainPosInYear===0){
     const myBid = state.terrainLot.bids.find(b=>b.companyId===co.id);
+    // Section 310 — réponse de Julien (2026-10-25) : texte sans la limite « prix ≤ encaisse » (retirée).
     terrainLotSectionHtml = `
     <div class="section-title" style="margin-top:16px;">🏙️ Lot commercial — mise pour l'année ${displayGameYear()}</div>
-    <div class="small" style="margin-bottom:6px;">Combien ${esc(co.name)} est prêt à payer pour obtenir le droit sur le lot commercial de cette année financière (connu dès le prochain lancer). Le gagnant est celui dont Prix / (Loyer × Nombre de cases) est le plus élevé. Rien n'est payé à l'enchère ni quand une entreprise tombe sur le lot : en fin d'année, seul l'écart entre les loyers commerciaux comptés et le prix est réglé avec les autres entreprises. Le prix, ajouté à vos mises REIT de cette année, ne peut pas dépasser l'encaisse actuelle (${fmt(co.cash)}) : c'est la perte maximale (revérifié à la résolution, qui traite le lot commercial avant les REIT).</div>
+    <div class="small" style="margin-bottom:6px;">Combien ${esc(co.name)} est prêt à payer pour obtenir le droit sur le lot commercial de cette année financière (connu dès le prochain lancer). Le gagnant est celui dont Prix / (Loyer × Nombre de cases) est le plus élevé. Rien n'est payé à l'enchère ni quand une entreprise tombe sur le lot : en fin d'année, seul l'écart entre les loyers commerciaux comptés et le prix est réglé avec les autres entreprises. Le prix n'est pas limité par l'encaisse : si les loyers comptés n'atteignent pas le prix, ${esc(co.name)} financera la différence à ce règlement.</div>
     <label>Prix (en ${esc(state.unit)})</label>
     <input type="number" min="0" step="0.01" id="mTerrainBidPrice" value="${myBid?myBid.price:0}">
     <label>Loyer commercial par case (entre ${fmt(minL)} et ${fmt(maxL)})</label>
@@ -14497,9 +14497,10 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   let etfSectionHtml = '';
   const openedEtfs = state.etfs.filter(e=>e.opened);
   if(state.settings.features.etf && openedEtfs.length>0 && terrainPosInYear===0){
+    // Section 310 — réponse de Julien (2026-10-25) : la mise du lot commercial ne compte plus dans le total des mises REIT.
     etfSectionHtml = `
     <div class="section-title" style="margin-top:16px;">📈 REIT — mises pour l'année ${displayGameYear()}</div>
-    <div class="small" style="margin-bottom:6px;">Le plus offrant remporte 100% du lot de chaque REIT au prochain lancer, en rachetant les détenteurs actuels au prorata. Laissez à 0 (ou sous ${fmt(ETF_MIN_BID)}) si ${esc(co.name)} n'est pas intéressée cette année. Le TOTAL de vos mises (REIT et lot commercial) ne peut jamais dépasser l'encaisse actuelle (${fmt(co.cash)}) ; sur un REIT dont vous détenez déjà une part, seule la part à racheter compte. Chaque mise est revérifiée à la résolution, dans l'ordre lot commercial, puis Première, Deuxième, Troisième et Quatrième rue : une mise que l'encaisse restante ne couvre plus est écartée.</div>
+    <div class="small" style="margin-bottom:6px;">Le plus offrant remporte 100% du lot de chaque REIT au prochain lancer, en rachetant les détenteurs actuels au prorata. Laissez à 0 (ou sous ${fmt(ETF_MIN_BID)}) si ${esc(co.name)} n'est pas intéressée cette année. Le TOTAL de vos mises REIT ne peut jamais dépasser l'encaisse actuelle (${fmt(co.cash)}) ; sur un REIT dont vous détenez déjà une part, seule la part à racheter compte (la mise du lot commercial n'en fait pas partie). Chaque mise est revérifiée à la résolution, dans l'ordre Première, Deuxième, Troisième et Quatrième rue : une mise que l'encaisse restante ne couvre plus est écartée.</div>
     ${openedEtfs.map(e=>{
       const myBid = (e.bids||[]).find(b=>b.companyId===co.id);
       return `<label>${esc(etfLabel(e.id))}</label><input type="number" min="0" step="0.01" id="mEtfBid_${e.id}" value="${myBid?myBid.price:0}">`;
@@ -17444,10 +17445,7 @@ function renderEtfCard(etf, isCreator){
   } else {
     statusHtml = `<div class="small" style="margin-top:10px;">${etf.lastAuctionYear!=null?`Dernière enchère remportée en année ${displayGameYear(etf.lastAuctionYear)} à ${fmt(etf.lastAuctionPrice)} pour l'ensemble du lot.`:totalHeld<=0.001?`Aucune entreprise ne détient encore ce lot — en attente de la toute première enchère.`:''} Prochaine (ré-)enchère au 1er lancer de l'année prochaine.</div>`;
   }
-  // Section 310 — bogue 29 : la valeur retenue au bilan peut différer de la dernière mise (part déjà détenue, non payée).
-  if(etf.lastAuctionYear!=null && Math.abs(etfLotValuationPrice(etf)-(etf.lastAuctionPrice||0))>1e-9){
-    statusHtml += `<div class="small" style="margin-top:4px;">Valeur du lot retenue au bilan : ${fmt(etfLotValuationPrice(etf))} — la part que le gagnant détenait déjà, non payée à l'enchère, garde sa valeur précédente.</div>`;
-  }
+  // Section 310 — réponse de Julien (2026-10-25) : chaque détenteur porte ses parts à leur valeur d'achat (colonne du tableau).
   
   
   
@@ -17473,7 +17471,7 @@ function renderEtfCard(etf, isCreator){
       <div><b>${esc(def.label)}</b> <span class="small">— ${esc(groupLabels)}</span></div>
       <div class="small">${etf.opened?'🟢 Ouvert':'⚪ Non ouvert (réserve non collectée)'} · Fonds (loyer collecté, pas encore distribué): ${fmt(etf.fundCash)}</div>
     </div>
-    ${holders.length? `<table style="margin-top:10px;"><tr><th>Détenteur</th><th>Part</th></tr>${holders.map(h=>`<tr><td>${esc(h.c.name)}</td><td>${h.held.toFixed(1)}%</td></tr>`).join('')}</table>` : `<div class="small" style="margin-top:8px;">Aucune part détenue pour l'instant.</div>`}
+    ${holders.length? `<table style="margin-top:10px;"><tr><th>Détenteur</th><th>Part</th><th>Valeur d'achat (bilan)</th></tr>${holders.map(h=>`<tr><td>${esc(h.c.name)}</td><td>${h.held.toFixed(1)}%</td><td class="money">${fmt(etfCostOf(h.c, etf.id))}</td></tr>`).join('')}</table>` : `<div class="small" style="margin-top:8px;">Aucune part détenue pour l'instant.</div>`}
     ${statusHtml}
     ${myHeld>0.001 && myCo?`
       <div class="small" style="margin-top:14px;"><b>Revendre mes parts (à une autre entreprise seulement)</b> — une offre que le CEO acheteur accepte ou refuse dans son onglet Mon Entreprise ; rien ne bouge avant son acceptation, et l'offre expire au lancer de dés suivant.</div>

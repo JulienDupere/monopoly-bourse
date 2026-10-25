@@ -30,7 +30,12 @@ const f = (x) => (Math.abs(x) < 5e-10 ? 0 : x).toFixed(4);
        state.rentCompensations = [];
        state.neutralPawns.push({id:'pion-test', name:'Pion test', position:0, inJail:false, jailTurnsLeft:0});
        globalThis.P = state.properties.find(p=>p.name==='Bleu foncé 2');
-       P.owners = [{companyId:A.id, share:100}]; P.houses = 4; P.mortgages = []; P.insurance = null; P.subInsurance = null;`);
+       P.owners = [{companyId:A.id, share:100}]; P.houses = 4; P.mortgages = []; P.insurance = null; P.subInsurance = null;
+       // Section 311 — bogue 18 : une ABS n'est permise que sur un lot de couleur déjà regroupé. Le lot Bleu foncé est
+       // regroupé (même propriétaire, Bleu foncé 1 sans maison) : P garde son loyer de 17, la tarification couvre le lot.
+       globalThis.P1 = state.properties.find(p=>p.name==='Bleu foncé 1');
+       P1.owners = [{companyId:A.id, share:100}]; P1.houses = 0; P1.mortgages = []; P1.insurance = null; P1.subInsurance = null;
+       P.groupMergeId = 'lot-bleu-fonce'; P1.groupMergeId = 'lot-bleu-fonce';`);
   const ids = json(`({A:A.id, B:B.id, C:C.id, BOB:BOB.id, CARLA:CARLA.id})`);
   // Les fonds de départ peuvent être modestes : on donne de la marge aux souscripteurs (la masse est mesurée en delta).
   run(`C.cash += 50; BOB.cash += 50; CARLA.cash += 50; B.cash += 500;`);
@@ -233,7 +238,7 @@ const f = (x) => (Math.abs(x) < 5e-10 ? 0 : x).toFixed(4);
     run(`globalThis.O1 = state.properties.find(p=>p.name==='Orange 1');
          globalThis.O2 = state.properties.find(p=>p.name==='Orange 2');
          globalThis.O3 = state.properties.find(p=>p.name==='Orange 3');
-         [O1, O2, O3].forEach(p=>{ p.owners = [{companyId:A.id, share:100}]; p.houses = 5; p.mortgages = []; p.insurance = null; p.subInsurance = null; });`);
+         [O1, O2, O3].forEach(p=>{ p.owners = [{companyId:A.id, share:100}]; p.houses = 5; p.mortgages = []; p.insurance = null; p.subInsurance = null; p.groupMergeId = 'lot-orange'; });`); // Section 311 — bogue 18 : lot regroupé
     const cap0 = run(`computeAbsPricing(A.id, [O1.id, O2.id, O3.id], 0.6, 3).seniorCapacity`);
     const {tranches, deal} = await emission('S6', 0.8*cap0, [{tranche:'senior', type:'company', id:ids.C, who:'Co Carla', max:50}], '[O1.id, O2.id, O3.id]', 3);
     ok(near(tranches.juniorAmount, 0) && deal.juniorHolders.length===0, `S6 : junior nulle sur le panier (capacité ${f(cap0)}, senior ${f(tranches.seniorAmount)})`);

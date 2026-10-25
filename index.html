@@ -9301,6 +9301,11 @@ async function submitTerrainLotBid(companyId, price, loyer, numSquares){
     const clampedLoyer = Math.min(maxL, Math.max(minL, loyer||minL));
     const clampedSquares = Math.min(TERRAIN_LOT_CANDIDATE_POSITIONS.length, Math.max(1, Math.round(numSquares)||1));
     const clampedPrice = Math.max(0, price||0);
+    // Section 310 — décision « lot commercial » : la mise est la perte maximale du gagnant (aucun loyer compté : il
+    // verse toute la mise aux autres en fin d'année). Elle ne peut plus dépasser l'encaisse de l'entreprise (avant :
+    // aucune limite, une entreprise pouvait finir à −2 M$ après avoir gagné). Une mise de 0 reste permise.
+    if(clampedPrice>0 && clampedPrice>co.cash+1e-9) return {ok:false, error:`${co.name} ne peut pas miser plus que son encaisse actuelle (${fmt(co.cash)}) sur le lot commercial : la mise est sa perte maximale si personne ne tombe sur le lot (rien n'est payé à l'enchère ; en fin d'année, seul l'écart entre les loyers commerciaux comptés et la mise est réglé).`};
+    // fin limite (dépôt)
     state.terrainLot.bids = state.terrainLot.bids.filter(b=>b.companyId!==companyId);
     state.terrainLot.bids.push({companyId, price: clampedPrice, loyer: clampedLoyer, numSquares: clampedSquares});
     log(`${co.name} soumet une mise pour le lot commercial de l'année ${currentGameYear()}: prix ${fmt(clampedPrice)}, loyer ${fmt(clampedLoyer)}/case, ${clampedSquares} case(s).`);
@@ -9311,7 +9316,18 @@ async function submitTerrainLotBid(companyId, price, loyer, numSquares){
 }
 
 function resolveTerrainLotAuction(year){
-  const bids = state.terrainLot.bids;
+  // Section 310 — décision « lot commercial » : chaque mise est revérifiée à la résolution ; une mise que l'encaisse
+  // de l'entreprise ne couvre plus (perte maximale) est écartée, la meilleure mise restante l'emporte.
+  const bids = state.terrainLot.bids.filter(b=>{
+    const bidder = companyById(b.companyId);
+    if(!bidder) return false;
+    if(b.price>0 && b.price>bidder.cash+1e-9){
+      log(`La mise de ${bidder.name} sur le lot commercial (${fmt(b.price)}) est écartée : son encaisse au moment de l'enchère (${fmt(bidder.cash)}) ne couvre plus cette perte maximale.`);
+      return false;
+    }
+    return true;
+  });
+  // fin limite (résolution)
   state.terrainLot.bids = [];
   if(bids.length===0) return;
   let winner = bids[0];
@@ -9327,6 +9343,11 @@ function maybeResolveTerrainLotAuction(){
   if(state.gameClock.rollCount % 6 === 1) resolveTerrainLotAuction(currentGameYear());
 }
 
+// Section 310 — décision « lot commercial » (vérifiée) : le gagnant ne débourse rien à l'enchère ni aux passages sur le
+// lot (accrued compte les loyers commerciaux) ; ici, seul l'écart accrued − mise passe entre le gagnant et les autres
+// entreprises actives, à parts égales (monnaie conservée). Réutilisable tel quel pour régler le pari en cours à la
+// FIN DE PARTIE (section 316) : settleTerrainLotYearEnd(currentGameYear(), state.gameClock.rollCount), dans l'applyFn ;
+// il règle les loyers comptés jusque-là, une seule fois (le pari est clos : terrainLot.active = null, lastResult rempli).
 function settleTerrainLotYearEnd(endedYear, roll){
   const active = state.terrainLot.active;
   state.terrainLot.active = null;
@@ -14058,7 +14079,7 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
     const myBid = state.terrainLot.bids.find(b=>b.companyId===co.id);
     terrainLotSectionHtml = `
     <div class="section-title" style="margin-top:16px;">🏙️ Lot commercial — mise pour l'année ${currentGameYear()}</div>
-    <div class="small" style="margin-bottom:6px;">Combien ${esc(co.name)} est prêt à payer pour obtenir le droit sur le lot commercial de cette année financière (connu dès le prochain lancer). Le gagnant est celui dont Prix / (Loyer × Nombre de cases) est le plus élevé.</div>
+    <div class="small" style="margin-bottom:6px;">Combien ${esc(co.name)} est prêt à payer pour obtenir le droit sur le lot commercial de cette année financière (connu dès le prochain lancer). Le gagnant est celui dont Prix / (Loyer × Nombre de cases) est le plus élevé. Rien n'est payé à l'enchère ni quand une entreprise tombe sur le lot : en fin d'année, seul l'écart entre les loyers commerciaux comptés et le prix est réglé avec les autres entreprises. Le prix ne peut pas dépasser l'encaisse actuelle (${fmt(co.cash)}) : c'est la perte maximale (revérifié à la résolution).</div>
     <label>Prix (en ${esc(state.unit)})</label>
     <input type="number" min="0" step="0.01" id="mTerrainBidPrice" value="${myBid?myBid.price:0}">
     <label>Loyer commercial par case (entre ${fmt(minL)} et ${fmt(maxL)})</label>

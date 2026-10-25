@@ -1009,15 +1009,35 @@ Chaque changement du code porte le commentaire « Section 309 — décision de J
   achat. `modalBuyShares` est le seul endroit qui écrit `acquisitionPrice` (le rachat d'une part de lot,
   `buyMergedShareFromBank`, n'y touche pas). Parties existantes : un plancher déjà enregistré est conservé tel quel
   (les parts achetées à l'époque sont inconnues) ; champ absent → `null` (prix de base) par `migrateState`, comme avant.
+- **Limite connue : un achat honnête PARTIEL n'est protégé qu'en partie.** Le plancher pondéré mêle le prix payé et le
+  plancher des autres parts. Exemple : 50 % de Brun 2 (prix de base 1,2) achetés « à 2 pour 100 % » (1 M$ payé) →
+  plancher 0,5 × 1,2 + 0,5 × 2 = 1,6 ; revendus aussitôt à la banque, ces 50 % rapportent 0,60 (0,5 × 0,75 × 1,6) au
+  lieu de 0,75 (0,5 × 0,75 × 2) si le plancher était le prix payé. C'est le prix de la protection contre la triche du
+  rachat de 1 % : seul un achat de 100 % garde un plancher égal au prix payé.
+- **Retouches de la revue des décisions** (commentaire « Section 309-313 — retouche de la revue des décisions ») :
+  - *Prix minimum = valeur de rachat de la banque.* Les parts non achetées comptant au plancher précédent, acheter 1 %
+    « à 0,01 pour 100 % » sur un terrain au plancher 10 puis le revendre à la banque rapportait +0,074 par cycle
+    (+4,70 sur 100 cycles). La banque ne vend plus jamais une part moins cher que ce qu'elle la rachèterait :
+    `modalBuyShares` refuse un prix pour 100 % inférieur à `bankMinSalePrice100` (valeur de rachat pour 100 %,
+    arrondie au centime supérieur, recalculée dans l'applyFn), `buyMergedShareFromBank` un prix inférieur à
+    `buybackValueLot` × pourcentage (même défaut pour un lot : achat à 0,01 puis revente à la valeur de rachat). Le
+    message donne le minimum (« au moins 7.50 pour 100 % ») ; les fenêtres l'annoncent et la fenêtre du terrain ne
+    suggère jamais moins. Boucle « 1 % à 0,01 » au plancher 10 : +1,35 sur 20 cycles avant, 0 après ; au prix minimum,
+    chaque cycle perd (−0,0047 sur 20 cycles).
+  - *Terrain regroupé entre-temps* : l'applyFn de `modalBuyShares` refuse un terrain regroupé en lot entre l'ouverture
+    de la fenêtre et la confirmation (« … fait désormais partie du lot … regroupé — rien n'a été acheté »).
 - **Sans code** : part de la banque ou du REIT dans le coût d'une maison payée par la banque (gardé) ; pas de
   compensation en argent de l'écart d'arrondi du regroupement (gardé) ; choix déjà faits confirmés (vente de part à une
   entreprise par offre à accepter, prix proposé = valeur de rachat de la banque, compensation de maison refusée si un
   copropriétaire ne peut pas payer).
-- **Tests** : `tests/section309-decisions.test.js` (22 vérifications, par la vraie fenêtre sur le mini-DOM ;
-  contre-épreuve : l'ancienne ligne réintroduite redonne un plancher de 500 et +370 M$) ; contre-épreuve de
-  `tests/section309-retouches.test.js` adaptée (plancher 5,594 et non 500).
+- **Tests** : `tests/section309-decisions.test.js` (33 vérifications, par la vraie fenêtre sur le mini-DOM ;
+  contre-épreuves : l'ancienne ligne réintroduite redonne un plancher de 500 et +370 M$ ; prix minimum retiré, terrain
+  et lot ; contrôle du regroupement retiré) ; contre-épreuves de `tests/section309-retouches.test.js` adaptées
+  (plancher 5,594 et non 500 ; rachat de lot à 0,2, au-dessus du minimum).
 - **Joueurs** (cahier 5, aide-mémoire) : le prix convenu lors d'un achat de parts à la banque ne relève le plancher de
-  valeur du terrain qu'au prorata des parts achetées.
+  valeur du terrain qu'au prorata des parts achetées ; un achat partiel est donc moins bien protégé qu'un achat de
+  100 % (50 % de Brun 2 achetés « à 2 pour 100 % » se revendent 0,60 à la banque, et non 0,75) ; la banque ne vend
+  jamais une part (terrain ou lot) moins cher que sa valeur de rachat, et la fenêtre annonce ce prix minimum.
 
 ## 311. Titrisation (ABS), swaps de loyers et accords de compensation : lot de couleur regroupé exigé, durée servie = durée payée, terrain verrouillé dès l'annonce, actif au bilan du souscripteur — 2026-10-24
 
@@ -1404,13 +1424,25 @@ Chaque changement du code porte le commentaire « Section 313 — décision de J
   ont changé ». L'avertissement du lot 6 est remplacé par « votre assurance sous-standard sur cette case sera annulée et
   sa prime (…) remboursée automatiquement par … à la signature ». Une sous-standard d'une autre entreprise n'est pas
   touchée. Exemple : sous-standard sur Bleu foncé 2 à 0,1111, puis contrat annuel à 0,1200 → A paie net 0,0089 ;
-  reprise par C : C rembourse 0,1111, la banque garde 0,1200 ; monnaie conservée.
+  reprise par C : C rembourse 0,1111, la banque garde 0,1200 ; monnaie conservée. Comme dans `cancelSubInsurance`,
+  une entreprise assureur sans encaisse suffisante rembourse quand même (encaisse négative).
+- **Retouches de la revue des décisions** (commentaire « Section 309-313 — retouche de la revue des décisions ») :
+  - *Plus de fausse alerte au 1er clic* : la fenêtre « Assurer plusieurs cases » construisait les conditions affichées
+    sans le remboursement de la sous-standard, que les conditions vérifiées contiennent : « Les conditions ont changé »
+    s'affichait à chaque 1er clic quand on signait par-dessus sa propre sous-standard. Utilitaire partagé
+    `insuranceSubRefundConditions`, calculé à l'ouverture de la fenêtre : signature dès le 1er clic.
+  - *Assureur introuvable, défaut antérieur* : `cancelSubInsurance` (+0,1 créé), `mergeGroup` (assurance normale et
+    sous-standard, +0,3), `cancelContract` (contrat groupé, +0,3) et `cancelPropInsurance` (jamais appelée) créditaient
+    l'assurée sans débiter personne. Utilitaire `refundInsurancePremium` (même garde que le remboursement automatique) :
+    assureur ou assurée introuvable, aucun remboursement, contrat annulé quand même, trace au journal ; monnaie
+    conservée.
 - **Sans code** : prorata des services gardé ; contrats antérieurs sans plafond, franchise confirmée devenant celle du
   tour et prix de reprise plafonné (loyers) confirmés.
-- **Tests** : `tests/section313-decisions.test.js` (30 vérifications, 11 scénarios dont 3 de contre-épreuve : plafond
-  des taxes réintroduit, reprise plafonnée réintroduite, annulation automatique retirée) ; adaptés :
-  `section313-assurance` 39c (taxe non plafonnée), 39g (contre-épreuve = plafond réintroduit), R4b (+1 créé au lieu de
-  +0,4), `section313-fenetre` F1 (aucun plafond enregistré sur la taxe) et F7 (mention du remboursement).
+- **Tests** : `tests/section313-decisions.test.js` (36 vérifications, 14 scénarios dont 4 de contre-épreuve : plafond
+  des taxes réintroduit, reprise plafonnée réintroduite, annulation automatique retirée, garde de l'assureur introuvable
+  retirée) ; `tests/section313-fenetre.test.js` F8 / F8b (signature dès le 1er clic par la vraie fenêtre, contre-épreuve) ;
+  adaptés : `section313-assurance` 39c (taxe non plafonnée), 39g (contre-épreuve = plafond réintroduit), R4b (+1 créé
+  au lieu de +0,4), `section313-fenetre` F1 (aucun plafond enregistré sur la taxe) et F7 (mention du remboursement).
 - **Joueurs** (cahier 7, aide-mémoire) : une taxe assurée est couverte en entier (moins la franchise), même si elle a
   augmenté depuis la signature ; signer un contrat annuel ou semestriel sur une case déjà couverte par sa propre
   sous-standard l'annule et rembourse sa prime automatiquement.

@@ -10149,6 +10149,9 @@ function executeCeoAnnouncement(ann){
   const player = state.players.find(p=>p.id===ann.ceoId);
   if(!company || !player) return; 
   const dirLabel = ann.direction==='buy' ? 'achat' : 'vente';
+  // Section 315 — décision de Julien : une vente au-delà du plafond de 15 % (par ex. après une baisse du cours, le
+  // montant annoncé représentant alors plus de parts) est RAMENÉE au plafond au lieu d'être annulée en entier.
+  let execAmount = ann.amount, capReducedNote = '';
   
   
   
@@ -10160,7 +10163,11 @@ function executeCeoAnnouncement(ann){
     const year = currentGameYear();
     const alreadySold = ceoSharesSoldInYear(company.id, year);
     const cap = company.totalShares * CEO_SELL_ANNUAL_CAP_PCT;
-    if(sellQty > (cap-alreadySold) + 1e-9){
+    const allowedQty = Math.max(0, cap-alreadySold); // Section 315 — décision de Julien
+    if(sellQty > allowedQty + 1e-9 && allowedQty > 1e-9 && price>0){
+      execAmount = allowedQty*price;
+      capReducedNote = ` — RAMENÉE au plafond légal de vente CEO (${(CEO_SELL_ANNUAL_CAP_PCT*100).toFixed(0)}% des ${fmtShares(company.totalShares)} parts totales, par année financière) : ${fmtShares(allowedQty)} part(s) vendue(s) au lieu de ${fmtShares(sellQty)}, soit ${fmt(execAmount)} au lieu de ${fmt(ann.amount)}`;
+    } else if(sellQty > allowedQty + 1e-9){
       const capReason = `BLOQUÉE par le plafond légal de vente CEO (${(CEO_SELL_ANNUAL_CAP_PCT*100).toFixed(0)}% des ${fmtShares(company.totalShares)} parts totales, par année financière): ${fmtShares(alreadySold)} part(s) déjà vendue(s) cette année financière, il ne reste que ${fmtShares(Math.max(0,cap-alreadySold))} part(s) autorisée(s) pour ${fmtShares(sellQty)} demandée(s) au prix courant de ${fmtPrice(price)}/part`;
       log(`Annonce CEO pour ${company.name} (vente de ${fmt(ann.amount)}, annoncée il y a 1 an) arrivée à échéance mais ${capReason} — vente annulée dans son intégralité, aucune exécution partielle.`);
       
@@ -10176,7 +10183,7 @@ function executeCeoAnnouncement(ann){
   }
   
   
-  const res = executeShareTrade(company, player, ann.direction, ann.amount, true);
+  const res = executeShareTrade(company, player, ann.direction, execAmount, true); // Section 315 — décision de Julien : montant ramené au plafond
   if(!res.ok){
     log(`Annonce CEO pour ${company.name} (${dirLabel} de ${fmt(ann.amount)}, annoncée il y a 1 an) arrivée à échéance mais impossible à exécuter: ${res.error}`);
     
@@ -10191,16 +10198,16 @@ function executeCeoAnnouncement(ann){
   
   if(ann.direction==='sell'){
     const price = company.stockPrice||0;
-    state.ceoShareSaleLog.push({companyId: company.id, year: currentGameYear(), qty: price>0 ? ann.amount/price : 0, roll: state.gameClock.rollCount});
+    state.ceoShareSaleLog.push({companyId: company.id, year: currentGameYear(), qty: price>0 ? execAmount/price : 0, roll: state.gameClock.rollCount}); // Section 315 — décision de Julien
   }
-  log(`${company.name} — exécution de l'annonce CEO de ${player.name} faite il y a 1 an (${dirLabel} de ${fmt(ann.amount)}, au prix courant de ${fmtPrice(company.stockPrice)}/part) : ce n'est PAS une transaction spontanée, le CEO s'y était engagé publiquement (voir Portefeuille, section « Annonces CEO en attente »).`, res.entries);
+  log(`${company.name} — exécution de l'annonce CEO de ${player.name} faite il y a 1 an (${dirLabel} de ${fmt(execAmount)}, au prix courant de ${fmtPrice(company.stockPrice)}/part)${capReducedNote} : ce n'est PAS une transaction spontanée, le CEO s'y était engagé publiquement (voir Portefeuille, section « Annonces CEO en attente »).`, res.entries);
   
   
   
   
   
   
-  state.ceoAnnouncementExecutions.push({id: ann.id, ceoId: player.id, companyId: company.id, direction: ann.direction, amount: ann.amount, qty: res.qty, price: company.stockPrice, roll: state.gameClock.rollCount, entries: res.entries, ok:true});
+  state.ceoAnnouncementExecutions.push({id: ann.id, ceoId: player.id, companyId: company.id, direction: ann.direction, amount: execAmount, announcedAmount: ann.amount, qty: res.qty, price: company.stockPrice, roll: state.gameClock.rollCount, entries: res.entries, ok:true}); // Section 315 — décision de Julien : montant exécuté (announcedAmount = montant annoncé)
   if(state.ceoAnnouncementExecutions.length>50) state.ceoAnnouncementExecutions.splice(0, state.ceoAnnouncementExecutions.length-50);
 }
 
@@ -10850,16 +10857,23 @@ function companyDebt(company){
 }
 
 function companyDebtProceedsUse(companyId, uptoSemesterIndex){
-  let financingProceeds = 0, investmentSpend = 0;
+  // Section 315 — décision de Julien (dette « productive ») : seuls les investissements faits APRÈS un emprunt le
+  // justifient. Le grand livre est parcouru dans l'ordre chronologique : chaque emprunt alimente une réserve de fonds
+  // « non investis », chaque investissement ultérieur en consomme. Avant : min(emprunts, investissements) sur toute
+  // la partie, si bien que des terrains achetés AVANT l'emprunt (fonds de l'IPO) justifiaient une dette qui comblait
+  // un déficit.
+  let financingProceeds = 0, investmentSpend = 0, investmentBacked = 0, notYetInvested = 0;
   state.finLedger.forEach(e=>{
     if(e.companyId!==companyId || e.semesterIndex>uptoSemesterIndex) return;
     if(e.category==='go_advance_proceeds' || e.category==='loan_proceeds' || e.category==='mortgage_proceeds'){
       financingProceeds += e.amount;
+      notYetInvested += e.amount;
     } else if(e.category==='land_purchase' || e.category==='house_purchase' || e.category==='house_construction' || e.category==='etf_purchase'){
       investmentSpend += -e.amount;
+      const backed = Math.max(0, Math.min(notYetInvested, -e.amount));
+      investmentBacked += backed; notYetInvested -= backed;
     }
   });
-  const investmentBacked = Math.min(financingProceeds, investmentSpend);
   const badProceeds = Math.max(0, financingProceeds-investmentBacked);
   const badFraction = financingProceeds>1e-9 ? badProceeds/financingProceeds : 0;
   return {financingProceeds, investmentSpend, investmentBacked, badProceeds, badFraction};
@@ -21376,7 +21390,7 @@ function modalAnnounceCeoTrade(){
   const ceoShares = ceoStakeEntry ? ceoStakeEntry.shares : 0;
   openModal(`
     <h3>Annoncer une transaction — ${esc(myCo.name)}</h3>
-    <div class="small" style="margin-bottom:10px;">En tant que CEO, tout trading direct est interdit. Vous pouvez uniquement publier une intention d'achat ou de vente irrévocable, visible de tous, qui s'exécutera automatiquement dans 1 an (6 lancers) au prix futur du marché. Seules les ventes sont plafonnées à ${(CEO_SELL_ANNUAL_CAP_PCT*100).toFixed(0)}% du total des parts par an (max ${fmtShares(ceoCapTotal)} parts).</div>
+    <div class="small" style="margin-bottom:10px;">En tant que CEO, tout trading direct est interdit. Vous pouvez uniquement publier une intention d'achat ou de vente irrévocable, visible de tous, qui s'exécutera automatiquement dans 1 an (6 lancers) au prix futur du marché. Seules les ventes sont plafonnées à ${(CEO_SELL_ANNUAL_CAP_PCT*100).toFixed(0)}% du total des parts par an (max ${fmtShares(ceoCapTotal)} parts) ; une vente qui dépasserait ce plafond à l'échéance (par exemple après une baisse du cours) est ramenée au plafond.</div><!-- Section 315 — décision de Julien -->
     <label>Direction</label>
     <select id="mCeoAnnounceDir"><option value="buy">Achat</option><option value="sell">Vente</option></select>
     <label>Unité</label>

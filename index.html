@@ -8765,6 +8765,16 @@ async function purchaseInsuranceBundle(selections, claimMode, term, opts){
 // ont changé (franchise modifiée, pion déplacé par un lancer, maisons construites…), nouvelle confirmation. Une case
 // devenue inassurable (déjà assurée entre-temps, hors de portée) est retirée et nommée (dropped).
 function insuranceBundleItemConditions(it){ return {type:it.type, id:it.id, label:it.label, premium:it.q.ceil, covered:it.q.exposure}; }
+// Section 309-313 — retouche de la revue des décisions : remboursement de la sous-standard attendu pour une case
+// ({subRefund, subRefundInsurerId}, ou {} s'il n'y en a pas), partagé par les conditions vérifiées
+// (insuranceBundleConditions) et les conditions affichées par la fenêtre (modalInsureBundle, calculées à l'ouverture).
+// Avant : la fenêtre ne l'ajoutait pas, sameConditions échouait toujours et « Les conditions ont changé » s'affichait
+// au 1er clic dès qu'on signait par-dessus sa propre sous-standard.
+function insuranceSubRefundConditions(it, companyId, isSub){
+  if(isSub || !it || it.type!=='prop') return {};
+  const sub = subInsuranceRefundableOnNormal(state.properties.find(x=>x.id===it.id), companyId);
+  return sub ? {subRefund: insurerExists(sub.insurerId) ? sub.premium : 0, subRefundInsurerId: sub.insurerId || 'BANK'} : {};
+}
 function insuranceItemLabel(k){
   if(k.type==='tax') return (TAX_SQUARES.find(t=>t.pos===k.id)||{}).label || 'Taxe';
   const p = state.properties.find(x=>x.id===k.id);
@@ -8789,11 +8799,7 @@ function insuranceBundleConditions(companyId, keys, claimMode, term, deductible)
   if(items.length===0) return {unavailable: dropped.length ? `Plus aucune des cases choisies n'est assurable pour ce terme (${dropped.join(', ')}) : déjà assurée, ou plus à portée depuis la position actuelle.` : 'Aucune case choisie.'};
   // Section 313 — décision de Julien (2026-10-25) : sous-standard de cette entreprise remboursée à la signature d'un contrat
   // normal ; montant et assureur qui rembourse font partie des conditions confirmées (annulée entre-temps : reconfirmation).
-  if(!isSub) items.forEach(it=>{
-    const p = it.type==='prop' ? state.properties.find(x=>x.id===it.id) : null;
-    const sub = subInsuranceRefundableOnNormal(p, companyId);
-    if(sub){ it.subRefund = insurerExists(sub.insurerId) ? sub.premium : 0; it.subRefundInsurerId = sub.insurerId || 'BANK'; }
-  });
+  items.forEach(it=>Object.assign(it, insuranceSubRefundConditions(it, companyId, isSub))); // Section 309-313 — retouche de la revue des décisions : utilitaire partagé avec la fenêtre
   return {companyName:co.name, term, claimMode:mode, termRolls, deductible:ded, items, dropped, total:items.reduce((s,i)=>s+i.premium, 0)};
 }
 // Section 313 — bogue 39 (décision de Julien : « plafonner l'indemnité d'assurance au montant couvert affiché à la
@@ -20208,6 +20214,7 @@ function modalInsureBundle(claimMode, term, isRegenerate){
   
   
   const premiums = items.map(it=>it.q.ceil);
+  const openSubRefunds = items.map(it=>insuranceSubRefundConditions(it, myCo.id, isSub)); // Section 309-313 — retouche de la revue des décisions : remboursements affichés, calculés à l'ouverture
   const rows = items.length===0
     ? `<div class="small" style="padding:8px 0;">${isSub ? 'Aucun risque assurable en un seul lancé depuis votre position, pour ce terme.' : 'Aucun risque assurable depuis votre position, pour ce terme.'}</div>`
     : items.map((it,idx)=>`
@@ -20342,7 +20349,7 @@ function modalInsureBundle(claimMode, term, isRegenerate){
     const typed = dedEl ? parseFloat(dedEl.value) : shownDeductible;
     const deductible = Number.isFinite(typed) ? typed : 0;
     if(deductible<0){ alert('La franchise doit être un montant positif ou nul.'); return; } // Section 313 — bogue 14
-    const shownItems = keys.map(k=>insuranceBundleItemConditions(items.find(x=>x.type===k.type && x.id===k.id)));
+    const shownItems = keys.map(k=>items.find(x=>x.type===k.type && x.id===k.id)).map(it=>Object.assign(insuranceBundleItemConditions(it), openSubRefunds[items.indexOf(it)])); // Section 309-313 — retouche de la revue des décisions
     const shown = {companyName:myCo.name, term, claimMode:isSub ? null : (claimMode==='single' ? 'single' : 'recurring'), termRolls, deductible:shownDeductible, items:shownItems, dropped:[], total:shownItems.reduce((s,i)=>s+i.premium, 0)};
     return confirmInsuranceBundle(myCo.id, keys, claimMode, term, deductible, shown);
   });

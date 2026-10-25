@@ -252,6 +252,26 @@ const CLIC_DIRECT = "  if(!sameConditions(shown, fresh)){ openFresh(); return {o
     ok(/pour un lancer de 7/.test(html), 'fenêtre de confirmation : colonne « Couvert au plus » précisée pour un lancer de 7');
   });
 
+  // Section 309-313 — retouche de la revue des décisions : la sous-standard remboursée fait partie des conditions
+  // AFFICHÉES (calculées à l'ouverture) comme des conditions vérifiées : signature dès le 1er clic.
+  const signerParDessusSousStandard = async (opts = {}) => {
+    const { A } = await partie(Object.assign({ setup: `{ const P2 = state.properties.find(p=>p.id==='p21'); P2.subInsurance = {insuredCompanyId:state.companies[0].id, premium:0.1, insurerId:'BANK', deductible:0, signedAtRoll:0, coveredAmount:0.5}; }` }, opts));
+    const m0 = A.eng.cashTotal();
+    A.run('modalInsureBundle()'); await A.calme();
+    await A.cocher(`.bundle-check[data-idx="${ligne(A, 'year', 'prop', 'p21')}"]`);
+    await A.cliquer('#mOk');
+    return { A, m0, ouverte: !!A.doc.trouver('mOk'), changed: /Les conditions ont changé/.test(A.fenetre()), signe: A.run(`!!${P}.insurance`), sub: A.json(`${P}.subInsurance`) };
+  };
+  await scenario('F8. Contrat annuel par-dessus sa propre sous-standard : signé dès le 1er clic, sous-standard remboursée', async () => {
+    const r = await signerParDessusSousStandard();
+    ok(!r.changed && !r.ouverte && r.signe && r.sub === null, `1er clic : contrat signé, sous-standard annulée, pas de « Les conditions ont changé » (fenêtre ouverte : ${r.ouverte})`);
+    ok(near(r.A.eng.cashTotal(), r.m0), 'monnaie conservée');
+  });
+  await scenario('F8b. Contre-épreuve : conditions affichées sans le remboursement → fausse alerte au 1er clic', async () => {
+    const r = await signerParDessusSousStandard({ transform: s => s.replace('Object.assign(insuranceBundleItemConditions(it), openSubRefunds[items.indexOf(it)])', 'insuranceBundleItemConditions(it)') });
+    ok(r.changed && !r.signe, 'contre-épreuve : « Les conditions ont changé » et rien de signé au 1er clic — F8 détecte la régression');
+  });
+
   console.log(failures.length ? `\nÉCHECS (${failures.length}) :\n- ` + failures.join('\n- ') : '');
   console.log(`${failures.length ? 'ÉCHEC' : 'OK'} : section 313 (fenêtre d’assurance) — ${n} vérifications, ${failures.length} scénario(s) en échec`);
   process.exit(failures.length ? 1 : 0);

@@ -11236,6 +11236,21 @@ function optionLongCallCapContracts(company){
   return Math.floor(OPTION_LONG_CALL_CAP_PCT * company.totalShares / OPTION_CONTRACT_MULTIPLIER + 1e-9);
 }
 
+// Section 314 — décision de Julien : « options écrites : plafond de 15 % des parts de l'entreprise par joueur (comme
+// les calls achetés) ». Même calcul que le plafond des calls achetés : floor(15 % × parts émises ÷ 100) contrats par
+// joueur et par entreprise. Compte TOUTES les options écrites du joueur sur l'entreprise : calls et puts, positions
+// simples et jambes écrites des stratégies (choix prudent : un seul plafond commun, couvertes comprises).
+const OPTION_WRITTEN_CAP_PCT = 0.15;
+function playerWrittenOptionContracts(player, companyId){
+  return (player.optionPositions||[]).filter(p=>p.companyId===companyId && p.side==='short' && p.shares>1e-9).reduce((sum,p)=>sum+p.shares, 0);
+}
+function optionWrittenCapContracts(company){
+  return Math.floor(OPTION_WRITTEN_CAP_PCT * company.totalShares / OPTION_CONTRACT_MULTIPLIER + 1e-9);
+}
+function optionWrittenCapErrorMessage(company, capContracts, already, adding){
+  const room = Math.max(0, capContracts - already);
+  return `Plafond d'options écrites atteint sur ${company.name} — maximum ${capContracts} contrat(s) écrit(s) par joueur, calls et puts confondus, jambes de stratégie comprises (${OPTION_WRITTEN_CAP_PCT*100}% de ${fmtShares(company.totalShares)} parts ÷ ${OPTION_CONTRACT_MULTIPLIER} parts/contrat). Vous en avez déjà ${already} ; cette opération en ajouterait ${adding}. Contrats écrits encore possibles : ${room}.`;
+}
 function optionLongCallCapErrorMessage(company, capContracts, already){
   return `Plafond de calls longs atteint sur ${company.name} — maximum ${capContracts} contrat(s) CALL long(s) par joueur (${OPTION_LONG_CALL_CAP_PCT*100}% de ${fmtShares(company.totalShares)} parts ÷ ${OPTION_CONTRACT_MULTIPLIER} parts/contrat), vous en détenez déjà ${already}. Cette limite protège contre une dilution disproportionnée de l'entreprise : à l'exercice physique d'un call, la banque livre les parts sans aucun plafond de son côté (contrairement à une émission d'actions normale, plafonnée à 10%).`;
 }
@@ -12888,6 +12903,13 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
       return {ok:false, error: optionLongCallCapErrorMessage(company, capContracts, already)};
     }
   }
+  if(side==='short'){ // Section 314 — décision : plafond de 15 % des options écrites (revérifié dans l'applyFn qui appelle cette fonction)
+    const capWritten = optionWrittenCapContracts(company);
+    const alreadyWritten = playerWrittenOptionContracts(player, company.id);
+    if(alreadyWritten + shares > capWritten + 1e-9){
+      return {ok:false, error: optionWrittenCapErrorMessage(company, capWritten, alreadyWritten, shares)};
+    }
+  }
   const notional = optionNotional(shares, premium);
   const typeLabel = type==='call' ? 'CALL' : 'PUT';
   // Section 307 — marge initiale pour une option ÉCRITE : simulation de l'écriture (fusion dans la position existante
@@ -12895,7 +12917,7 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
   if(side==='short'){
     const simulateWrite = (k)=>initialMarginCheck(player, p=>{
       p.cash += optionNotional(k, premium);
-      const ex = p.optionPositions.find(pos=>pos.companyId===company.id && pos.type===type && pos.side===side && Math.abs(pos.strike-strike)<1e-9 && pos.expiryRoll===expiryRoll);
+      const ex = p.optionPositions.find(pos=>pos.companyId===company.id && pos.type===type && pos.side===side && Math.abs(pos.strike-strike)<1e-9 && pos.expiryRoll===expiryRoll && !pos.strategyId); // Section 314 — bogue 38
       if(ex) ex.shares += k; else p.optionPositions.push({id:'__simulation__', companyId:company.id, type, side, strike, expiryRoll, shares:k, premiumAtOpen:premium});
     });
     const marginSim = simulateWrite(shares);
@@ -12927,7 +12949,10 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
     entries.push({label:`Banque (contrepartie — détient l'option ${company.name})`, amount:-notional});
   }
   if(!player.optionPositions) player.optionPositions = [];
-  const existing = player.optionPositions.find(pos=>pos.companyId===company.id && pos.type===type && pos.side===side && Math.abs(pos.strike-strike)<1e-9 && pos.expiryRoll===expiryRoll);
+  // Section 314 — bogue 38 : une option simple ne fusionne jamais avec une jambe de stratégie identique (même type,
+  // côté, strike, échéance). Avant, elle s'y ajoutait : disparue de « Mes positions », réglée en argent, impossible à
+  // fermer seule. Elle reste une position distincte, livrable en parts.
+  const existing = player.optionPositions.find(pos=>pos.companyId===company.id && pos.type===type && pos.side===side && Math.abs(pos.strike-strike)<1e-9 && pos.expiryRoll===expiryRoll && !pos.strategyId);
   if(existing){
     
     
@@ -13064,6 +13089,16 @@ function openOptionStrategy(company, player, kind, direction, strikeLow, strikeH
     const already = playerLongCallContracts(player, company.id);
     if(already + contracts > capContracts + 1e-9){
       return {ok:false, error: optionLongCallCapErrorMessage(company, capContracts, already)};
+    }
+  }
+  // Section 314 — décision : plafond de 15 % des options écrites, jambes écrites des stratégies comprises (un straddle
+  // vendu de N contrats écrit 2 × N contrats).
+  const writtenLegCount = legs.filter(l=>l.side==='short').length;
+  if(writtenLegCount>0){
+    const capWritten = optionWrittenCapContracts(company);
+    const alreadyWritten = playerWrittenOptionContracts(player, company.id);
+    if(alreadyWritten + writtenLegCount*contracts > capWritten + 1e-9){
+      return {ok:false, error: optionWrittenCapErrorMessage(company, capWritten, alreadyWritten, writtenLegCount*contracts)};
     }
   }
   

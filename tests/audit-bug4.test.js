@@ -212,7 +212,9 @@ async function auto({ label, names = ['Alice', 'Bob', 'Carol'], buys = [], short
     g.eng.run(`__A().dividendBenchmarkPerShare = 1.5e-6; __A().dividendAutoPay = ${mode === 'auto'};`);
     const strike = g.eng.run(`__A().stockPrice`);
     for(const who of ['Bob', 'Carl']){
-      const rr = g.eng.json(`(function(){ const r = openOptionPosition(__A(), __P(${JSON.stringify(who)}), 'put', 'short', __A().stockPrice, 3, 1000); return {ok: !!(r && r.ok), error: r && r.error}; })()`);
+      // Section 314 — 1 000 puts dépassent le plafond de 15 % des options écrites (300 contrats) : position héritée,
+      // ouverte plafond neutralisé le temps de l'ouverture (le sujet du test est l'assignation au-delà du flottant).
+      const rr = g.eng.json(`(function(){ const realCap = optionWrittenCapContracts; optionWrittenCapContracts = function(){ return Infinity; }; try { const r = openOptionPosition(__A(), __P(${JSON.stringify(who)}), 'put', 'short', __A().stockPrice, 3, 1000); return {ok: !!(r && r.ok), error: r && r.error}; } finally { optionWrittenCapContracts = realCap; } })()`);
       ok(rr.ok, `${who} écrit 1 000 puts ATM au strike ${strike}, couverts par l'encaisse (${rr.error || 'accepté'})`);
     }
     g.advance(2);

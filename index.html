@@ -9435,6 +9435,10 @@ function sanitizeDeductible(v){
 }
 
 function terrainLotBidScore(b){ return b.price / (b.loyer * b.numSquares); }
+// Section 310 — retouche de la revue : plafond lisible d'une mise sur le lot commercial (comme le bogue 11 pour les
+// ventes à découvert). Ce n'est pas une limite liée à l'encaisse (réponse de Julien du 2026-10-25) : il écarte les
+// montants absurdes (faute de frappe à 1e15, Infinity qui devenait null en JSON et des encaisses NaN au règlement).
+const TERRAIN_LOT_BID_ABSURD_MAX = 1e6;
 async function submitTerrainLotBid(companyId, price, loyer, numSquares){
   const res = await attemptActionWithRetry(async ()=>{
     const co = companyById(companyId);
@@ -9455,6 +9459,9 @@ async function submitTerrainLotBid(companyId, price, loyer, numSquares){
     const clampedPrice = Math.max(0, price||0);
     const notCeo = offerResponderRefusal(companyId, 'cette entreprise', 'miser pour elle'); // Section 310 — retouche de la revue : seul le CEO mise
     if(notCeo) return notCeo;
+    // Section 310 — retouche de la revue : montant fini et plafond lisible (revérifiés ici, dans l'applyFn).
+    if(!Number.isFinite(clampedPrice)) return {ok:false, error:'Le prix proposé pour le lot commercial doit être un nombre fini.'};
+    if(clampedPrice>TERRAIN_LOT_BID_ABSURD_MAX) return {ok:false, error:`Montant démesuré : une mise sur le lot commercial est limitée à ${fmt(TERRAIN_LOT_BID_ABSURD_MAX)} (vous avez saisi ${fmt(clampedPrice)}).`};
     // Section 310 — réponse de Julien (2026-10-25) : « c'est pas un vrai transfert d'argent jusqu'à la toute fin ». Plus
     // de limite « mise ≤ encaisse » sur le lot commercial, ni seule ni ajoutée aux mises REIT (retirée) : on peut miser
     // 4 M$ avec 2 M$ d'encaisse ; rien ne bouge avant le règlement de fin d'année, où le gagnant finance sa perte éventuelle.
@@ -11633,24 +11640,33 @@ function optionWrittenCapContracts(company){
 // - put écrit : toujours nu pour le plafond (choix prudent, à valider par Julien) : l'encaisse qui « garantit » un
 //   cash-secured put n'est pas réservée par le jeu (plusieurs puts s'appuient sur la même encaisse, qui reste dépensable).
 // extraPositions : positions en cours d'ouverture (mêmes champs que optionPositions), comptées avec les existantes.
-function playerNakedWrittenContracts(player, companyId, extraPositions){
+// Section 314 — retouche de la revue : la répartition est faite par writtenOptionCoverage, partagée avec la marge de
+// maintien (requiredMaintenanceMargin) : le plafond et la marge voient les mêmes calls couverts et les mêmes calls nus.
+// Renvoie une Map position écrite → {spreadProtected, shareCovered, naked} (contrats).
+function writtenOptionCoverage(player, companyId, extraPositions){
   const all = (player.optionPositions||[]).concat(extraPositions||[]).filter(p=>p.companyId===companyId && p.shares>1e-9);
   const co = companyById(companyId);
   const stake = co ? (co.shareholders||[]).find(x=>x.playerId===player.id) : null;
   let shareCoverLeft = Math.floor(Math.max(0, stake ? stake.shares : 0)/OPTION_CONTRACT_MULTIPLIER + 1e-9);
-  let naked = 0;
+  const out = new Map();
   all.filter(p=>p.side==='short').forEach(pos=>{
-    let qty = pos.shares;
+    let qty = pos.shares, spreadProtected = 0, shareCovered = 0;
     if(pos.strategyId){
       const longQty = all.filter(l=>l!==pos && l.strategyId===pos.strategyId && l.side==='long' && l.type===pos.type && l.expiryRoll===pos.expiryRoll).reduce((sum,l)=>sum+l.shares, 0);
-      qty -= Math.min(qty, longQty);
+      spreadProtected = Math.min(qty, longQty);
+      qty -= spreadProtected;
     }
     if(pos.type==='call' && qty>1e-9){
-      const c = Math.min(qty, shareCoverLeft);
-      qty -= c; shareCoverLeft -= c;
+      shareCovered = Math.min(qty, shareCoverLeft);
+      qty -= shareCovered; shareCoverLeft -= shareCovered;
     }
-    naked += qty;
+    out.set(pos, {spreadProtected, shareCovered, naked: qty});
   });
+  return out;
+}
+function playerNakedWrittenContracts(player, companyId, extraPositions){
+  let naked = 0;
+  writtenOptionCoverage(player, companyId, extraPositions).forEach(c=>{ naked += c.naked; });
   return naked;
 }
 function optionWrittenCapErrorMessage(company, capContracts, already, after){
@@ -12833,9 +12849,23 @@ function requiredMaintenanceMargin(player){
     if(co) requiredMargin += SHORT_MARGIN_MAINTENANCE_PCT * pos.shares * (co.stockPrice||0);
   });
   const writtenOptions = (player.optionPositions||[]).filter(pos=>pos.side==='short' && pos.shares>1e-9);
+  const callCoverageByCompany = {};
   writtenOptions.forEach(pos=>{
     const co = companyById(pos.companyId);
     if(!co) return;
+    // Section 314 — retouche de la revue : les blocs de 100 parts sont PARTAGÉS entre les calls écrits (même algorithme
+    // que le plafond, writtenOptionCoverage : jambe protégée par la jambe achetée d'abord, puis parts en contrats
+    // entiers). Avant : optionCoveredShares position par position, si bien que 60 000 parts « couvraient » 600 calls à
+    // 110 % ET 300 à 120 % (marge exigée 0 pour 300 calls nus). Les puts gardent la couverture par l'encaisse ci-dessous.
+    if(pos.type==='call'){
+      if(!callCoverageByCompany[pos.companyId]) callCoverageByCompany[pos.companyId] = writtenOptionCoverage(player, pos.companyId);
+      const cov = callCoverageByCompany[pos.companyId].get(pos);
+      if(!cov) return;
+      const spreadCall = optionSpreadCoverage(player, pos);
+      requiredMargin += cov.spreadProtected * OPTION_CONTRACT_MULTIPLIER * spreadCall.protectedLossPerContract;
+      requiredMargin += SHORT_MARGIN_MAINTENANCE_PCT * cov.naked * OPTION_CONTRACT_MULTIPLIER * (co.stockPrice||0);
+      return;
+    }
     const covered = optionCoveredShares(player, pos);
     let naked = Math.max(0, pos.shares-covered);
     

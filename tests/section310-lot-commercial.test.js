@@ -211,6 +211,34 @@ async function landOnLot(E){
     }
   });
 
+  // Retouche de la revue : montant fini et plafond lisible de 1 000 000 M$ par mise (pas une limite d'encaisse).
+  const SANS_BORNE = src => src
+    .replace("    if(!Number.isFinite(clampedPrice)) return {ok:false, error:'Le prix proposé pour le lot commercial doit être un nombre fini.'};\n", '')
+    .replace(/    if\(clampedPrice>TERRAIN_LOT_BID_ABSURD_MAX\) return [^\n]*\n/, '');
+  await scenario('H. Retouche de la revue — mise Infinity ou démesurée (1e15) refusée ; 1 000 000 M$ accepté', async () => {
+    for(const variant of ['corrigé', 'ancien']){
+      const E = await setup(variant === 'ancien' ? { transform: SANS_BORNE } : {});
+      E.run('as(A)'); await E.run(`submitTerrainLotBid(A.id, Infinity, 0.1, 1)`);
+      const inf = E.run('state.terrainLot.bids.length');
+      await E.run(`submitTerrainLotBid(A.id, 1e15, 0.1, 1)`);
+      const big = E.json('state.terrainLot.bids.map(b=>b.price)');
+      console.log(`    [${variant}] après Infinity : ${inf} mise(s) ; après 1e15 : ${JSON.stringify(big)} ; alertes : ${E.alerts.map(a => a.slice(0, 70)).join(' | ')}`);
+      if(variant === 'corrigé'){
+        ok(inf === 0 && /nombre fini/.test(E.alerts[0] || ''), 'Infinity (parseFloat("1e309")) refusé : « nombre fini »');
+        ok(big.length === 0 && /Montant démesuré/.test(E.alerts[1] || '') && /1000000[.,]00/.test(E.alerts[1] || ''), 'faute de frappe à 1e15 refusée : « Montant démesuré … limitée à 1000000.00 M$ »');
+        await E.run(`submitTerrainLotBid(A.id, 1e6, 0.1, 1)`);
+        ok(E.run('state.terrainLot.bids.length') === 1 && E.alerts.length === 2, '1 000 000 M$ avec 5 M$ d’encaisse : accepté (aucune limite liée à l’encaisse)');
+      } else {
+        ok(inf === 1, 'contre-épreuve : sans la borne, Infinity est enregistré');
+        ok(JSON.stringify(big) === '[1000000000000000]', 'contre-épreuve : sans la borne, 1e15 est enregistré');
+      }
+    }
+    // Ce qu'Infinity devenait : null après la sérialisation JSON de l'état, puis des encaisses NaN au règlement.
+    const E = await setup({ transform: SANS_BORNE });
+    E.run('as(A)'); await E.run(`submitTerrainLotBid(A.id, Infinity, 0.1, 1)`);
+    ok(E.json('JSON.parse(JSON.stringify(state.terrainLot.bids))[0].price') === null, 'contre-épreuve : Infinity devient null dans l’état sauvegardé (JSON)');
+  });
+
   if(failures.length){ console.log(`\nÉCHEC : section 310 (lot commercial) — ${failures.length} scénario(s) en échec :`); failures.forEach(f => console.log('  ' + f)); process.exit(1); }
   console.log(`\nOK : section 310 (lot commercial) — ${n} vérifications, 0 scénario(s) en échec`);
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

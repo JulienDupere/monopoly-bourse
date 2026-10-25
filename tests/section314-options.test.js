@@ -139,6 +139,19 @@ async function straddlePorteur(eng){
   ok(r.ok && eng.run(`playerNakedWrittenContracts(C, B.id)`) === 300, `nues : straddle vendu de 300 contrats par le porteur : 300 calls couverts, 300 puts nus (300/300) accepté${r.ok ? '' : ' — ' + r.error}`);
 }
 
+// --- Retouche de la revue : marge de maintien des calls, blocs de parts partagés (même algorithme que le plafond) ---
+async function margePartagee(eng){
+  eng.run(`B.shareholders.push({playerId:C.id, shares:60000});`);
+  ok(eng.json(`openOptionPosition(B, C, 'call', 'short', P*1.1, 12, 600)`).ok && eng.json(`openOptionPosition(B, C, 'call', 'short', P*1.2, 12, 300)`).ok, 'marge : 600 calls à 110 % puis 300 à 120 % (60 000 parts)');
+  const naked = eng.run('playerNakedWrittenContracts(C, B.id)'), req = eng.run('requiredMaintenanceMargin(C)');
+  const expected = 0.3 * 300 * 100 * eng.run('P');
+  console.log(`    contrats nus (plafond) : ${naked} ; marge exigée : ${req} (30 % × 300 × 100 × cours = ${expected})`);
+  ok(naked === 300 && near(req, expected), `marge : les 300 calls non couverts sont nus pour la marge aussi (${req} = 30 % × 300 × 100 × cours ; avant : 0)`);
+  // Bull spread acheté : la jambe écrite reste protégée (perte max 0), elle ne consomme pas de parts.
+  const r0 = eng.run('requiredMaintenanceMargin(C)');
+  ok(eng.json(`openOptionStrategy(B, C, 'bullSpread', 'buy', P*0.9, P*1.1, 12, 10)`).ok && near(eng.run('requiredMaintenanceMargin(C)'), r0), 'marge : un bull spread acheté n’ajoute aucune marge (jambe protégée)');
+}
+
 // --- Bogue 75 -------------------------------------------------------------------------------------------------
 async function bug75(eng){
   ok(eng.json(`openOptionStrategy(B, C, 'bullSpread', 'buy', P*0.9, P*1.1, 12, 2)`).ok, '75 : Carl ouvre un bull spread au lancer 0');
@@ -176,6 +189,12 @@ async function bug75(eng){
     failed = null;
     try{ await straddlePorteur(await setup(TOUTES_ECRITES)); }catch(e){ failed = e.message; }
     ok(failed && /straddle vendu de 300/.test(failed), `contre-épreuve : avec l’ancien décompte, le straddle du porteur (600 écrits) est refusé (${failed})`);
+  });
+  await scenario('J. Retouche de la revue — marge des calls : blocs de parts partagés comme pour le plafond', async () => { await margePartagee(await setup()); });
+  await scenario('K. Retouche de la revue — contre-épreuve (couverture position par position)', async () => {
+    let failed = null;
+    try{ await margePartagee(await setup(src => src.replace("    if(pos.type==='call'){\n      if(!callCoverageByCompany[pos.companyId])", "    if(false){\n      if(!callCoverageByCompany[pos.companyId])"))); }catch(e){ failed = e.message; }
+    ok(failed && /avant : 0/.test(failed), `contre-épreuve : avec optionCoveredShares position par position, la marge exigée est 0 (${failed})`);
   });
   await scenario('E. Bogue 75 — « Fermer la stratégie » marché fermé ou partie terminée : refus, aucun journal', async () => { await bug75(await setup()); });
   await scenario('F. Bogue 75 — contre-épreuve (closeOptionStrategy d’avant la section 307)', async () => {

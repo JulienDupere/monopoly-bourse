@@ -1613,6 +1613,12 @@ complice ; contre-épreuves avec la valorisation du lot 3 ou d'avant la section 
 E, F réécrits (contre-épreuves qui réintroduisent la limite du lot 3). Changements visibles (cahiers 5 et 7) : la mise
 du lot commercial n'est plus bornée par l'encaisse ; la carte du REIT montre la valeur d'achat de chaque détenteur.
 
+**Retouche de la revue (2026-10-25), lot commercial** : `submitTerrainLotBid` refuse un prix non fini (Infinity, que
+`parseFloat("1e309")` produit, devenait `null` dans l'état sauvegardé et des encaisses NaN au règlement) et une mise
+au-delà de 1 000 000 M$ (`TERRAIN_LOT_BID_ABSURD_MAX`, plafond lisible comme celui du bogue 11, sans lien avec
+l'encaisse : 1 000 000 M$ avec 5 M$ d'encaisse reste accepté), dans l'applyFn. Test : `section310-lot-commercial` H,
+avec contre-épreuve (34 vérifications).
+
 ## 314. Marché : intérêt des bons payé une seule fois, bid payé avec les bons, montants non finis refusés, marge du CEO juste, encaisse personnelle bloquante au semestre, options simples distinctes des stratégies, plafond des options écrites, cubes de trading plafonnés au cumul — 2026-10-25
 
 Contexte : lot 7 de la série de corrections de l'audit du 2026-10-19 (bogues 7, 11, 31, 36, 37, 38, 67 et 75, plus
@@ -1768,6 +1774,16 @@ acceptés. Straddle vendu de 300 contrats par le porteur : 300 calls couverts + 
 plafond, désormais accepté. Monnaie conservée.
 Tests : `tests/section314-options.test.js` C adapté, G (gros porteur), H (straddle du porteur), I (contre-épreuve :
 toutes les options écrites comptent, les 400 covered calls et le straddle du porteur sont refusés) ; 49 vérifications.
+
+**Retouche de la revue (2026-10-25), marge des calls écrits** : `requiredMaintenanceMargin` répartit désormais la
+couverture des calls avec le même algorithme que le plafond (`writtenOptionCoverage`, partagé avec
+`playerNakedWrittenContracts`) : jambe protégée par la jambe achetée du spread d'abord, puis blocs de 100 parts
+détenues, en contrats entiers, partagés entre tous les calls écrits. Avant : `optionCoveredShares` position par
+position. Scénario : 60 000 parts, 600 calls à 110 % puis 300 à 120 % : 300 nus pour le plafond, mais une marge exigée
+de 0 ; après, 0,9 M$ (30 % × 300 × 100 × cours). Effets de bord : 150 parts couvrent 1 contrat et non plus 1,5 ; une
+jambe call d'un spread vendu détenue par un porteur exige l'écart des strikes plutôt que 0, ses parts couvrant d'autres
+calls. Les puts gardent la couverture par l'encaisse, position par position. Tests : `section314-options` J et
+contre-épreuve K (54 vérifications) ; `audit-bug3`, `audit-bug3b` et `section314-marge` inchangés et verts.
 
 ## 315. Moteur de cubes, dividendes, types d'entreprise et états financiers : le sac type Dividendes ne réagit qu'au dividende récurrent, ratio de distribution sans la part de la banque, plus de partie figée quand toutes les entreprises sont enquêtées — 2026-10-25
 

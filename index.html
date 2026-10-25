@@ -6981,7 +6981,7 @@ function companyRealEstateValue(company){
   state.properties.forEach(p=>{
     const sh = propertyOwnedShare(p, company.id);
     if(sh>0){
-      const iv = intrinsicValue(p);
+      const iv = intrinsicValue(p, company.id); // Section 311 — bogue 30 : palier de cette entreprise
       v += (iv!=null ? iv : p.basePrice) * (sh/100);
     }
   });
@@ -8426,15 +8426,25 @@ function renderAdmin(){
 
 
 
-function expectedRentValue(p){
+// Section 311 — bogue 30 : le loyer d'un aéroport ou d'un service dépend du nombre d'aéroports (de services) détenus
+// par CHAQUE copropriétaire. Avec companyId : palier de cette entreprise (valeur de SA part, prix de SON ABS). Sans
+// companyId (valeur du terrain lui-même) : moyenne des paliers des copropriétaires pondérée par leurs parts, donc
+// indépendante de l'ordre de la liste. Avant : toujours le palier du PREMIER copropriétaire de p.owners (une entreprise
+// à un seul aéroport vendait son ABS comme si elle en avait 4, et la valeur changeait avec l'ordre d'achat).
+function expectedRentValue(p, companyId){
   if(p.type==='color') return colorRentAt(p, p.houses);
-  if(p.type==='airport') return rentFor(p, p.owners[0]?p.owners[0].companyId:null) || 0;
-  const ownerCompanyId = p.owners[0] ? p.owners[0].companyId : null;
+  if(companyId===undefined){
+    const ownedPct = p.owners.reduce((s,o)=>s+o.share, 0);
+    if(ownedPct>0) return p.owners.reduce((s,o)=>s + expectedRentValue(p, o.companyId)*o.share, 0) / ownedPct;
+    companyId = null;
+  }
+  if(p.type==='airport') return rentFor(p, companyId) || 0;
+  const ownerCompanyId = companyId;
   const heldCount = ownerCompanyId ? state.properties.filter(x=>x.group==='SERVICE' && propertyOwnedShare(x,ownerCompanyId)>0).length : 0;
   const mult = heldCount>=2 ? p.rent[1] : p.rent[0];
   return 7 * mult; 
 }
-function intrinsicValue(p){
+function intrinsicValue(p, companyId){ // Section 311 — bogue 30 : companyId = valeur de la part de cette entreprise (palier aéroport/service)
   
   
   
@@ -8443,7 +8453,7 @@ function intrinsicValue(p){
   const r = state.settings.discountRate;
   const floorPrice = p.acquisitionPrice!=null ? p.acquisitionPrice : p.basePrice;
   const opponents = Math.max(0, state.players.length - 1);
-  const rentPerTurn = p.prob * expectedRentValue(p) * opponents;
+  const rentPerTurn = p.prob * expectedRentValue(p, companyId) * opponents; // Section 311 — bogue 30
   const mortgageValue = p.basePrice / 2;
   const computed = r>g ? (rentPerTurn * (1+g) / (r-g)) + mortgageValue : floorPrice;
   return Math.max(computed, floorPrice);
@@ -14760,8 +14770,8 @@ function swapAssetValueSummary(propId, companyId, isGeneral){
       anyOwned = true;
       const host = assetHostProperty(asset);
       if(!host) return;
-      ivTotal += (asset.type==='lot' ? intrinsicValueLot(asset.id) : intrinsicValue(host)) * sh/100;
-      assetProperties(asset).forEach(x=>{ if(x) rentTotal += (x.type==='color'?colorRentAt(x,x.houses):expectedRentValue(x)) * sh/100; });
+      ivTotal += (asset.type==='lot' ? intrinsicValueLot(asset.id) : intrinsicValue(host, companyId)) * sh/100; // Section 311 — bogue 30
+      assetProperties(asset).forEach(x=>{ if(x) rentTotal += (x.type==='color'?colorRentAt(x,x.houses):expectedRentValue(x, companyId)) * sh/100; });
     });
     const ivLabel = anyOwned ? `${fmt(ivTotal)} actuellement (variera avec les achats/ventes futurs)` : 'aucun terrain possédé actuellement (le swap général s’appliquera aux futurs achats)';
     const rentShareLabel = anyOwned ? `${fmt(rentTotal)} actuellement (dépend du terrain visité, variera avec les achats/ventes futurs)` : '–';
@@ -14773,8 +14783,8 @@ function swapAssetValueSummary(propId, companyId, isGeneral){
   const host = merged ? lotMortgageHost(p.groupMergeId) : p;
   const lotProps = merged ? lotProperties(p.groupMergeId) : [p];
   const sh = propertyOwnedShare(host, companyId);
-  const iv = merged ? intrinsicValueLot(p.groupMergeId) : intrinsicValue(p);
-  const rentValues = lotProps.map(x=>x.type==='color' ? colorRentAt(x, x.houses) : expectedRentValue(x));
+  const iv = merged ? intrinsicValueLot(p.groupMergeId) : intrinsicValue(p, companyId); // Section 311 — bogue 30
+  const rentValues = lotProps.map(x=>x.type==='color' ? colorRentAt(x, x.houses) : expectedRentValue(x, companyId));
   const rentShareLabel = rentValues.map(v=>fmt(v*sh/100)).join(' / ');
   const label = merged ? `Lot ${GROUPS[p.group].label}` : p.name;
   return {label, ivLabel: fmt(iv), rentShareLabel, sh};
@@ -15134,7 +15144,7 @@ function computeAbsPricing(sellerId, propertyIds, cededPctOfShare, years){
     const host = p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p;
     const ownerShare = propertyOwnedShare(host, sellerId);
     if(ownerShare<=0) return;
-    const perEventGrossToSeller = expectedRentValue(p) * (ownerShare/100);
+    const perEventGrossToSeller = expectedRentValue(p, sellerId) * (ownerShare/100); // Section 311 — bogue 30 : palier de l'émettrice
     const perEventCeded = perEventGrossToSeller * cededPctOfShare;
     const q = p.prob * visitorCount;
     meanRent += termRolls * q * perEventCeded;

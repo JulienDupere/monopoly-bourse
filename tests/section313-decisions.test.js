@@ -172,6 +172,55 @@ const PLAFOND_TAXE = s => s.replace(/const insurerPortion = insurerExists\(ins\.
     ok(r.ok && eng.run('!!P.subInsurance') && near(s0.A - snap(eng).A, r.cond.total), `contre-épreuve : sous-standard toujours là, A ne récupère pas ${f4(prime)} — S1 détecte la régression`);
   });
 
+  // ---------------------------------------------------------------- I. Remboursement par un assureur introuvable
+  // Retouche de la revue des décisions (défaut antérieur) : cancelSubInsurance, mergeGroup, cancelContract et
+  // cancelPropInsurance créditaient l'assurée sans débiter personne quand l'assureur avait disparu.
+  async function introuvable(opts = {}){
+    const out = {};
+    let eng = await partie(opts);
+    eng.run(`P.subInsurance = {insuredCompanyId:A.id, premium:0.1, insurerId:'disparue', deductible:0, signedAtRoll:0, coveredAmount:0.5};`);
+    let m0 = eng.cashTotal();
+    await eng.run('cancelSubInsurance(P.id)');
+    out.sub = { d: eng.cashTotal() - m0, annulee: eng.run('P.subInsurance') === null, log: dernier(eng) };
+    eng = await partie(opts);
+    eng.run(`P.insurance = {insuredCompanyId:A.id, premium:0.3, insurerId:'disparue', deductible:0, contractId:'kk', claimMode:'recurring', signedAtRoll:0, quotedTerm:'year', coveredAmount:null};`);
+    m0 = eng.cashTotal();
+    await eng.run(`cancelContract('kk')`);
+    out.contrat = { d: eng.cashTotal() - m0, annulee: eng.run('P.insurance') === null, log: dernier(eng) };
+    eng = await partie(opts);
+    eng.run(`P.insurance = {insuredCompanyId:A.id, premium:0.3, insurerId:'disparue', deductible:0, contractId:'kk', claimMode:'recurring', signedAtRoll:0, quotedTerm:'year', coveredAmount:null};`);
+    m0 = eng.cashTotal();
+    await eng.run(`cancelPropInsurance(P.id)`);
+    out.prop = { d: eng.cashTotal() - m0, annulee: eng.run('P.insurance') === null };
+    eng = await partie(opts);
+    eng.run(`myPlayerId = state.creatorId; const L = state.properties.filter(p=>p.group==='BRUN'); L.forEach(p=>{ p.owners=[{companyId:A.id, share:maxPlayerOwnPct()}]; p.houses=0; p.mortgages=[]; });
+      L[0].insurance = {insuredCompanyId:B.id, premium:0.2, insurerId:'disparue', deductible:0, contractId:'k', claimMode:'recurring', signedAtRoll:0, quotedTerm:'year', coveredAmount:null};
+      L[1].subInsurance = {insuredCompanyId:B.id, premium:0.1, insurerId:'disparue2', deductible:0, signedAtRoll:0, coveredAmount:null};`);
+    m0 = eng.cashTotal();
+    await eng.run(`mergeGroup('BRUN')`);
+    out.lot = { d: eng.cashTotal() - m0, regroupe: !!eng.run(`state.properties.find(p=>p.group==='BRUN').groupMergeId`) };
+    return out;
+  }
+  const dernier = eng => JSON.stringify(eng.json('state.log[0]'));
+  await scenario('I1 — assureur introuvable : annulation et regroupement sans remboursement, aucun argent créé', async () => {
+    const r = await introuvable();
+    ok(r.sub.annulee && near(r.sub.d, 0) && /introuvable : aucun remboursement/.test(r.sub.log), `cancelSubInsurance : annulée, Δ monnaie ${f4(r.sub.d)} (avant : +0,1), trace au journal`);
+    ok(r.contrat.annulee && near(r.contrat.d, 0) && /introuvable : aucun remboursement/.test(r.contrat.log), `cancelContract : annulé, Δ monnaie ${f4(r.contrat.d)} (avant : +0,3), trace au journal`);
+    ok(r.prop.annulee && near(r.prop.d, 0), `cancelPropInsurance : annulée, Δ monnaie ${f4(r.prop.d)} (avant : +0,3)`);
+    ok(r.lot.regroupe && near(r.lot.d, 0), `mergeGroup (normale + sous-standard) : lot regroupé, Δ monnaie ${f4(r.lot.d)} (avant : +0,3)`);
+  });
+  await scenario('I2 — contre-épreuve : garde retirée, de l’argent est créé aux quatre endroits', async () => {
+    const r = await introuvable({ transform: s => s.replace("  if(!insurerExists(insurerId) || !co) return false; // garde : assureur ou assurée introuvable\n", '') });
+    ok(near(r.sub.d, 0.1) && near(r.contrat.d, 0.3) && near(r.prop.d, 0.3) && near(r.lot.d, 0.3), `contre-épreuve : +${f4(r.sub.d)}, +${f4(r.contrat.d)}, +${f4(r.prop.d)}, +${f4(r.lot.d)} créés — I1 détecte la régression`);
+  });
+  await scenario('I3 — assureur existant : remboursement inchangé (banque)', async () => {
+    const eng = await partie();
+    eng.run(`P.subInsurance = {insuredCompanyId:A.id, premium:0.1, insurerId:'BANK', deductible:0, signedAtRoll:0, coveredAmount:0.5};`);
+    const s0 = snap(eng), m0 = eng.cashTotal();
+    await eng.run('cancelSubInsurance(P.id)');
+    ok(near(snap(eng).A - s0.A, 0.1) && near(s0.bank - snap(eng).bank, 0.1) && near(eng.cashTotal(), m0), 'A récupère 0,1, la banque rembourse 0,1, monnaie conservée');
+  });
+
   if(failures.length){ console.log(`\nÉCHEC : ${failures.length} scénario(s) : ${failures.join(' | ')}`); process.exit(1); }
   console.log(`\nOK : section 313 (décisions de Julien) — ${n} vérifications, 0 scénario(s) en échec`);
 })().catch(e => { console.error(e); process.exit(1); });

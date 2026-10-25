@@ -8862,6 +8862,17 @@ function activeContracts(){
   });
   return Object.values(map);
 }
+// Section 309-313 — retouche de la revue des décisions (défaut antérieur) : remboursement d'une prime d'assurance à
+// l'assurée par l'assureur ACTUEL du contrat (banque ou entreprise). Assureur ou assurée introuvable : aucun
+// remboursement, rien ne bouge (avant : l'assurée était créditée sans que personne soit débité, ou l'inverse, et de
+// l'argent était créé ou détruit). Même garde que cancelSubInsuranceForNormalContract. Renvoie true si remboursé.
+function refundInsurancePremium(co, insurerId, amount){
+  if(!insurerExists(insurerId) || !co) return false; // garde : assureur ou assurée introuvable
+  co.cash += amount; logFin(co.id, 'insurance_refund_revenue', amount);
+  if(!insurerId || insurerId==='BANK') state.bank.cash -= amount;
+  else { const ins = companyById(insurerId); if(ins){ ins.cash -= amount; logFin(ins.id, 'insurance_refund_expense', -amount); } }
+  return true;
+}
 async function cancelContract(contractId){
   
   
@@ -8894,9 +8905,7 @@ async function cancelContract(contractId){
     taxItems.forEach(t=>{ totalRefund += t.premium; });
     state.taxInsurances = state.taxInsurances.filter(t=>!((t.contractId||t.id)===baseId && sameGroup(t.insurerId)));
     const co = companyById(insuredId);
-    if(co){ co.cash += totalRefund; logFin(co.id, 'insurance_refund_revenue', totalRefund); }
-    if(!insurerId || insurerId==='BANK') state.bank.cash -= totalRefund;
-    else { const ins=companyById(insurerId); if(ins){ ins.cash -= totalRefund; logFin(ins.id, 'insurance_refund_expense', -totalRefund); } }
+    if(!refundInsurancePremium(co, insurerId, totalRefund)){ log(`Contrat groupé annulé — assureur (${insurerLabel(insurerId)}) ou assurée introuvable : aucun remboursement.`); return {ok:true}; } // Section 309-313 — retouche de la revue des décisions
     log(`Contrat groupé annulé — prime de ${totalRefund.toFixed(2)} remboursée à ${co?co.name:'?'} par ${insurerLabel(insurerId)}.`,
       [{label:`${co?co.name:'?'} (remboursement)`, amount:totalRefund}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:-totalRefund}]);
     return {ok:true};
@@ -14413,18 +14422,14 @@ async function mergeGroup(group){
     if(p.insurance){
       const insCo = companyById(p.insurance.insuredCompanyId);
       const premium = p.insurance.premium, insurerId = p.insurance.insurerId;
-      if(insCo){ insCo.cash += premium; logFin(insCo.id, 'insurance_refund_revenue', premium); }
-      if(!insurerId || insurerId==='BANK') state.bank.cash -= premium;
-      else { const ins = companyById(insurerId); if(ins){ ins.cash -= premium; logFin(ins.id, 'insurance_refund_expense', -premium); } }
-      log(`Assurance sur ${p.name} remboursée (${premium.toFixed(2)} à ${insCo?insCo.name:'?'}) — le regroupement du lot met fin au contrat.`);
+      if(!refundInsurancePremium(insCo, insurerId, premium)) log(`Assurance sur ${p.name} : assureur (${insurerLabel(insurerId)}) ou assurée introuvable, aucun remboursement — le regroupement du lot met fin au contrat.`); // Section 309-313 — retouche de la revue des décisions
+      else log(`Assurance sur ${p.name} remboursée (${premium.toFixed(2)} à ${insCo?insCo.name:'?'}) — le regroupement du lot met fin au contrat.`);
     }
     if(p.subInsurance){
       const insCo = companyById(p.subInsurance.insuredCompanyId);
       const premium = p.subInsurance.premium, insurerId = p.subInsurance.insurerId;
-      if(insCo){ insCo.cash += premium; logFin(insCo.id, 'insurance_refund_revenue', premium); }
-      if(!insurerId || insurerId==='BANK') state.bank.cash -= premium;
-      else { const ins = companyById(insurerId); if(ins){ ins.cash -= premium; logFin(ins.id, 'insurance_refund_expense', -premium); } }
-      log(`Assurance sous-standard sur ${p.name} remboursée (${premium.toFixed(2)} à ${insCo?insCo.name:'?'}) — le regroupement du lot met fin au contrat.`);
+      if(!refundInsurancePremium(insCo, insurerId, premium)) log(`Assurance sous-standard sur ${p.name} : assureur (${insurerLabel(insurerId)}) ou assurée introuvable, aucun remboursement — le regroupement du lot met fin au contrat.`); // Section 309-313 — retouche de la revue des décisions
+      else log(`Assurance sous-standard sur ${p.name} remboursée (${premium.toFixed(2)} à ${insCo?insCo.name:'?'}) — le regroupement du lot met fin au contrat.`);
     }
   });
   props.forEach(p=>{ p.groupMergeId = mergeId; p.owners = newOwners.map(o=>({...o})); p.insurance = null; p.subInsurance = null; });
@@ -22016,9 +22021,7 @@ async function cancelPropInsurance(pid){
   const co = companyById(p.insurance.insuredCompanyId);
   const premium = p.insurance.premium;
   const insurerId = p.insurance.insurerId;
-  if(co){ co.cash += premium; logFin(co.id, 'insurance_refund_revenue', premium); }
-  if(!insurerId || insurerId==='BANK') state.bank.cash -= premium;
-  else { const ins = companyById(insurerId); if(ins){ ins.cash -= premium; logFin(ins.id, 'insurance_refund_expense', -premium); } }
+  if(!refundInsurancePremium(co, insurerId, premium)){ log(`Assurance annulée sur ${p.name} — assureur (${insurerLabel(insurerId)}) ou assurée introuvable : aucun remboursement.`); p.insurance = null; await saveGame(); render(); return; } // Section 309-313 — retouche de la revue des décisions
   log(`Assurance annul\u00e9e sur ${p.name} \u2014 prime de ${premium.toFixed(2)} rembours\u00e9e \u00e0 ${co?co.name:'?'} par ${insurerLabel(insurerId)}.`,
     [{label:`${co?co.name:'?'} (remboursement)`, amount:premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:-premium}]);
   p.insurance = null;
@@ -22570,9 +22573,7 @@ async function cancelSubInsurance(pid){
     const co = companyById(p.subInsurance.insuredCompanyId);
     const premium = p.subInsurance.premium;
     const insurerId = p.subInsurance.insurerId;
-    if(co){ co.cash += premium; logFin(co.id, 'insurance_refund_revenue', premium); }
-    if(!insurerId || insurerId==='BANK') state.bank.cash -= premium;
-    else { const ins = companyById(insurerId); if(ins){ ins.cash -= premium; logFin(ins.id, 'insurance_refund_expense', -premium); } }
+    if(!refundInsurancePremium(co, insurerId, premium)){ log(`Assurance sous-standard annulée sur ${p.name} — assureur (${insurerLabel(insurerId)}) ou assurée introuvable : aucun remboursement.`); p.subInsurance = null; return {ok:true}; } // Section 309-313 — retouche de la revue des décisions
     log(`Assurance sous-standard annulée sur ${p.name} — prime de ${premium.toFixed(2)} remboursée à ${co?co.name:'?'} par ${insurerLabel(insurerId)}.`,
       [{label:`${co?co.name:'?'} (remboursement)`, amount:premium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:-premium}]);
     p.subInsurance = null;

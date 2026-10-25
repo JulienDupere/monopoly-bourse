@@ -21,9 +21,11 @@ const nbParties = (eng) => eng.run(`typeof state !== 'undefined' && state && sta
   console.log('96. Réglages de création');
   const cas = [
     ['% des parts du CEO à 150', { companyCeoStartPct: 1.5 }, /entre 1 et 100/],
+    ['% des parts du CEO à 0,5 %', { companyCeoStartPct: 0.005 }, /entre 1 et 100/],
+    ['retenue de prêt maximum laissée vide (0)', { loanOfferWithholdingPctMax: 0 }, /laissé vide/],
     ['% des parts du CEO à 0', { companyCeoStartPct: 0 }, /entre 1 et 100/],
     ['réserve REIT à 100 %', { etfBankReservePct: 100 }, /REIT/],
-    ['retenue de prêt minimum 50 % > maximum 40 %', { loanOfferWithholdingPctMin: 0.5, loanOfferWithholdingPctMax: 0.4 }, /minimum dépasse le maximum/],
+    ['retenue de prêt minimum 50 % > maximum 40 %', { loanOfferWithholdingPctMin: 0.5, loanOfferWithholdingPctMax: 0.4 }, /minimum \(50\.0 %\) dépasse le maximum/],
     ['retenue de prêt maximum 150 %', { loanOfferWithholdingPctMax: 1.5 }, /loyers retenus/],
     ['multiple de prêt minimum 0,5', { loanOfferMultipleMin: 0.5 }, /au moins 1/],
     ['multiple de prêt maximum < minimum', { loanOfferMultipleMin: 2, loanOfferMultipleMax: 1.5 }, /au moins égal au minimum/],

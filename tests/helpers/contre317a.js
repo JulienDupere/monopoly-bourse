@@ -18,6 +18,9 @@ const TR = {
   '99a': [sub('if(seen.has(key)) return', 'if(false) return')],
   '99b': [sub('if(state.players.some(p=>p.name.trim().toLowerCase()===name.toLowerCase())) return', 'if(false) return')],
   '101a': [sub('logoDataUrl: safeLogoDataUrl(logoDataUrl),', 'logoDataUrl: logoDataUrl || null,')],
+  '86b': [sub('capBondInterestStat(player); // Section 317 — bogue 86', '')],
+  '96b': [sub('s.companyCeoStartPct>=0.01-1e-12', 's.companyCeoStartPct>0')],
+  '98b': [sub("Aucune position boursière ni bon gouvernemental positif", "Aucune position boursière ni bon gouvernemental pour le moment")],
   '98': [sub("value: Math.max(0, me.bondBalance||0), color: 'var(--muted)'}", "value: me.bondBalance||0, color: 'var(--muted)'}")],
   '101b': [sub('const safeLogo = safeLogoDataUrl(co.logoDataUrl);', 'const safeLogo = co.logoDataUrl;'), sub('<img src="${esc(safeLogo)}"', '<img src="${safeLogo}"')],
 };

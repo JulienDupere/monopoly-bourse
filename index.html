@@ -1899,13 +1899,13 @@ function validateNewGameInputs(names, startCash, bankCash, s){
   if(!num(startCash) || startCash<0) return 'L’encaisse de départ des joueurs doit être un nombre positif ou nul.';
   if(!num(bankCash) || bankCash<0) return 'L’encaisse de départ de la banque doit être un nombre positif ou nul.';
   const inRange = (v, lo, hi)=>num(v) && v>=lo-1e-12 && v<=hi+1e-12;
-  if(!(num(s.companyCeoStartPct) && s.companyCeoStartPct>0 && s.companyCeoStartPct<=1+1e-12)) return `Le % des parts acheté par le CEO à la fondation doit être compris entre 1 et 100 % (reçu : ${(s.companyCeoStartPct*100).toFixed(1)} %).`;
+  if(!(num(s.companyCeoStartPct) && s.companyCeoStartPct>=0.01-1e-12 && s.companyCeoStartPct<=1+1e-12)) return `Le % des parts acheté par le CEO à la fondation doit être compris entre 1 et 100 % (reçu : ${(s.companyCeoStartPct*100).toFixed(1)} %).`;
   if(!inRange(s.etfBankReservePct, 0, 99)) return 'Le % de chaque terrain réservé à la banque (REIT) doit être compris entre 0 et 99 %.';
   if(!inRange(s.bankMinSellPct, 0, 100)) return 'Le pourcentage minimum de rachat par la banque doit être compris entre 0 et 100 %.';
   if(!inRange(s.mortgageLTV, 0, 1)) return 'L’emprunt hypothécaire maximal doit être compris entre 0 et 100 %.';
   if(!inRange(s.distressDebtThreshold, 0, 1)) return 'Le seuil d’endettement de détresse doit être compris entre 0 et 100 %.';
   if(!inRange(s.loanOfferWithholdingPctMin, 0, 1) || !inRange(s.loanOfferWithholdingPctMax, 0, 1)) return 'Les % de loyers retenus pour les prêts doivent être compris entre 0 et 100 %.';
-  if(s.loanOfferWithholdingPctMin>s.loanOfferWithholdingPctMax+1e-12) return 'Prêts : le % de loyers retenu minimum dépasse le maximum.';
+  if(s.loanOfferWithholdingPctMin>s.loanOfferWithholdingPctMax+1e-12) return `Prêts : le % de loyers retenu minimum (${(s.loanOfferWithholdingPctMin*100).toFixed(1)} %) dépasse le maximum (${(s.loanOfferWithholdingPctMax*100).toFixed(1)} %). Un maximum laissé vide vaut 0 % : saisissez-le explicitement.`;
   if(!(num(s.loanOfferMultipleMin) && s.loanOfferMultipleMin>=1)) return 'Prêts : le multiple du capital minimum doit être d’au moins 1.';
   if(!(num(s.loanOfferMultipleMax) && s.loanOfferMultipleMax>=s.loanOfferMultipleMin-1e-12)) return 'Prêts : le multiple du capital maximum doit être au moins égal au minimum.';
   if(!inRange(s.dividendPayoutRatioMin, 0, 1) || !inRange(s.dividendPayoutRatioFull, 0, 1)) return 'Les ratios dividende/bénéfice doivent être compris entre 0 et 100 %.';
@@ -3543,7 +3543,7 @@ function renderPortefeuilleTrading(me, company){
   const sectorDebtNoteHtml = (me.bondBalance||0)<-1e-9 ? `<div class="small" style="margin-top:6px;opacity:0.8;">Dette en bons gouvernementaux : ${fmt(-(me.bondBalance||0))} (non comprise dans la répartition).</div>` : ''; // Section 317 — bogue 98
   const sectorMixHtml = sectorTotal>1e-9
     ? `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;">${svgPieChart(sectorSlices)}<div>${sectorLegendHtml}${sectorDebtNoteHtml}</div></div>`
-    : '<div class="empty">Aucune position boursière ni bon gouvernemental pour le moment — rien à répartir.</div>';
+    : ((me.bondBalance||0)<-1e-9 ? `<div class="empty">Aucune position boursière ni bon gouvernemental positif pour le moment — rien à répartir. Dette en bons gouvernementaux : ${fmt(-(me.bondBalance||0))}.</div>` : '<div class="empty">Aucune position boursière ni bon gouvernemental pour le moment — rien à répartir.</div>'); // Section 317 — bogue 98
 
   
   
@@ -7337,7 +7337,7 @@ function showPortfolioEvolutionPopup(){
   const totalRowHtml = `<tr><td colspan="2" style="border-top:2px solid var(--line);padding:0;"></td></tr>
     <tr style="font-weight:700;"><td>Valeur liquidative</td><td class="money" style="color:${r.liquidationValue<0?'var(--brick)':'#047857'};">${r.liquidationValue>=0?'+':''}${fmt(r.liquidationValue)}</td></tr>`;
   const optionPremiumAsideHtml = Math.abs(r.optionNetPremium)>0.005 ? `
-    <div class="small" style="margin-top:10px;">Pour mémoire — prime nette d'option encaissée/payée depuis le début (déjà comptée dans l'encaisse et dans le P&L non réalisé ci-dessus, donc PAS incluse dans le total): <span style="color:${r.optionNetPremium<0?'var(--brick)':'#047857'};">${r.optionNetPremium>=0?'+':''}${fmt(r.optionNetPremium)}</span></div>` : '';
+    <div class="small" style="margin-top:10px;">Pour mémoire — cumul net des primes d'options et des règlements en argent de stratégies depuis le début (déjà réparti entre « P&L non réalisé » et « P&L options clôturées » ci-dessus, donc à ne pas ajouter au total): <span style="color:${r.optionNetPremium<0?'var(--brick)':'#047857'};">${r.optionNetPremium>=0?'+':''}${fmt(r.optionNetPremium)}</span></div>` : '';
   const partialWarningHtml = r.partialTracking
     ? `<div class="small" style="margin-top:8px;">Le suivi détaillé de ce récapitulatif n’a démarré qu’en cours de partie (sauvegarde antérieure à cette fonctionnalité) — les montants ci-dessus ne couvrent que la période depuis ce moment-là, pas depuis le tout début de la partie.</div>`
     : '';
@@ -11657,6 +11657,7 @@ function fillPendingBid(player, company, bid){
   const bondsNeeded = Math.max(0, amount-cashAvail);
   if(bondsNeeded>1e-9){
     player.bondBalance -= bondsNeeded;
+    capBondInterestStat(player); // Section 317 — bogue 86
     player.cash += bondsNeeded;
     state.bank.cash -= bondsNeeded;
   }
@@ -12512,6 +12513,10 @@ function buyBonds(player, amount){
   return {ok:true, entries};
 }
 
+// Section 317 — bogue 86 (retouche de la revue) : statistique d'affichage seulement (aucun argent) — le cumul d'intérêts reçus ne peut pas dépasser le solde de bons restant
+function capBondInterestStat(player){
+  if((player.cumBondInterest||0)>0) player.cumBondInterest = Math.min(player.cumBondInterest, Math.max(0, player.bondBalance||0));
+}
 function withdrawBonds(player, amount){
   
   
@@ -12520,6 +12525,7 @@ function withdrawBonds(player, amount){
   if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
   if(amount>(player.bondBalance||0)+1e-9) return {ok:false, error:'Le montant demandé dépasse votre solde de bons gouvernementaux.'};
   player.bondBalance -= amount;
+  capBondInterestStat(player); // Section 317 — bogue 86
   player.cash += amount;
   state.bank.cash -= amount;
   const entries = [
@@ -12538,6 +12544,7 @@ function shortBonds(player, amount){
   const maxBorrowable = (state.settings.bondShortMax||0) + (player.bondBalance||0);
   if(amount>maxBorrowable+1e-9) return {ok:false, error:`Vous ne pouvez pas emprunter au-delà d'une dette totale de ${fmt(state.settings.bondShortMax||0)} — montant empruntable maximum en ce moment: ${fmt(Math.max(0,maxBorrowable))}.`};
   player.bondBalance = (player.bondBalance||0) - amount;
+  capBondInterestStat(player); // Section 317 — bogue 86
   player.cash += amount;
   state.bank.cash -= amount;
   const entries = [
@@ -13186,6 +13193,7 @@ function raiseCashForForcedSettlement(player, amountNeeded, reasonLabel){
   if(remaining>1e-9 && (player.bondBalance||0)>1e-9){
     const fromBonds = Math.min(remaining, player.bondBalance);
     player.bondBalance -= fromBonds;
+    capBondInterestStat(player); // Section 317 — bogue 86
     player.cash += fromBonds;
     state.bank.cash -= fromBonds;
     log(`💰 ${reasonLabel || "Règlement forcé d'une option"} — vente automatique de ${fmt(fromBonds)} de bons sans risque pour ${player.name} (encaisse insuffisante à elle seule pour le livrable).`,
@@ -21082,7 +21090,7 @@ function modalPlaceBidOrder(){
       <option value="shares">Nombre de parts</option>
     </select>
     <label id="mBidQtyLabel">Montant (en ${esc(state.unit)} — ex: 0.05 = 50 000$)</label>
-    <input type="number" step="0.01" min="0" id="mBidQty" value="0">
+    <input type="number" step="any" min="0" id="mBidQty" value="0">
     <div class="small" id="mBidQtyHint" style="margin-bottom:8px;"></div>
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
@@ -21106,7 +21114,7 @@ function modalPlaceBidOrder(){
     const hintEl = document.getElementById('mBidQtyHint');
     if(!(limitPrice>0) || !(raw>0)){ hintEl.textContent = ''; return; }
     const qty = unit==='shares' ? raw : raw/limitPrice;
-    hintEl.textContent = `Ordre placé : ${fmtShares(qty)} part(s) à ${fmtPrice(limitPrice)}/part au plus, soit ${fmt(qty*limitPrice)}.`;
+    hintEl.textContent = `Ordre qui sera placé : ${fmtShares(qty)} part(s) à ${fmtPrice(limitPrice)}/part au plus, soit ${fmt(qty*limitPrice)}.`;
   };
   refreshInfo();
   document.getElementById('mBidCompany').addEventListener('change', refreshInfo);

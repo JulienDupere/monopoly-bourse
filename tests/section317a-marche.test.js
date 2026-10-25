@@ -44,7 +44,7 @@ const triplet = (html) => { // solde initial / intérêts / solde total du table
     doc.trouver('mBidUnit').value = 'shares'; await fire('#mBidUnit', 'change');
     doc.trouver('mBidQty').value = String(parts);
     await fire('#mBidQty', 'input');
-    ok(/Ordre plac/.test(texte(doc.trouver('mBidQtyHint'))), `${parts} parts : l’ordre réellement placé est affiché sous le champ`);
+    ok(/Ordre qui sera plac/.test(texte(doc.trouver('mBidQtyHint'))), `${parts} parts : l’ordre réellement placé est affiché sous le champ`);
     doc.trouver('mBidUnit').value = 'dollars'; await fire('#mBidUnit', 'change');
     const montant = doc.trouver('mBidQty').value;
     ok(montant === attendu, `${parts} parts à 1,50 $ -> montant « ${montant} » M$ (attendu ${attendu} ; avant : ${parts === 4000 ? '0.01, soit 6 666 parts' : '0.00, ordre refusé'})`);
@@ -72,6 +72,22 @@ const triplet = (html) => { // solde initial / intérêts / solde total du table
     eng.run(`C.bondBalance = 10.15; C.cumBondInterest = 0.15;`);
     const t3 = triplet(eng.run(`renderPortefeuilleTrading(C, null)`));
     ok(t3 && near(t3[0], 10, 1e-9) && near(t3[1], 0.15, 1e-9), 'placement en cours : solde initial 10, intérêts reçus 0.15 (inchangé)');
+  }
+
+  console.log('86b. Retouche : statistique d’intérêts plafonnée quand le solde baisse (probe de la revue)');
+  {
+    const { eng } = await setup();
+    eng.run(`fmt = function(x){ return String(Math.round(x*1e9)/1e9); }; buyBonds(C, 10); C.bondBalance += 0.15; C.cumBondInterest = 0.15; state.bank.cash -= 0.15;`);
+    const m0 = eng.cashTotal();
+    eng.run(`withdrawBonds(C, 10.15);`);
+    ok(near(eng.run(`C.cumBondInterest`), 0, 1e-9), 'retrait total : cumul d’intérêts remis à 0 (avant : 0,15 restait)');
+    eng.run(`buyBonds(C, 5);`);
+    let t = triplet(eng.run(`renderPortefeuilleTrading(C, null)`));
+    ok(t && near(t[0], 5, 1e-9) && near(t[1], 0, 1e-9) && near(t[2], 5, 1e-9), `nouveau dépôt de 5 : solde initial 5, intérêts 0 (reçu ${t && t.join(' / ')} ; avant : 4,85 et 0,15)`);
+    eng.run(`withdrawBonds(C, 5); shortBonds(C, 2);`);
+    t = triplet(eng.run(`renderPortefeuilleTrading(C, null)`));
+    ok(t && near(t[0], -2, 1e-9) && near(t[2], -2, 1e-9), `puis emprunt de 2 : dette −2 (reçu ${t && t.join(' / ')} ; avant : −2,15)`);
+    ok(near(eng.cashTotal(), m0, 1e-9), 'monnaie conservée (statistique seulement)');
   }
 
   console.log('87. Résultats du tour : bons vendus pour payer un bid');
@@ -129,6 +145,10 @@ const triplet = (html) => { // solde initial / intérêts / solde total du table
     eng.run(`C.bondBalance = -50;`);
     const h2 = eng.run(`renderPortefeuilleTrading(C, null)`);
     ok(!/Aucune position boursière ni bon gouvernemental/.test(h2), 'avec des actions et une grosse dette, la répartition n’affirme pas qu’il n’y a aucune position');
+    eng.run(`A.shareholders = A.shareholders.filter(s=>s.playerId!==C.id); B.shareholders = B.shareholders.filter(s=>s.playerId!==C.id); C.bondBalance = -3;`);
+    const h3 = eng.run(`renderPortefeuilleTrading(C, null)`);
+    ok(/Aucune position boursière ni bon gouvernemental positif/.test(h3) && /Dette en bons gouvernementaux/.test(h3), 'dette en bons seule : le message parle de bons « positifs » et rappelle la dette'); 
+    ok(!/<div class="empty">Aucune position boursière ni bon gouvernemental pour le moment/.test(h3), 'ancien message trompeur absent');
   }
 
   console.log(`\nOK : section 317a (marché) — ${n} vérifications`);

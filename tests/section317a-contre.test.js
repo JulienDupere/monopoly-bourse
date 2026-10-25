@@ -7,7 +7,7 @@ const path = require('path');
 const { check } = require('./helpers/engine');
 const { CLES } = require('./helpers/contre317a');
 
-const FICHIER = { '77': 'options', '78': 'options', '79': 'options', '85': 'marche', '86': 'marche', '87': 'marche', '91': 'marche', '98': 'marche',
+const FICHIER = { '77': 'options', '78': 'options', '79': 'options', '85': 'marche', '86': 'marche', '87': 'marche', '91': 'marche', '98': 'marche', '86b': 'marche', '98b': 'marche', '96b': 'creation',
   '96': 'creation', '99a': 'creation', '99b': 'creation', '101a': 'creation', '101b': 'creation' };
 let n = 0;
 const lancer = (cle) => spawnSync(process.execPath, [path.join(__dirname, `section317a-${FICHIER[cle]}.test.js`)], { env: Object.assign({}, process.env, cle ? { CONTRE_317A: cle } : {}), encoding: 'utf8' });

@@ -230,7 +230,9 @@ async function race17(T){
     ok(T.B.alerts.length === 1 && /partie est terminée/.test(T.B.alerts[0]), 'B : message « La partie est terminée »');
     ok(converged(T), 'B : les appareils convergent');
     // Contre-épreuve : sans la vérification dans l'action, le lancer est rejoué sur la partie terminée.
-    const T2 = await setup({ transform: REVERT_TURN });
+    // Section 316 — la garde unique de fin de partie (runActionWithRetry) refuse aussi ce lancer : la contre-épreuve
+    // retire les deux vérifications.
+    const T2 = await setup({ transform: src => REVERT_TURN(src).replace('      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(label); // Section 316', '') });
     let fired2 = false;
     T2.server.ctl.onTx = async ({ client, out }) => {
       if(fired2 || client !== 'B' || !JSON.parse(out).lastDiceRollEvent) return;

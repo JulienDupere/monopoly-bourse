@@ -2080,6 +2080,7 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
   await storageSet('game:'+code, JSON.stringify(s), true);
   gameCode = code; state = s;
   resetActionQueue(); // Section 308
+  __gameEndedReviewMode = false; // Section 316 — bogue 100
   await storageSet('mychar:'+code, players[0].id, false);
   await storageSet('lastcode', code, false);
   myPlayerId = players[0].id;
@@ -2102,6 +2103,7 @@ async function loadGame(code){
   migrateState(state);
   gameCode = code;
   resetActionQueue(); // Section 308 — une partie (re)chargée repart avec une file d'actions vide.
+  __gameEndedReviewMode = false; // Section 316 — bogue 100 : une partie chargée terminée montre d'abord son classement final
   lastDiceResult = null; 
   lastDiceResults = null;
   const mp = await storageGet('mychar:'+code, false);
@@ -2407,7 +2409,32 @@ function finishAction(gen, btn, res){
     scheduleDeferredPopups(); // Section 308 — fenêtres d'information mises en attente pendant l'action
   }catch(e){ console.error('Rafraîchissement après action impossible :', e); } // le résultat de l'action reste transmis à l'appelant
 }
-async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen){
+// Section 316 — garde unique de fin de partie (bogues 55, 56, 76 et angle mort 5 de l'audit : ~30 points d'entrée
+// modifiaient l'état après la fin, en mode « consulter quand même »). Toute action est refusée quand la partie est
+// DÉJÀ terminée sur l'état frais, avant son applyFn (rien n'est exécuté ni enregistré), et de nouveau après un
+// conflit (la fin a pu être enregistrée par un autre appareil entre-temps). Le lancer qui TERMINE la partie pose
+// gameEndedReason pendant sa propre action : il passe. Les appels imbriqués font partie de l'action englobante.
+// Liste blanche : opts.allowAfterGameEnd (ajustements d'encaisse de l'administrateur, corrections d'arbitre
+// journalisées : voir modalAdjustPlayer / modalAdjustCompany / modalAdjustBank).
+function gameEndedReasonLabel(r){
+  if(!r) return '';
+  if(r.reason==='maxDuration') return 'durée maximale atteinte';
+  if(r.reason==='bankOwnsAll') return `${r.companyName||'?'} à 100 % banque`;
+  if(r.reason==='stockFloor') return `${r.companyName||'?'} à 0 en bourse`;
+  return '';
+}
+function gameEndedActionMessage(){
+  const lbl = gameEndedReasonLabel(state && state.gameEndedReason);
+  return `La partie est terminée${lbl ? ` (${lbl})` : ''} — plus aucune action n’est possible : les onglets se consultent seulement.`;
+}
+// Section 316 — retouche de la revue : refus survenu après un conflit (la fin, enregistrée par un autre appareil, vient
+// d'arriver avec la valeur du serveur) : notSaved fait redessiner l'écran sur cet état (finishAction), donc l'écran
+// final ou le bandeau apparaît ; le statut « ⏳ » posé par l'essai précédent passe à l'échec.
+function gameEndedActionResult(label){
+  if(label) setMyActionStatus(label, 'failed');
+  return {ok:false, error:gameEndedActionMessage(), code:'game-ended', notSaved:true};
+}
+async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label, allowAfterGameEnd}, gen){
   let res = null;
   let needsReapply = true;
   let baseRaw = null, baseLocals = null, failure = null;
@@ -2420,6 +2447,7 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
       if(attempt===1 && isKnownOffline()) return offlineActionResult(); // Section 308 — retouche de la revue : action en file, connexion coupée entre-temps
       if(attempt===1) adoptReceivedStateBeforeAction(); // Section 308 — C2 : revérifiée sur l'état à jour
       if(baseLocals) restoreActionLocals(baseLocals);
+      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(label); // Section 316
       baseRaw = JSON.stringify(state);
       baseLocals = snapshotActionLocals();
       actionApplyDepth++;
@@ -5775,7 +5803,7 @@ function renderDevenirAssureur(){
   const bankSubInsuredProps = f.subInsurance ? allSubInsuredProps.filter(p=>p.subInsurance.insurerId==='BANK') : [];
   const liveTakeoverPropRow = p=>{
     const insuredCo = companyById(p.insurance.insuredCompanyId);
-    const canTakeOver = myCoId!==p.insurance.insuredCompanyId;
+    const canTakeOver = myCoId!==p.insurance.insuredCompanyId && !state.gameEndedReason; // Section 316 — bogue 55 : plus de bouton après la fin
     const live = liveTakeoverPropQuote(p, p.insurance.insuredCompanyId, p.insurance.claimMode, p.insurance.deductible, p.insurance.quotedTerm, p.insurance.coveredAmount); // Section 313 — bogue 39
     return `<tr>
       <td>${propertyColorChip(p)}</td>
@@ -5787,7 +5815,7 @@ function renderDevenirAssureur(){
   };
   const liveTakeoverTaxRow = t=>{
     const insuredCo = companyById(t.insuredCompanyId);
-    const canTakeOver = myCoId!==t.insuredCompanyId;
+    const canTakeOver = myCoId!==t.insuredCompanyId && !state.gameEndedReason; // Section 316 — bogue 55
     const label = (TAX_SQUARES.find(x=>x.pos===t.taxPos)||{}).label || 'Taxe';
     const live = liveTakeoverTaxQuote(t.taxPos, t.insuredCompanyId, t.claimMode, t.deductible, t.quotedTerm, t.coveredAmount); // Section 313 — bogue 39
     return `<tr>
@@ -5800,7 +5828,7 @@ function renderDevenirAssureur(){
   };
   const liveTakeoverSubRow = p=>{
     const insuredCo = companyById(p.subInsurance.insuredCompanyId);
-    const canTakeOver = myCoId!==p.subInsurance.insuredCompanyId;
+    const canTakeOver = myCoId!==p.subInsurance.insuredCompanyId && !state.gameEndedReason; // Section 316 — bogue 55
     
     
     
@@ -7978,6 +8006,7 @@ function renderTicker(items){
 async function performQuitGame(){
   stopSync();
   isSpectator = false;
+  __gameEndedReviewMode = false; // Section 316 — bogue 100 : la consultation d'une partie terminée ne survit pas à la sortie
   await storageSet('lastcode', '', false);
   await storageSet('lastspectator', '', false);
   gameCode=null; state=null; myPlayerId=null; render();
@@ -8006,7 +8035,9 @@ function render(){
   const me = state.players.find(p=>p.id===myPlayerId);
   
   
-  if(me && !me.companyId){ renderCompanySetupGate(me); return; }
+  // Section 316 — bogue 76 : partie terminée (consultation) : un joueur sans entreprise consulte les onglets au lieu
+  // de l'écran de fondation (fonder est de toute façon refusé par la garde de fin de partie).
+  if(me && !me.companyId && !state.gameEndedReason){ renderCompanySetupGate(me); return; }
   
   
   
@@ -8049,7 +8080,7 @@ function render(){
   
   
   const gameEndedHeaderHtml = state.gameEndedReason
-    ? `&nbsp;|&nbsp; <b style="color:var(--brick,#C0392B);">🏁 Partie terminée (${state.gameEndedReason.reason==='maxDuration' ? 'durée maximale atteinte' : `${esc(state.gameEndedReason.companyName)}${state.gameEndedReason.reason==='bankOwnsAll' ? ' à 100% banque' : ' à 0'}`})</b>`
+    ? `&nbsp;|&nbsp; <b style="color:var(--brick,#C0392B);">🏁 Partie terminée (${state.gameEndedReason.reason==='maxDuration' ? 'durée maximale atteinte' : `${esc(state.gameEndedReason.companyName)}${state.gameEndedReason.reason==='bankOwnsAll' ? ' à 100% banque' : ' à 0'}`}) — consultation seulement, aucune action n’est enregistrée</b>` // Section 316 — garde unique de fin de partie
     : '';
   
   
@@ -9509,16 +9540,61 @@ function settleBankDividendExcess(co, paidTotal, debited, entries){
   return excess;
 }
 
+// Section 316 — décision de Julien : « dividende annoncé dû au lancer final = versé aux actionnaires ». Une annonce
+// échue à ce lancer (payAtRoll ≤ rollCount) n'est plus rendue : elle reste en place et le versement du changement de
+// semestre de CE lancer la paie, avec les règles actuelles (section 307 : parts éligibles au versement, banque à
+// position négative). payAtRoll est toujours un début de semestre, et la seule fin posée AVANT ce versement est la
+// durée maximale (advanceGameClock, frontière d'année donc de semestre) : les autres fins arrivent après lui ou entre
+// deux lancers, quand aucune annonce échue ne reste. Les annonces pas encore échues restent rendues à l'entreprise.
 function forfeitPendingDividendAnnouncementsAtGameEnd(){
   if(!state.dividendAnnouncements || state.dividendAnnouncements.length===0) return;
-  state.dividendAnnouncements.forEach(ann=>{
+  const pending = state.dividendAnnouncements.filter(ann=>!(ann.payAtRoll<=state.gameClock.rollCount)); // Section 316 — décision
+  pending.forEach(ann=>{
     const co = companyById(ann.companyId);
     if(!co) return; 
     co.cash += ann.amount;
     logFin(co.id, 'dividend_forfeited_return', ann.amount);
     log(`La partie se termine avant le versement du dividende de ${fmt(ann.amount)} annoncé par ${co.name} (lancer #${ann.announcedAtRoll}) — montant intégralement rendu à sa trésorerie, personne ne l'ayant encore reçu.`);
   });
-  state.dividendAnnouncements = [];
+  state.dividendAnnouncements = state.dividendAnnouncements.filter(ann=>!pending.includes(ann)); // Section 316 — décision : les annonces échues restent pour le versement
+}
+// Section 316 — décision de Julien : « fin de partie en cours d'année : régler les soldes de compensation et le pari du
+// lot commercial, comptés au classement final ». Mêmes fonctions et mêmes règles qu'en fin d'année (processYearEnd) :
+// balance + intérêt annuel versés par la débitrice, accord clôturé ; pari du lot commercial (loyers accumulés − prix)
+// réparti à parts égales. À une frontière d'année (durée maximale), processYearEnd a déjà tout réglé : rien à faire.
+// Monnaie conservée : de simples virements entre entreprises.
+// Section 316 — retouche de la revue (option retenue, à valider par Julien) : le prix ENTIER du lot sur une année à
+// peine commencée était injuste (lot gagné au lancer 7, fin au lancer 8, aucun loyer : 9 M$ payés). Le prix est réglé
+// au prorata des lancers écoulés depuis la résolution de l'enchère, sur 6 lancers par année (prix × écoulés ÷ 6), contre
+// les loyers réellement comptés. Le règlement d'une année complète (processYearEnd) ne change pas. L'intérêt de la
+// compensation reste le taux fixe appliqué au solde. Décision à valider : les intérêts hypothécaires et les dividendes
+// privilégiés de l'année en cours ne sont PAS facturés à une fin en cours d'année.
+function proratedTerrainLotPriceAtGameEnd(lot){
+  const year = lot.year!=null ? lot.year : currentGameYear();
+  const resolvedAtRoll = year*6 + 1; // l'enchère se résout au lancer qui part de rollCount % 6 === 1 (maybeResolveTerrainLotAuction)
+  const elapsed = Math.max(0, Math.min(6, state.gameClock.rollCount - resolvedAtRoll));
+  return {elapsed, price: lot.price * elapsed / 6, fullYearPrice: lot.price};
+}
+function settleYearContractsAtGameEnd(){
+  const comps = state.rentCompensations || [];
+  const lot = (state.settings.features.terrainLot && state.terrainLot) ? state.terrainLot.active : null;
+  if(comps.length===0 && !lot) return;
+  log(`🏁 Fin de partie en cours d’année : ${[comps.length ? 'les accords de compensation de loyer' : '', lot ? 'le pari du lot commercial (prix au prorata des lancers écoulés)' : ''].filter(Boolean).join(' et ')} ${comps.length && lot ? 'sont réglés' : 'est réglé'} maintenant, aux règles de fin d’année, et compté${comps.length && lot ? 's' : ''} au classement final.`);
+  comps.forEach(c=>settleRentCompensation(c));
+  state.rentCompensations = [];
+  if(lot){
+    const pr = proratedTerrainLotPriceAtGameEnd(lot);
+    log(`Lot commercial : prix de ${fmt(pr.fullYearPrice)} pour l’année, ramené au prorata de ${pr.elapsed} lancer(s) écoulé(s) sur 6 depuis l’enchère : ${fmt(pr.price)}, comparé aux loyers commerciaux réellement comptés (${fmt(lot.accrued)}).`);
+    lot.price = pr.price; // Section 316 — retouche de la revue : prix au prorata
+    settleTerrainLotYearEnd(lot.year!=null ? lot.year : currentGameYear(), state.gameClock.rollCount);
+    if(state.terrainLot.lastResult) Object.assign(state.terrainLot.lastResult, {fullYearPrice: pr.fullYearPrice, elapsedRolls: pr.elapsed});
+  }
+}
+// Section 316 — règlements de fin de partie, appelés là où gameEndedReason est posé (durée maximale, cours à 0,
+// 100 % banque, prêt de dernier recours).
+function settleAtGameEnd(){
+  forfeitPendingDividendAnnouncementsAtGameEnd();
+  settleYearContractsAtGameEnd(); // Section 316 — décision
 }
 
 // Section 311 — bogue 19 : une ABS est tarifée sur years × 6 lancers (computeAbsPricing) ; elle est désormais servie
@@ -9571,7 +9647,7 @@ function advanceGameClock(){
   
   if(!state.gameEndedReason && state.hiddenGameLengthTargetYear!=null && after>state.hiddenGameLengthTargetYear){
     state.gameEndedReason = {reason:'maxDuration', roll: state.gameClock.rollCount, year: state.hiddenGameLengthTargetYear};
-    forfeitPendingDividendAnnouncementsAtGameEnd(); 
+    settleAtGameEnd(); // Section 316 — décisions : dividende échu versé, règlements de fin d'année
   }
   
   
@@ -10218,7 +10294,7 @@ function advanceGameClock(){
         
         
         state.gameEndedReason = {companyId: co.id, companyName: co.name, roll: state.gameClock.rollCount, reason:'stockFloor'};
-        forfeitPendingDividendAnnouncementsAtGameEnd(); 
+        settleAtGameEnd(); // Section 316 — décisions
       }
       
       
@@ -11696,7 +11772,7 @@ function checkBankOwnershipGraceExpiry(){
     if(co.bankOwnedGraceExpiry===undefined) continue;
     if(state.gameClock.rollCount >= co.bankOwnedGraceExpiry){
       state.gameEndedReason = {companyId: co.id, companyName: co.name, roll: state.gameClock.rollCount, reason:'bankOwnsAll'};
-      forfeitPendingDividendAnnouncementsAtGameEnd(); 
+      settleAtGameEnd(); // Section 316 — décisions
       log(`🏁 Le délai de grâce de ${co.name} (2 années financières) a expiré sans qu'aucune position longue n'ait été ré-acquise — la partie se termine officiellement pour tout le monde.`);
       return; 
     }
@@ -12684,7 +12760,21 @@ function requiredMaintenanceMargin(player){
   });
   return requiredMargin;
 }
+// Section 316 — bogue 92 : au lancer qui termine la partie, aucune fermeture forcée n'est possible (tout trading est
+// refusé après la fin) : l'ancien code tentait quand même et écrivait « la fermeture forcée a échoué ». Les positions
+// restent ouvertes et sont valorisées à leur juste valeur marchande au classement final (même résultat qu'un rachat
+// au cours) ; une ligne d'information remplace le faux message.
+function noteMarginShortfallsAtGameEnd(){
+  state.players.forEach(p=>{
+    const hasShort = p.shortPositions && Object.keys(p.shortPositions).some(coId=>p.shortPositions[coId].shares>1e-9);
+    const hasWritten = (p.optionPositions||[]).some(pos=>pos.side==='short' && pos.shares>1e-9);
+    if(!hasShort && !hasWritten) return;
+    if(marginableNetWorth(p)>=requiredMaintenanceMargin(p)) return;
+    log(`ℹ️ ${p.name} est sous la marge de maintien au lancer final : la partie étant terminée, aucune fermeture forcée n'a lieu — ses positions à découvert et options écrites sont valorisées à leur juste valeur marchande au classement final.`);
+  });
+}
 function enforceMarginCalls(){
+  if(state.gameEndedReason){ noteMarginShortfallsAtGameEnd(); return; } // Section 316 — bogue 92
   state.players.forEach(p=>{
     let guard = 0;
     while(guard<100){
@@ -14989,7 +15079,7 @@ function modalBuyMergedShare(mergeId){
   });
 }
 
-async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
+async function runModalActionWithRetry(applyFn, {maxAttempts, label, allowAfterGameEnd}={}){ // Section 316 — allowAfterGameEnd : liste blanche de la garde de fin de partie
   const okBtn = document.getElementById('mOk');
   const statusEl = document.getElementById('mRetryStatus');
   if(!label && okBtn) label = (okBtn.textContent||'').trim() || undefined;
@@ -15010,6 +15100,7 @@ async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
     res = await attemptActionWithRetry(applyFn, {
       maxAttempts,
       label,
+      allowAfterGameEnd, // Section 316
       onRetry: (attempt, failure)=>{ if(statusEl) statusEl.textContent = failure==='network' ? `Connexion au serveur perdue — nouvel essai d’enregistrement (${attempt})...` : `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; }, // Section 308
     });
   } catch(e){
@@ -15614,6 +15705,7 @@ async function issueMortgage(propId, borrowerId, lenderId, opts){
   
   opts = opts || {};
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  if(state.gameEndedReason) return fail(gameEndedActionMessage()); // Section 316 — revue : chemin bancaire
   const p = state.properties.find(x=>x.id===propId);
   if(!p) return fail(null);
   // Section 309 — bogue 34 : un terrain regroupé en lot (regroupement fait entre l'ouverture et la confirmation) ne
@@ -15675,6 +15767,7 @@ async function issueMortgageLot(mergeId, borrowerId, lenderId, opts){
   
   opts = opts || {};
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  if(state.gameEndedReason) return fail(gameEndedActionMessage()); // Section 316 — revue : chemin bancaire
   const host = lotMortgageHost(mergeId);
   if(!host) return fail(null);
   const share = propertyOwnedShare(host, borrowerId);
@@ -17217,7 +17310,7 @@ function triggerLastResortLoan(companyId){
   if(hist.length>500) hist.shift();
   if(gameOver && !state.gameEndedReason){
     state.gameEndedReason = {companyId: company.id, companyName: company.name, roll, reason:'stockFloor'};
-    forfeitPendingDividendAnnouncementsAtGameEnd(); 
+    settleAtGameEnd(); // Section 316 — décisions
   }
   const entries = [{label:'Banque (capital prêté — dernier recours)', amount:-principal}, {label:`${company.name} (capital reçu — dernier recours)`, amount:principal}];
   log(`🆘 ${company.name} contracte un PRÊT DE DERNIER RECOURS de ${fmt(principal)} auprès de la banque (${company.lastResortLoanCount} fois cette partie) — annonce majeure aux joueurs. Conséquences permanentes pour ${company.name}: cours de l'action -${Math.round(LAST_RESORT_PRICE_DROP_PCT*100)}% (${fmtPrice(priceBefore)} → ${fmtPrice(company.stockPrice)}), ventes à découvert/achats de calls courts/achats de puts longs désormais bloqués (les positions déjà ouvertes sont conservées), sortie publique du CEO définitivement indisponible pour cette entreprise (l'annonce CEO différée à 1 an reste possible), effets baissiers en bourse durablement amplifiés. Remboursement: ${Math.round(LAST_RESORT_LOAN_WITHHOLDING_PCT*100)}% de tous les loyers reçus jusqu'à ${fmt(totalDue)} au total (${LAST_RESORT_LOAN_MULTIPLE}× le capital).`, entries);
@@ -18838,7 +18931,7 @@ function modalAdjustPlayer(pid){
       log(`${pl.name}: ${amt>=0?'+':''}${amt.toFixed(2)} (${reason})`,
         [{label:`${pl.name} (${reason})`, amount:amt}, {label:'Banque', amount:-amt}]);
       return {ok:true};
-    });
+    }, {allowAfterGameEnd:true}); // Section 316 — décision : correction d'arbitre permise après la fin (journalisée)
   });
 }
 
@@ -18872,7 +18965,7 @@ function modalAdjustCompany(companyId){
       log(`${co.name}: ${amt>=0?'+':''}${amt.toFixed(2)} (${reason})`,
         [{label:`${co.name} (${reason})`, amount:amt}, {label:'Banque', amount:-amt}]);
       return {ok:true};
-    });
+    }, {allowAfterGameEnd:true}); // Section 316 — décision : correction d'arbitre permise après la fin (journalisée)
   });
 }
 
@@ -18893,7 +18986,7 @@ function modalAdjustBank(){
       state.bank.cash += amt;
       log(`Banque ajustée de ${amt>=0?'+':''}${amt.toFixed(2)}`, [{label:'Banque (ajustement)', amount:amt}]);
       return {ok:true};
-    });
+    }, {allowAfterGameEnd:true}); // Section 316 — décision : correction d'arbitre permise après la fin (journalisée)
   });
 }
 

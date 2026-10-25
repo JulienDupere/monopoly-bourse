@@ -4852,7 +4852,7 @@ function renderEntreprise(){
   const loanCapExhausted = state.settings.loanMaxPrincipal>0 && loanCapLeft<=1e-9;
   const issueLoanTooltip = openLoanRequest
     ? `Demande d'emprunt ouverte (${fmt(openLoanRequest.principal)}) — ${openRequestOfferCount} offre(s) reçue(s) des joueurs. Cliquez pour consulter/accepter.`
-    : `Publier une demande d'emprunt (jusqu'à ${fmt(loanCapLeft)} encore disponible sur un maximum de ${fmt(state.settings.loanMaxPrincipal)}${loanCapUsed>0?`, ${fmt(loanCapUsed)} déjà emprunté sur ${activeLoansForCo.length} prêt${activeLoansForCo.length===1?'':'s'} actif${activeLoansForCo.length===1?'':'s'}`:''}) — les joueurs pourront proposer leurs conditions.`;
+    : `Publier une demande d'emprunt (${isFinite(loanCapLeft) ? `jusqu'à ${fmt(loanCapLeft)} encore disponible sur un maximum de ${fmt(state.settings.loanMaxPrincipal)}` : "capacité d'emprunt illimitée, aucun maximum fixé pour cette partie"}${loanCapUsed>0?`, ${fmt(loanCapUsed)} déjà emprunté sur ${activeLoansForCo.length} prêt${activeLoansForCo.length===1?'':'s'} actif${activeLoansForCo.length===1?'':'s'}`:''}) — les joueurs pourront proposer leurs conditions.`;
   
   
   
@@ -16495,6 +16495,8 @@ function activeLoanPrincipalSum(borrowerId){
   return activeLoansOf(borrowerId).reduce((s,l)=>s+l.principal, 0);
 }
 
+// Section 317 — bogue 97 : un maximum à 0 (ou vide) = « illimité » pour le moteur ; l'écran l'écrit « illimité » au lieu de « Infinity M$ ».
+function fmtLoanCap(v){ return isFinite(v) ? fmt(v) : 'illimité'; }
 function loanCapRemaining(borrowerId){
   const cap = state.settings.loanMaxPrincipal;
   return cap>0 ? Math.max(0, cap-activeLoanPrincipalSum(borrowerId)) : Infinity;
@@ -22128,11 +22130,11 @@ function modalIssueLoan(){
     <div class="small" style="margin-bottom:8px;">${creditRatingBadgeHtml(myCo)}</div>
     ${activeLoansHtml}
     <div class="small" style="margin-bottom:10px;">Publiez une demande d'emprunt pour recevoir les offres des joueurs (taux de loyer, multiple) et choisissez la meilleure. Une seule demande OUVERTE est permise à la fois, mais plusieurs prêts peuvent être actifs en parallèle.</div>
-    <div class="small" style="margin-bottom:10px;">Capacité d'emprunt restante : <b>${fmt(capLeft)}</b> (max. cumulé : ${fmt(state.settings.loanMaxPrincipal)}).</div>
+    <div class="small" style="margin-bottom:10px;">Capacité d'emprunt restante : <b>${fmtLoanCap(capLeft)}</b>${isFinite(capLeft) ? ` (max. cumulé : ${fmt(state.settings.loanMaxPrincipal)})` : ' (aucun maximum fixé pour cette partie)'}.</div>
     <label>Emprunteur</label>
     <div class="small" style="margin-bottom:8px;"><b>${esc(myCo.name)}</b></div>
-    <label>Capital demandé (en ${esc(state.unit)}, max ${fmt(capLeft)})</label>
-    <input type="number" step="0.01" min="0" max="${capLeft}" id="mLoanPrincipalModal" value="0">
+    <label>Capital demandé (en ${esc(state.unit)}${isFinite(capLeft) ? `, max ${fmt(capLeft)}` : ', sans maximum'})</label>
+    <input type="number" step="0.01" min="0" ${isFinite(capLeft) ? `max="${capLeft}"` : ''} id="mLoanPrincipalModal" value="0">
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>

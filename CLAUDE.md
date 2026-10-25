@@ -48,12 +48,14 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
   JSON voisin (Grep `"rank": 42,`). Au 2026-10-24 : 1–6 corrigés (section 307) ; 17, 32, 44, 57–60, 71–74
   corrigés (section 308, synchronisation) ; vague 2 : 8, 9, 13, 16, 33, 34, 35, 63
   (section 309, immobilier ; 64 voulu), 18–22, 30, 42, 70 (section 311, ABS et swaps), 10, 23, 24, 47, 50, 65
-  (section 312, financement), 14, 15, 39, 40, 48, 49, 52 (section 313, assurance) ; 310 réservé à la vague 3 (REIT,
-  lot commercial) ; les autres moyens et faibles restent à corriger par lots (sauf 12, 45, 51, 53, 61, 62, écartés
-  par Julien).
+  (section 312, financement), 14, 15, 39, 40, 48, 49, 52 (section 313, assurance) ; vague 3 (2026-10-25) : 28, 29,
+  46, 54 (section 310, REIT et lot commercial), 7, 11, 31, 36, 37, 38, 67, 75 (section 314, marché), 25–27, 41, 43,
+  66, 68, 69, 80, 81 (section 315, cubes, dividendes, états), 55, 56, 76, 92, 100 (section 316, fin de partie),
+  77–79, 82–91, 93–99, 101 (section 317, affichage et saisie). Tous les moyens et faibles du périmètre sont traités,
+  sauf 12, 45, 51, 53, 61, 62 (écartés par Julien) et 64 (voulu).
 - `docs/cahiers/` : neuf cahiers PDF de formation des joueurs et un aide-mémoire (index : `README.md`). Si une
-  livraison change une mécanique qu'ils décrivent, le signaler à Julien (mises à jour en attente : fin des
-  sections 307, 308, 309, 311, 312 et 313).
+  livraison change une mécanique qu'ils décrivent, le signaler à Julien (mises à jour en attente : rubriques
+  « Changements visibles pour les joueurs » des sections 307 à 317).
 
 ## Repères dans le code (par nom)
 
@@ -88,8 +90,8 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 
 ## Tests
 
-- `node tests/run-all.js` lance tous les `tests/*.test.js` (38 fichiers, 1 925 vérifications et 53 cas
-  multi-appareils au 2026-10-24, après la vague 2). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
+- `node tests/run-all.js` lance tous les `tests/*.test.js` (68 fichiers, 2 786 vérifications et 53 cas
+  multi-appareils au 2026-10-25, après la vague 3). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
   `tests/helpers/fake-firebase.js`, mini-DOM `tests/helpers/fake-dom.js` ; `SYNC_SEEDS=40` pour un passage long). Il charge
   tout le script d'`index.html`, donc une erreur de syntaxe le fait échouer. Tout doit passer avant un push.
 - Syntaxe seule : `node -e "new (require('vm').Script)(require('./tests/helpers/engine').engineSource())"`.

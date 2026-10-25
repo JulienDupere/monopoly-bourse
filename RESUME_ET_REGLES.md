@@ -1446,3 +1446,581 @@ Chaque changement du code porte le commentaire « Section 313 — décision de J
 - **Joueurs** (cahier 7, aide-mémoire) : une taxe assurée est couverte en entier (moins la franchise), même si elle a
   augmenté depuis la signature ; signer un contrat annuel ou semestriel sur une case déjà couverte par sa propre
   sous-standard l'annule et rembourse sa prime automatiquement.
+
+## 310. REIT et lot commercial : mises plafonnées sur leur total (lot commercial compris), valeur du lot non gonflée, réserve payée selon les parts détenues, revente de parts sur offre acceptée, mise du lot commercial bornée — 2026-10-25
+
+Contexte : lot 3 de la série de corrections de l'audit du 2026-10-19 (vague 3), sur `main` 866e5bd. Demandes de
+Julien, verbatim : « Moyens : tout corriger SAUF le 12 » ; « Faibles : tout corriger SAUF 45, 51 et 53 » ; « 54 : le
+visiteur ne paie que la part VENDUE du REIT (10 % de réserve, 50 % vendu = 5 % du loyer), et les détenteurs se
+partagent cette part » ; « ventes unilatérales (vendre des maisons, revente de parts REIT) : exiger l'accord de
+l'acheteur » (ici, la revente de parts REIT ; les maisons sont faites depuis la section 309) ; « lot commercial : le
+gagnant ne débourse rien sur le moment, seul le différentiel entre revenus comptés et mise est réglé (vérifier et
+corriger si besoin) ». Bogues traités : 28, 29, 46, 54. Chaque changement du code porte le commentaire « Section 310 ».
+
+1. **Mises plafonnées sur leur total** (bogue 28 ; `applyEtfBids`, `submitEtfBids`, `etfCommittedBidTotal`,
+   `etfBidPayable`, `terrainLotCommittedBid`, `terrainLotActiveExposure`, `resolveEtfAuction`) — la règle « une mise
+   ne dépasse pas l'encaisse » vaut désormais pour le TOTAL de ce que l'entreprise paierait si elle gagnait toutes
+   ses mises REIT (sur un REIT dont elle détient déjà une part, seule la part à racheter compte), **mise du lot
+   commercial comprise** (sa perte maximale). La fenêtre de fin de tour dépose toutes les mises REIT en une seule
+   action, acceptée ou refusée d'un bloc. Baisser, garder ou retirer une mise (0) n'est jamais refusé, même à encaisse
+   négative : seul un envoi qui augmente l'engagement au-delà de l'encaisse l'est. Seul le CEO de l'entreprise mise
+   pour elle (REIT et lot commercial).
+   **Ordre de résolution**, au lancer qui suit la fenêtre de mise : le lot commercial d'abord, puis les REIT dans
+   l'ordre Première, Deuxième, Troisième, Quatrième rue. Chaque mise est revérifiée sur l'encaisse du moment, diminuée
+   de la perte maximale du lot commercial que l'entreprise vient de gagner ; une mise non couverte est écartée
+   (journal) et la meilleure mise restante l'emporte. Conséquence : une entreprise qui a dépensé entre son dépôt et
+   l'enchère perd d'abord ses mises sur les REIT résolus en dernier, et un rachat encaissé sur un REIT résolu avant
+   peut couvrir une mise suivante. Pas de validation globale par entreprise : elle dépendrait elle-même des gagnants
+   des autres REIT ; l'ordre fixe est simple et prévisible.
+   Scénario : Co Alice a 20 M$ et mise 20 M$ sur chacun des 4 REIT. Avant : 4 mises acceptées, 4 REIT gagnés,
+   encaisse finale −60 M$. Après : la 1re mise est acceptée, les trois suivantes refusées (« le total de ses mises
+   REIT … atteindrait 40,00 pour une encaisse de 20,00 ») ; Co Alice gagne la Première rue et finit à 0. Revérification :
+   mises 12 (Première rue) et 8 (Deuxième rue) pour 20 M$, puis 5 M$ dépensés ; à la résolution, Première rue payée
+   (15 → 3 M$), la mise de 8 sur la Deuxième rue est écartée et Co Bob la gagne à 5 M$ (avant : Co Alice finissait à −5).
+   Lot + REIT : Co Alice (20 M$) mise 20 sur le lot puis 20 sur la Première rue. Avant : les deux passaient et elle
+   finissait l'année à −20 (pari raté) ; après, la mise REIT est refusée (total 40), elle finit à 0. Résolution : mises
+   de 10 (lot) et 10 (REIT), puis 5 M$ dépensés ; le lot est gagné (10 engagés), la mise REIT dépasse les 5 restants et
+   Co Bob gagne la Première rue.
+2. **Valeur du REIT non gonflée par une mise non payée** (bogue 29 ; nouveau champ `etf.valuationPrice`, défaut
+   `lastAuctionPrice` dans `migrateState`, 0 à la création ; `etfLotValuationPrice`, `companyEtfValue`, tableau des
+   actifs) — le gagnant ne paie toujours pas la part qu'il détenait déjà (voulu) ; cette part garde sa valeur
+   précédente. Sans part détenue au départ, le lot prend le prix payé. Quand le gagnant détenait déjà une part, la part
+   rachetée à d'AUTRES entreprises est valorisée au plus petit de la mise et de l'ancienne valeur (retouche de la
+   revue, contre l'aller-retour avec un complice) ; la part achetée à la banque reste au prix de la mise :
+   valeur = ancienne × part détenue + min(mise, ancienne) × part rachetée aux entreprises + mise × part de la banque.
+   La mise reste le « dernier prix d'enchère » affiché et l'historique ; la carte du REIT indique la valeur retenue au
+   bilan quand elle diffère.
+   Scénario : Co Alice détient 100 % de la Première rue (dernier prix 2) et mise 20. Avant : rien payé, REIT évalué
+   20, valeur de l'entreprise 22 → 40. Après : 22 → 22. Complice : Co Alice revend 99 % à Co Bob pour 19,8 puis remise
+   20 et lui reverse 19,8 à l'enchère (encaisses revenues à 20 / 20). Avant : lot valorisé 19,82, Co Alice 22 → 39,82 ;
+   après : lot à 2, Co Alice 22 → 22. Détentrice à 60 % (Co Bob 40 %) : elle paie 8 M$ à Co Bob, lot valorisé 2 ; sa
+   valeur baisse de 7,2 (−8 d'encaisse, +0,8 de REIT) ; avant, +10,8 pour 8 payés.
+3. **Réserve REIT payée selon les parts détenues** (bogue 54, décision de Julien ; `etfReservedCollectedPct`) —
+   part collectée = réserve × parts du REIT détenues par les entreprises / 100 (avant : min(réserve, parts
+   détenues), qui mélangeait % du terrain et % du REIT). La part payée va au fonds et est partagée entre les
+   détenteurs au dividende de fin d'année (`processEtfLap`, au prorata de leurs parts).
+   **En jeu normal**, une enchère attribue 100 % des parts au gagnant et les reventes ne changent pas le total : la
+   détention totale vaut 0 % ou 100 %. Concrètement, le visiteur ne paie rien pour la réserve avant la première
+   enchère d'un REIT, puis il paie la réserve entière. Le cas « 50 % détenus = 5 % du loyer » ne se présente que dans
+   d'anciennes parties à détention partielle ; la formule le traite comme Julien l'a décidé. Le message d'ouverture
+   des REIT décrit ce déroulement (il ne dit plus que « la banque commence à collecter »).
+   Toutes les voies du loyer passent par cette fonction et ont été vérifiées : terrain seul, lot regroupé, terrain sous
+   ABS, accord de compensation (seule la réserve est payée en argent, la part du propriétaire va au registre), pion
+   neutre (payé par la banque), estimation `payableRent` ; monnaie conservée (banque + entreprises + joueurs + fonds REIT).
+   Scénario : Vert 1 avec 3 maisons (loyer 9), Co Bob 90 %, réserve 10 %. Co Alice y tombe. Avant la 1re enchère :
+   8,1 (inchangé). Après une enchère : 9 dont 0,9 au fonds (inchangé). Détention partielle de 50 % (ancienne partie) :
+   avant 9 dont 0,9 ; après 8,55 dont 0,45, partagés par Co Carl (30 %) et Co Dan (20 %) : 0,27 et 0,18.
+4. **Revente de parts REIT : offre acceptée par l'acheteur** (décision de Julien ; bogue 46 ; `sellEtfUnits`,
+   `executeEtfSale`, offres `state.assetSaleOffers` de type `etf`) — sur le modèle des offres de vente de la
+   section 309 (`proposeAssetSale`, `acceptAssetSaleOffer`, refus, retrait, expiration au lancer suivant,
+   `offerResponderRefusal`) : « Proposer la vente » (carte du REIT) ouvre la confirmation de la section 308, qui
+   dépose désormais l'offre ; rien ne bouge (ni parts ni argent) avant l'acceptation par le CEO acheteur dans son
+   onglet Mon Entreprise, qui revérifie sur l'état frais son encaisse, la détention du vendeur et la partie en cours
+   (fenêtre `confirmWithFreshConditions`). Seul le CEO vendeur dépose l'offre ; une offre identique déjà en attente
+   (double clic) est refusée, et des parts déjà promises dans d'autres offres en attente ne peuvent pas l'être une
+   2e fois. Bogue 46 : prix strictement positif exigé (au dépôt et au cœur de la vente) ; le champ « Prix convenu »
+   est vide par défaut (minimum 0,01).
+   Scénario : Co Alice (100 % de la Première rue) vend 10 % à Co Bob en tapant −5. Avant : Co Alice cédait 10 % ET
+   payait 5 M$ (encaisse 20 → 15). Après : refus « Le prix demandé doit être un nombre strictement positif », rien ne
+   bouge. Co Alice propose 30 % à Co Carl pour 5 M$ : avant, Co Carl était débité tout de suite sans avoir accepté ;
+   après, une offre est déposée (100 % / 0 %, encaisses 20 / 20), Co Carl accepte : 70 % / 30 %, 25 / 15 M$. Avec 4 M$
+   seulement, l'acceptation est refusée et l'offre reste.
+5. **Lot commercial** (décision de Julien, question de conception de l'audit ; `submitTerrainLotBid`,
+   `resolveTerrainLotAuction`, `settleTerrainLotYearEnd`) — vérifié : le gagnant ne débourse rien à l'enchère, une
+   entreprise qui tombe sur une case du lot ne paie rien (le loyer commercial est compté), et en fin d'année seul
+   l'écart loyers comptés − mise passe entre le gagnant et les autres entreprises actives, à parts égales ; aucune
+   correction nécessaire sur ce point. Limite ajoutée : la mise est la perte maximale du gagnant (si personne ne tombe
+   sur le lot) ; ajoutée aux mises REIT de l'entreprise, elle ne peut plus dépasser son encaisse (point 1), au dépôt,
+   et la mise est revérifiée à la résolution (écartée sinon, journal) ; une mise de 0 reste permise. Le règlement du
+   pari (`settleTerrainLotYearEnd`) est réutilisable tel quel pour la fin de partie (section 316) : appelé en cours
+   d'année, il règle les loyers comptés jusque-là, une seule fois.
+   Scénario : Co Alice gagne avec une mise de 2 (loyer 0,5, 2 cases) ; 1,5 comptés dans l'année : elle verse 0,5, soit
+   0,1667 à chacune des 3 autres ; 3,5 comptés : chacune lui verse 0,5. Mise de 8 avec 5 M$ d'encaisse : avant,
+   acceptée, gagnée, et Co Alice finissait l'année à −3 M$ ; après, refusée.
+
+**Tests** : `tests/section310-reit-mises.test.js` (39 vérifications), `section310-reit-reserve` (19),
+`section310-reit-vente` (36), `section310-lot-commercial` (27) ; `section308-clics` (D) et `section308-formulaires`
+(D) adaptés : la vente REIT passe par l'acceptation de Co Carl, le prix est vide par défaut. Chaque correctif a sa
+contre-épreuve. **42 fichiers, 2 047 vérifications, 0 échec ; 320 cas multi-appareils avec `SYNC_SEEDS=40`.**
+
+**Décisions à valider par Julien** : valorisation prudente de la part rachetée par un détenteur (point 2) ; mise du
+lot commercial comptée avec les mises REIT (points 1 et 5) ; formule de la réserve au prorata, qui en jeu normal revient
+à « rien avant la 1re enchère, puis la réserve entière » (point 3).
+
+**Changements visibles pour les joueurs (cahiers 5 et 7, aide-mémoire)** :
+- Enchères de l'année : le total des mises d'une entreprise (REIT et lot commercial) ne dépasse pas son encaisse ; à
+  la résolution (lot commercial, puis Première → Quatrième rue), une mise que l'encaisse restante ne couvre plus est
+  écartée ; la fenêtre de fin de tour envoie toutes les mises REIT d'un coup ; seul le CEO mise pour son entreprise.
+- REIT : remiser sur son propre REIT ne fait plus monter sa valeur au bilan, même après une revente à une entreprise
+  amie ; la carte affiche « Valeur du lot retenue au bilan » quand elle diffère de la dernière enchère.
+- REIT : avant la première enchère d'un REIT, le visiteur ne paie pas la part de la réserve de la banque ; dès qu'une
+  enchère a attribué le lot, il la paie en entier, versée au fonds et partagée entre les détenteurs en fin d'année.
+  L'aide-mémoire (« Les loyers vont au fonds ») est à préciser.
+- REIT : « Vendre » devient « Proposer la vente » : l'acheteur accepte ou refuse dans son onglet Mon Entreprise, l'offre
+  expire au lancer suivant ; prix strictement positif, champ vide par défaut.
+- Lot commercial : la mise, ajoutée aux mises REIT, ne peut pas dépasser l'encaisse (c'est la perte maximale) ; texte
+  de la fenêtre précisé (rien n'est payé à l'enchère ni aux passages, seul l'écart est réglé en fin d'année).
+
+**Intégration** (vague 3, branche `serie-310`, fusion dans l'ordre lots 7, 3, 8, 9, 10a, 10b) : quatre conflits avec la section 317 (bogue 95, numérotation des années) dans le code de cette section, résolus en gardant les deux intentions : `submitEtfBid` délègue à `applyEtfBids` (point 1), dont la ligne « soumet une mise pour le … de l'année » passe à `displayGameYear()` (report fait à la main : la ligne avait été déplacée, git ne signalait rien) ; journal enrichi de `resolveEtfAuction` (point 2) avec `displayGameYear(year)` ; titres « Lot commercial » et « REIT » de la fenêtre de fin de tour : textes de cette section avec `displayGameYear()`. Le règlement du pari du lot commercial (point 5) sert tel quel à la fin de partie en cours d'année de la section 316, au prix ramené au prorata (sonde de la revue : lot gagné au lancer 7, fin au lancer 8, prix 1,50 au lieu de 9, Co Alice 50 → 48,50, les deux autres 50 → 50,75, monnaie conservée). `createGame` : `valuationPrice` à la création (point 2), validation des réglages de la section 317 et remise à zéro du mode consultation de la section 316 cohabitent. Sonde de la revue sur la branche intégrée (mises, ordre de résolution, complice, CEO seul, retrait à encaisse négative, migration) : résultats conformes aux points 1, 2 et 5 (Co Alice à 3,00 après la Première rue et Co Bob gagnant la Deuxième rue, lot valorisé 2,00 après la remise sur son propre REIT, mise REIT refusée après la mise du lot, monnaie conservée). Test : `tests/section310-integration.test.js` I2 (au lancer 7, la mise et le résultat de l'enchère disent « de l'année 2 », comme la barre du haut ; contre-épreuves avec l'indice interne : « année 1 »). **Suite intégrée : 68 fichiers, 2 786 vérifications et 53 cas multi-appareils, 0 échec ; 320 cas multi-appareils avec `SYNC_SEEDS=40`.**
+
+## 314. Marché : intérêt des bons payé une seule fois, bid payé avec les bons, montants non finis refusés, marge du CEO juste, encaisse personnelle bloquante au semestre, options simples distinctes des stratégies, plafond des options écrites, cubes de trading plafonnés au cumul — 2026-10-25
+
+Contexte : lot 7 de la série de corrections de l'audit du 2026-10-19 (bogues 7, 11, 31, 36, 37, 38, 67 et 75, plus
+une décision sur les options écrites). Demandes de l'utilisateur, verbatim : « Moyens : tout corriger SAUF le 12 » ;
+« Faibles : tout corriger SAUF 45, 51 et 53 » ; « options écrites : plafond de 15 % des parts de l'entreprise par
+joueur (comme les calls achetés) ». Chaque changement du code porte le commentaire « Section 314 ». Le cadre de
+synchronisation de la section 308 est respecté : les gardes ajoutées sont dans les fonctions du moteur appelées par
+les applyFn (`runModalActionWithRetry` / `attemptActionWithRetry`), donc revérifiées sur l'état frais ; un refus
+restaure l'état et n'enregistre rien.
+
+1. **Bons gouvernementaux : chaque intérêt payé une seule fois (bogue 7)** — `accrueBondInterest` ne débite plus la
+   banque à chaque lancer. La banque garde le dépôt (`buyBonds` l'encaisse) ; l'intérêt s'ajoute au solde de bons
+   sans mouvement d'encaisse et n'est payé qu'une fois, avec le capital, au retrait (`withdrawBonds`, vente forcée de
+   `raiseCashForForcedSettlement`, bid payé par les bons). Pour un emprunt en bons, la dette grossit de l'intérêt et
+   la banque le reçoit une fois, au remboursement (`buyBonds`). `cashTotal()` est conservé à chaque étape
+   (placement, chaque lancer, retrait, emprunt, remboursement, vente forcée).
+   *Avant* : Alice place 4 M$ à 3 %, retire 4,1215 M$ après 6 lancers : Alice +0,1215, banque −0,2430, **masse
+   −0,1215** ; Bob emprunte 4 M$ un an puis rembourse : **masse +0,1215**. *Après* : Alice +0,1215, banque −0,1215,
+   masse inchangée ; Bob −0,1215, banque +0,1215, masse inchangée. Le banc multi-appareils
+   (`tests/section308-sync.test.js`) ne compense plus la masse par les intérêts cumulés : elle est la simple somme
+   des encaisses (contre-épreuve : avec l'ancien débit, 11 cas sur 53 échouent sur MONNAIE).
+2. **Montants non finis refusés (bogue 11)** — `openShortPosition` et `closeShortPosition` refusent un montant non
+   fini (« Montant invalide : saisissez un nombre fini. ») et un nombre de parts non fini ; `placeBid` et `placeAsk`
+   refusent un prix limite ou une quantité non finis. Plus aucun Infinity/NaN dans l'état (un Infinity devient
+   `null` à la sauvegarde : la dette du découvert disparaissait au rechargement). Les montants finis mais énormes
+   restent bornés par la marge initiale (section 307 : au plus valeur nette admissible ÷ 30 %) ; au-delà de
+   1 000 000 M$ par opération, « Montant démesuré » avec un libellé lisible (`SHORT_AMOUNT_ABSURD_MAX`, retouche de
+   la revue : le message de marge affichait « 1e+300 M$ »). Le scénario exact de l'audit (1e305 M$ à 100 $) est
+   désormais refusé par cette limite ; un nombre de parts infini pour un montant fini (cours infime) l'est par la
+   garde sur le nombre de parts.
+   *Avant* (après la section 307) : « 1e309 » dans « Vendre à découvert » n'était arrêté que par accident, avec le
+   message « Marge initiale insuffisante pour ce découvert de Infinity M$… » ; un bid d'une quantité infinie était
+   accepté et enregistré (ordre fantôme `qty: null`). *Après* : refus clair, aucun ordre, aucun nombre non fini.
+3. **Marge d'un CEO : garantie d'un prêt garanti comptée une fois (bogue 31)** — `marginableNetWorth` exclut les
+   parts de CEO en entier ; `netWorth` en retire déjà la garantie (plafonnée à leur valeur) : la garantie, qui
+   repose sur ces mêmes parts, est désormais rendue (`securedLoanGuaranteeInfo().ceoDeductionByCompanyId`). La valeur
+   nette du classement ne change pas. La ligne « Marge disponible » du portefeuille suit.
+   *Scénario* : Alice, CEO d'Alpha (parts de CEO 6 M$), 10 M$ d'encaisse, vend Beta à découvert pour 20 M$ :
+   admissible 10, exigée 6, disponible 4. Prêt garanti de 5 M$ à 2× (10 M$ dus) accordé à Alpha : garantie 6 M$.
+   *Avant* : admissible 4, « Marge disponible −2.00 M$ », le découvert est racheté de force au lancer suivant.
+   *Après* : admissible 10, « Marge disponible 4.00 M$ », aucun appel de marge (classement : 16 → 10, comme avant).
+4. **Bid payé avec l'encaisse puis les bons, même encaisse négative (bogue 36)** — `fillPendingBid` compte
+   l'encaisse pour sa valeur réelle : liquidité = encaisse + bons ; les bons comblent d'abord l'encaisse négative,
+   puis paient le prix ; rien n'est acheté si la liquidité est ≤ 0 ; remplissage partiel sinon.
+   *Avant* : Bob, encaisse −0,5 M$, bons 10 M$, bid de 5 M$ : aucune part achetée, à chaque lancer. *Après* : bid
+   exécuté en entier, 5,5 M$ de bons vendus, encaisse 0, bons 4,5 ; encaisse −3 et bons 5 : achat partiel de 2 M$ ;
+   encaisse −3 et bons 2 : rien.
+5. **Encaisse personnelle négative : « Tour Terminé » bloqué au semestre (bogue 37)** — règle de l'utilisateur
+   (archive, sections 227-300) : « l'encaisse négatives des joueurs et des entreprises ne permet pas de passer au
+   tour suivant seulement aux semestres ». `markCompanyReady` (action de tour de la section 308 : numéro de lancer
+   attendu, refus sans sauvegarde) refuse aussi quand l'encaisse PERSONNELLE du CEO est négative et que le marché
+   est ouvert : « Vous devez avoir une encaisse personnelle ≥ 0$ pour continuer — votre encaisse personnelle est
+   actuellement de … Pour remonter à 0 : retirez des bons gouvernementaux, empruntez en bons (vente à découvert de
+   bons, dans la limite de la dette maximale), vendez des actions ou fermez des positions qui vous rapportent de
+   l'encaisse, puis réessayez. » Le bouton est masqué
+   (`readyActionHtml`) et un bandeau rouge de l'onglet Mon Entreprise en donne la raison. Hors semestre, rien ne
+   change. *Avant* : Alice à −456 M$ personnels (Alpha à +20 M$) passait au semestre suivant. *Après* : refusé ; à
+   0 M$, accepté ; au lancer 1 (tour normal), accepté même à −456 M$.
+   **Retouche de la revue (résidu d'arrondi)** : après un paiement financé par les bons (bid du point 4, rachat forcé
+   de découvert ou d'option écrite, exercice forcé), encaisse + (montant − encaisse) − montant laissait souvent
+   −1e-17 (133 bids sur 1 000) : « Tour Terminé » était refusé avec « −0 K$ » et toute la table attendait.
+   `absorbCashRoundingResidueWithBonds` prélève ce résidu sur les bons (monnaie conservée) : l'encaisse finit à 0.
+   Les gardes de « Tour Terminé » (encaisse du CEO, encaisse de l'entreprise, bouton et bandeaux) tolèrent 1e-9,
+   comme ailleurs dans le moteur. *Avant* : encaisse −0,3, bons 100, bid 0,37 → encaisse −5,6e-17, tour refusé.
+   *Après* : encaisse 0, bons 99,33, tour accepté ; 0 encaisse négative sur 1 000 bids et 200 rachats forcés.
+6. **Option simple distincte d'une jambe de stratégie (bogue 38)** — `openOptionPosition` ne fusionne plus une
+   option simple avec une jambe de stratégie identique (même type, côté, strike, échéance), ni dans la simulation
+   de marge initiale ni dans la position réelle. *Avant* : bull spread 90/110 $ de 2 contrats, puis call simple à
+   90 $ : la jambe passe à 3 contrats réglés en argent, aucune position simple. *Après* : jambe à 2 contrats, call
+   simple distinct de 1 contrat, livrable en parts, fermable seul ; idem pour un call écrit identique à la jambe
+   écrite.
+7. **Plafond des options écrites (décision de l'utilisateur)** — même calcul que le plafond des calls achetés :
+   au plus floor(15 % × parts émises ÷ 100) contrats écrits par joueur et par entreprise (300 pour 200 000 parts).
+   Le plafond compte toutes les options écrites du joueur sur l'entreprise : calls et puts, positions simples et
+   jambes écrites des stratégies (un straddle vendu de N contrats écrit 2 × N), couvertes comprises. Vérifié dans
+   `openOptionPosition` et `openOptionStrategy` (donc dans l'applyFn, sur l'état frais) ; message : « Plafond
+   d'options écrites atteint sur … — maximum 300 contrat(s) écrit(s) par joueur… Vous en avez déjà 200 ; cette
+   opération en ajouterait 101. Contrats écrits encore possibles : 100. » Racheter des options écrites libère le
+   plafond. Les positions déjà ouvertes au-delà restent valides. Catalogue des produits : plafond indiqué dans les
+   fiches Écriture nue, Covered call, Cash-secured put, Bull spread, Bear spread et ATM straddle (retouche de la
+   revue). Plafond commun couvert + nu maintenu (à valider : un gros porteur ne peut plus écrire plus de 300 covered
+   calls sur une entreprise de 200 000 parts). *Avant* : aucun plafond (seule la marge initiale bornait : des dizaines de milliers de contrats pour
+   50 M$). *Après* : 200 puts + 101 calls refusés, + 60 acceptés, straddle vendu de 21 refusé (302/300), de 20
+   accepté (300/300).
+8. **Cubes de trading : plafond d'impact au cumul (bogue 67)** — `tradeCubeRange` plafonne à 12 unités d'impact
+   (0,5 % des parts chacune) le CUMUL et non plus chaque ordre. Fenêtre de cumul : par joueur, par entreprise, par
+   couleur, par accumulateur (trading joueur / émission-rachat de l'entreprise) et par fenêtre de marché (le lancer
+   en cours, `state.gameClock.rollCount` : le marché n'ouvre qu'un lancer par semestre, tous les ordres d'une même
+   fenêtre portent ce numéro ; les fermetures forcées et exercices des autres lancers ont leur propre fenêtre).
+   Justification : fractionner son propre ordre dans la même fenêtre ne change plus rien (Cahier 4) ; l'ordre d'un
+   joueur ne consomme jamais l'impact de celui d'un autre ; le budget se renouvelle au semestre suivant.
+   Nouveau champ `company.tradeImpactBudget = {window, used}` (défaut `{window:null, used:{}}` dans
+   `migrateState`). L'accumulateur fractionnaire (`tradeImpactAccum`) est inchangé : les micro-ordres continuent de
+   compter. *Avant* : 3 M$ en un ordre = 12 unités (12 à 24 cubes verts), en 3 ordres de 1 M$ = 30 unités (30 à 60
+   cubes). *Après* : 12 unités dans les deux cas (10 + 2 + 0). Un autre joueur dans la même fenêtre : son propre
+   budget ; fenêtre suivante : budget renouvelé.
+9. **« Fermer la stratégie » marché fermé ou partie terminée (bogue 75)** — déjà corrigé par les retouches de la
+   section 307 (`closeOptionStrategy` refuse avant tout : marché fermé, partie terminée ; clôture tout ou rien).
+   Test de verrou ajouté : refus clair, aucune ligne au journal, les deux jambes restent ouvertes ; contre-épreuve
+   avec la version d'avant la section 307 (« Carl clôture sa stratégie (0.0000 contrat) »).
+
+**Tests** : `tests/section314-bons.test.js` (7, 36 : 30 vérifications), `tests/section314-marge.test.js` (11, 31,
+37 et retouches de la revue — résidu d'arrondi, tolérance, montant démesuré, garde sur le nombre de parts : 65), `tests/section314-options.test.js` (38, plafond, 75 : 35), `tests/section314-cubes.test.js` (67 : 20).
+Chaque correctif a sa contre-épreuve (`loadEngine({transform})`). Adaptés : `tests/section308-sync.test.js` (masse
+sans compensation des intérêts), `tests/audit-bug3b.test.js` (positions héritées et essais de marge initiale
+ouverts plafond neutralisé), `tests/audit-bug4.test.js` (1 000 puts écrits : position héritée hors plafond).
+**42 fichiers, 2 075 vérifications et 53 cas multi-appareils, 0 échec ; 320 cas avec `SYNC_SEEDS=40`.**
+
+**Changements visibles pour les joueurs (cahiers)** :
+- Cahier 1 / aide-mémoire (découvert, encaisse) : « Tour Terminé » est bloqué au semestre si l'encaisse personnelle
+  du CEO est négative (bandeau rouge dans Mon Entreprise ; le message indique comment remonter à 0, dont l'emprunt
+  en bons) ; un montant invalide (non fini) ou démesuré (plus de 1 000 000 M$) est refusé.
+- Cahier 1 (marge) : la marge disponible d'un CEO dont l'entreprise a un prêt garanti n'est plus amputée deux fois.
+- Cahier 3 (options) : plafond de 15 % des parts de l'entreprise par joueur pour les options écrites (calls et puts,
+  jambes de stratégie comprises) ; une option simple identique à une jambe de stratégie reste une position à part,
+  livrable en parts.
+- Cahier 4 (cubes) : fractionner un ordre dans la même fenêtre de marché ne donne plus de cubes en plus — le
+  plafond de 12 unités s'applique au total de vos ordres de la fenêtre, par entreprise et par sens.
+- Bons gouvernementaux / ordres : un bid se déclenche même avec une encaisse légèrement négative si les bons
+  suffisent (les bons comblent d'abord le négatif) ; la caisse de la banque ne baisse plus à chaque lancer pour les
+  intérêts des bons (elle les paie au retrait).
+
+**Intégration** (vague 3) : le modèle des bons (point 1) cohabite avec la statistique d'intérêts plafonnée de la section 317 (bogue 86 : `capBondInterestStat` dans `withdrawBonds`, `shortBonds`, `fillPendingBid` et `raiseCashForForcedSettlement` ; aucune monnaie ne bouge). **Raccord fait à l'intégration** : quand l'achat d'un bid payé par les bons (point 4) est refusé, `fillPendingBid` rendait les bons mais laissait la statistique plafonnée au solde momentané ; elle est désormais restaurée avec eux (commentaire « Section 310-317 — intégration »). *Avant* : bons 1, intérêts reçus 0,6, bid de 0,8 refusé → bons 1 mais intérêts affichés 0,2. *Après* : 0,6. `fillPendingBid` note aussi les bons vendus pour « Résultats du tour » (bogue 87) et `closeShortPosition` journalise le montant réellement payé (bogue 91), sans conflit. Le banc multi-appareils sans compensation des intérêts reste vert avec tous les lots (320 cas à 40 graines). Sondes de la revue sur la branche intégrée : masse inchangée après chacun des 12 lancers (ancien débit : −2,26 M$ cumulés), 0 bid sur 1 000 laissant une encaisse négative, montants non finis ou démesurés refusés. Test : `section310-integration` I3 (contre-épreuve : statistique non restaurée).
+
+## 315. Moteur de cubes, dividendes, types d'entreprise et états financiers : le sac type Dividendes ne réagit qu'au dividende récurrent, ratio de distribution sans la part de la banque, plus de partie figée quand toutes les entreprises sont enquêtées — 2026-10-25
+
+Contexte : lot 8 de la série de corrections de l'audit du 2026-10-19 (bogues 25, 26, 27, 41, 43, 66, 68, 69, 80, 81,
+et trois questions de conception tranchées). Demandes de l'utilisateur, verbatim : « Moyens : tout corriger SAUF le
+12 » ; « Faibles : tout corriger SAUF 45, 51 et 53 » ; « 25 : le sac type d'une entreprise Dividendes ne réagit qu'au
+dividende récurrent (s'il n'est pas versé, 20 rouges, même avec un dividende manuel) ; la règle du ratio de
+distribution supérieur à 1 compte TOUS les dividendes réellement versés, HORS part de la banque » ; « 41 : corriger
+(impact réel même à 6 joueurs, nombre pair) » ; « ratio de distribution sans la part de la banque » ; « dette
+productive : ne compter que les investissements faits APRÈS l'emprunt » ; « annonce de vente du CEO au-delà du
+plafond de 15 % : ramenée au plafond au lieu d'être annulée ». Hors de ce lot : l'affichage des dividendes et des
+ratios (82, 83, 84, 89, 90, 93) et le dividende dû au lancer final (fin de partie). Chaque changement du code porte
+le commentaire « Section 315 ». Le cadre de synchronisation de la section 308 est respecté : aucune nouvelle action
+hors `attemptActionWithRetry` ; le passage automatique du tour (point 9) réutilise le lancer pour tous et son
+numéro de lancer attendu. Aucun nouveau champ d'état (pas de migration).
+
+1. **Le sac type d'une Dividendes ne réagit qu'au dividende récurrent (bogue 25, décision de l'utilisateur)** — dans
+   le bloc de clôture de semestre d'`advanceGameClock`, l'auto-versement note les entreprises qui ont réellement
+   versé leur dividende récurrent ; une Dividendes (référence > 0) qui ne l'a pas versé (case décochée, ou versement
+   bloqué par un arriérage, point 3) voit son sac type passer à 20 rouges, même si elle a annoncé un dividende
+   manuel. Le dividende récurrent n'est marqué « suspendu » (réactivation au niveau de fondation) que si la case est
+   décochée ; un versement bloqué par un arriérage reprend tout seul au même niveau, et tout versement récurrent
+   remet le drapeau « suspendu » à zéro. Les séries de dividendes (sac fondamental) sont inchangées. *Avant* : référence 0,3 M$, case décochée, dividende manuel de 1 $ : sac type de 20 verts conservé.
+   *Après* : 0 vert, 20 rouges. *Contrôle* : dividende récurrent versé (0,3 M$, bénéfice 1 M$) → sac intact.
+2. **Ratio de distribution > 1 : tous les dividendes réellement versés, hors part de la banque (décisions de
+   l'utilisateur, section 306)** — nouvelle `dividendNetPaidInSemester` = dividendes débités du semestre moins la
+   part revenue en trésorerie (part de la banque, parts vendues depuis l'annonce) ; ce que la banque paie au titre
+   d'une position négative (section 307) n'en fait pas partie. Elle remplace le montant brut dans la règle des
+   5 cubes rougis. La part non versée d'un dividende annoncé est désormais inscrite au semestre de clôture (point 4),
+   pour être déduite du bon semestre. *Avant* : référence 0,3 M$ dont 0,21 à la banque (70 % des parts), bénéfice
+   0,2 → ratio 150 %, 5 cubes rougis (6V/1R/3B → 4V/6R/0B). *Après* : 0,09 réellement versé, ratio 45 %, sac
+   inchangé. Récurrent 0,09 + manuel 0,15 (0,5 annoncé, 30 % aux actionnaires) pour un bénéfice de 0,2 : ratio
+   120 %, 5 cubes rougis.
+3. **Arriérage de dividende privilégié : l'auto-versement est bloqué (bogue 27)** — comme l'annonce manuelle : rien
+   n'est versé, ligne au journal « dividende récurrent automatique NON versé ce semestre — arriérage… », et le sac
+   type passe à 20 rouges (point 1), sans que le dividende récurrent soit marqué « suspendu » (case restée cochée).
+   La fenêtre « Dividende récurrent » affiche l'arriérage en rouge. L'arriérage est jugé tel qu'il était AVANT les
+   règlements de fin d'année du même lancer (**option retenue, à valider par Julien**) : un arriérage né à cette fin
+   d'année (dividende privilégié de l'année précédente resté impayé, `processYearEnd`) ne bloque pas le dividende
+   récurrent du semestre qui se ferme au même instant — le CEO ne pouvait pas le voir venir — mais bloque les
+   suivants. *Avant* : arriérage de 0,32, auto-versement de 0,3 dont 0,075 à Bob, arriérage toujours de 0,32.
+   *Après* : Bob ne reçoit rien ; l'arriérage réglé, il reçoit de nouveau 0,075 au semestre suivant, référence
+   intacte. Arriérage de 0,1 né à la fin d'année : Bob reçoit ses 0,075 à cette clôture, rien au semestre suivant.
+4. **Dividendes du semestre clos dans le bilan de clôture (bogue 81)** — la photo du bilan de clôture
+   (`snapshotBalanceSheets`) est prise APRÈS les versements de dividendes du semestre (annoncés et récurrent), qui y
+   sont inscrits. *Avant* : auto-versement de 0,3 inscrit au semestre clos mais prélevé après la photo (encaisse de
+   clôture trop haute de 0,09), et part non versée d'un dividende annoncé inscrite au semestre suivant.
+   *Après* : encaisse de clôture = encaisse après versements ; variation d'encaisse du bilan = flux de trésorerie
+   du semestre (−0,39 = −0,39 dans le test).
+5. **Fin d'année au semestre clos (bogue 80)** — les écritures des règlements de fin d'année (`processYearEnd` :
+   intérêts hypothécaires annuels, dividendes REIT, règlement des accords de compensation) vont au dernier lancer de
+   l'année close (repli posé par `advanceGameClock` autour de `processYearEnd`, lu par `logFin`), comme le lot
+   commercial. *Avant* : Vert 1 hypothéqué (1,5 à 35 %) : le bilan du semestre 1 baissait de 0,525 mais son état des
+   résultats ne montrait aucun intérêt (porté au semestre 2). *Après* : intérêt de 0,525 et compensation de 1,1 au
+   semestre 1 ; variation d'encaisse = flux (−1,625). Les contrôles de cubes de la clôture d'année (couverture des
+   intérêts, attente des analystes…) voient ces montants ; la fenêtre « Résultats du tour » du lancer de fin d'année
+   les montre (avant : celle du lancer suivant).
+6. **Sortie publique du CEO (bogue 26)** — `pressPublicCeoStatement` divise les rouges de chaque réserve par deux
+   sans descendre sous ses verts (« se calme sans s'inverser »), mais n'en ajoute jamais. *Avant* : réserve
+   fondamentale 25V/10R → 25V/25R, réserve de trading 0V/40R → 20R : 50 rouges → 45. *Après* : 10R et 20R, 50 → 30.
+7. **GARP à équité nulle ou négative (bogue 66)** — sac type à 20 rouges (le cours est forcément au-dessus de la
+   valeur comptable). *Avant* : mise à jour sautée, une GARP à −6,5 M$ d'équité gardait 20 verts. *Après* : 0V/20R.
+8. **Profil Croissance : percentile de marge (bogue 41)** — `croissanceMarginPercentile` = part des AUTRES
+   entreprises que celle-ci dépasse (une égalité compte pour moitié). *Avant* : 2 entreprises, Croissance à −50 %
+   contre GARP à +30 % : percentile 50 → « bonne » (20 verts si elle bat l'attente) ; 4 entreprises (+40, +30, −10,
+   −30 %) : la 3e « bonne » ; 6 entreprises : 4 « bonnes ». *Après* : 0 → « mauvaise » (sac 5V/10R/5B) ; la 3e de 4
+   à 33 → « mauvaise » ; 6 entreprises : 3 bonnes, 3 mauvaises. **Effet en profil Très élevé** : à 4 entreprises,
+   la 2e passe de 75 (« bonne ») à 66,7 (« neutre », seuil 67) ; la médiane de 3 entreprises reste « neutre »
+   (66,67 avant, 50 après). **Option pour Julien (non implémentée)** : un seuil exact de 2/3 (`beaten*3 >= 2*others`)
+   rendrait « bonne » en Très élevé l'entreprise qui dépasse exactement les 2/3 des autres (la 2e de 4, la 3e de 7…).
+9. **Toutes les entreprises sous enquête AMF : le tour passe tout seul (bogue 43)** — `checkAllCompaniesReady` :
+   si aucune entreprise ne peut lancer (toutes enquêtées), personne n'a de « Tour Terminé » à cliquer, donc le
+   lancer pour tous part tout seul (`requireAllReady` l'accepte dans ce seul cas), un lancer à la fois avec le
+   numéro de lancer attendu, et recommence tant que toutes restent enquêtées ; dès qu'une entreprise est libre, la
+   règle normale reprend. Déclenché par l'appareil qui a causé la situation (dernière entreprise envoyée en enquête
+   par un lancer, par l'administrateur, ou « Forcer le tour »). Bouton de secours « ⏭️ Faire passer le tour » sur
+   l'entreprise enquêtée quand toutes le sont (partie déjà figée avant la mise à jour, enchaînement interrompu par
+   le réseau), lié au lancer affiché. *Avant* : Alpha enquêtée (2 tours), l'administrateur enquête Beta : partie
+   figée au lancer 1. *Après* : 2 tours passent (lancer 3), Alpha libérée, Beta à 1 tour. Deux appareils qui
+   cliquent le bouton en même temps : 2 lancers, pas 4.
+10. **Lancer simultané : effets AMF après tous les déplacements (bogue 69)** — `corePerformDiceRoll(co,
+   {deferJail:true})` : dans le lancer pour tous, l'entreprise qui tombe sur « Allez en prison » va en case 10, et
+   l'enquête (cubes rouges, loyers suspendus) est ouverte après tous les déplacements (entreprises et pions
+   neutres). Le lancer solo est inchangé. *Avant* : Alpha (propriétaire de Bleu pâle 1) part en enquête, Beta tombe
+   sur Bleu pâle 1 : Alpha touche 0 si elle a été créée avant Beta, 0,06 sinon. *Après* : 0,06 dans les deux ordres.
+11. **Arrondis du sac type (bogue 68)** — `drawStockCubes` : la tranche empruntée au sac type garde exactement ses
+   proportions (poids non arrondis). *Avant* : fondamental 11V/11R/8B, sac type 10V/10R, tranche de 7 → 4V/4R/−1B,
+   blanc tiré à 18,9 %. *Après* : 3,5V/3,5R/0B, blanc à 21,6 % (8/37).
+12. **Dette « productive » (décision de l'utilisateur)** — `companyDebtProceedsUse` parcourt le grand livre dans
+   l'ordre : chaque emprunt (prêt, hypothèque, subvention d'avance) alimente une réserve de fonds « non investis »,
+   chaque investissement ULTÉRIEUR (terrain, maison, REIT) en consomme. *Avant* : terrain de 5 acheté avec l'argent
+   de l'IPO, puis emprunt de 5 pour combler un déficit : dette « productive » à 100 %, spirale de détresse atténuée
+   (1 à 2 rouges). *Après* : 100 % non investie, pleine force (3 à 5 rouges). Terrain 2 (avant), emprunt 4, maison 1,
+   hypothèque 4, terrain 2, REIT 3 : 6 investis sur 8 empruntés, 25 % non investi (avant : 0 %).
+13. **Annonce de vente du CEO ramenée au plafond (décision de l'utilisateur)** — `executeCeoAnnouncement` : une vente
+   qui dépasserait le plafond de 15 % à l'échéance est exécutée pour les parts encore autorisées cette année, au
+   cours du jour ; journal « RAMENÉE au plafond légal de vente CEO » ; exécution enregistrée avec le montant exécuté
+   et le montant annoncé (`announcedAmount`), et l'historique du joueur affiche « Vente de 2,97 M$ …, ramenée au
+   plafond (annoncée 3,00 M$) ». Plafond déjà atteint : annulée comme avant. *Avant* : vente de 3 M$ annoncée pile au
+   plafond (30 000 parts à 100 $), cours −1 % à l'échéance : vente annulée en entier. *Après* : 30 000 parts vendues
+   pour 2,97 M$.
+
+**Parties en cours au moment de la mise à jour (transition)** : au premier semestre clos après la mise à jour, la part
+non versée d'un dividende manuel annoncé au semestre PRÉCÉDENT a été inscrite, par l'ancienne version, au semestre
+qui se ferme ; elle est donc déduite une fois de trop du « réellement versé ». Le ratio est sous-estimé ce seul
+semestre : jamais une pénalité en trop, au pire 5 cubes rouges évités. Le bilan de ce semestre garde aussi un écart
+(variation d'encaisse du bilan ≠ flux du semestre) égal à l'auto-versement net du semestre précédent, prélevé par
+l'ancienne version après la photo de son bilan de clôture. Tout est cohérent dès le semestre suivant.
+
+**Question pour Julien (aucun code)** : le ratio de distribution compte les dividendes ORDINAIRES réellement versés ;
+les dividendes privilégiés (et leurs arriérages payés) n'y entrent pas, comme avant. Faut-il les y ajouter ?
+
+**Tests** : `tests/section315-cubes.test.js` (26, 66, 41, 68 : 24 vérifications), `tests/section315-dividendes.test.js`
+(25, ratio, 27, drapeau « suspendu », arriérage né à la fin d'année, vraie fenêtre « Annoncer un dividende » : 50),
+`tests/section315-etats.test.js` (81, 80, REIT : 19), `tests/section315-tour.test.js` (43, bouton de secours par les
+vrais gestionnaires de clics, 69 : 31), `tests/section315-tour-sync.test.js` (43 sur deux appareils, faux serveur
+Firebase, dont la preuve que les revérifications de la section 308 évitent un tour en trop : 8),
+`tests/section315-decisions.test.js` (dette productive, vente CEO et son historique : 23). Chaque correctif a sa
+contre-épreuve (ancien code réintroduit : le test échoue ; une transformation qui ne trouve plus son motif fait
+échouer le fichier). `tests/section306.test.js` adapté : un versement y est désormais le dividende récurrent, et le
+ratio est substitué sur `dividendNetPaidInSemester`. **44 fichiers, 2 080 vérifications et 53 cas multi-appareils,
+0 échec ; 320 cas multi-appareils avec `SYNC_SEEDS=40`.**
+
+**Changements visibles pour les joueurs (cahiers 2, 4, 6, 7 et aide-mémoire, à mettre à jour)** :
+- Dividendes (cahiers 2 et 7, aide-mémoire) : seul le dividende récurrent protège le sac type — un semestre sans
+  versement récurrent le remet à 20 rouges, même avec un dividende annoncé à la main (rappel dans les fenêtres
+  « Dividende récurrent » et « Annoncer un dividende » et dans l'aide du type) ; le ratio de distribution compte tous
+  les dividendes réellement versés, sans la part de la banque ; un arriérage de privilégié bloque aussi le dividende
+  récurrent (avertissement dans la fenêtre).
+- Cubes (cahier 4) : la sortie publique du CEO n'ajoute jamais de rouges ; une GARP en faillite a un sac type rouge ;
+  profil Croissance : « bonne » = dépasser au moins la moitié des AUTRES entreprises (Très élevé : au moins 67 %
+  d'entre elles ; la 2e de 4 y est « neutre ») ; la dette ne compte comme « productive » que si elle a financé des investissements faits
+  après l'emprunt.
+- Plateau (cahier 0) : quand toutes les entreprises sont enquêtées, le tour passe tout seul (bouton « Faire passer
+  le tour » en secours) ; une entreprise envoyée en enquête pendant un lancer touche les loyers de ce lancer.
+- États financiers (cahier 6) : les intérêts hypothécaires, dividendes REIT et compensations de fin d'année, et la
+  part non versée d'un dividende, apparaissent dans le semestre qui se termine.
+- Annonce CEO (cahier 1 ou 4) : une vente qui dépasse le plafond de 15 % à l'échéance est ramenée au plafond.
+
+**Intégration** (vague 3) : un conflit avec la section 317 (bogue 83) sur la part non versée d'un dividende annoncé : l'écriture reste au semestre clos (`logFin(co.id, 'dividend_forfeited_return', unclaimed, state.gameClock.rollCount-1)`, point 4) avec le libellé du bogue 83 ; la ligne « Banque (paiement reçu du vendeur à découvert …) » existe dans les deux chemins (versement annoncé et auto-versement). Avec la section 316, une fin par durée maximale laisse l'annonce échue en place et le versement du changement de semestre la paie avant la photo du bilan : la sonde de la revue (fin à une frontière d'année, dividende annoncé dû et auto-versement) donne Δencaisse −0,39 = flux −0,39, écart 0 (ce lot seul laissait un écart), et une partie réelle de 8 graines (lancers pour tous) 216 contrôles bilan = flux, 0 écart. Test croisé `section310-integration` I1 : Co Alice (Dividendes, récurrent 0,3 M$ par semestre) annonce 1 M$ payable au lancer 6, Carl est à découvert sur 20 000 parts, la partie se termine au lancer 5 → 6 ; les deux versements ont lieu, Banque +0,10 (annonce) et +0,03 (récurrent) en face de Carl, semestre 1 : Δencaisse −0,39 = flux −0,39, rien au semestre suivant, monnaie conservée. Contre-épreuves : part non versée inscrite au nouveau semestre (flux −1,09 et +0,70 au semestre 2), ligne Banque retirée de l'un ou l'autre chemin. Point ouvert (sans code) : quand toutes les entreprises sont enquêtées (point 9), le tour passe sans « Tour Terminé », donc sans les contrôles d'encaisse négative du semestre (entreprise, et CEO depuis la section 314) ; c'était déjà le cas pour l'encaisse des entreprises, à confirmer par Julien.
+
+## 316. Fin de partie et session : plus aucune action après la fin, dividende du lancer final versé, contrats annuels réglés à une fin en cours d'année — 2026-10-25
+
+Contexte : vague 3 de la série de corrections de l'audit du 2026-10-19 (lot 9). Demandes de Julien, verbatim :
+« Faibles : tout corriger SAUF 45, 51 et 53 » ; « dividende annoncé dû au lancer final = versé aux actionnaires » ;
+« fin de partie en cours d'année : régler les soldes de compensation et le pari du lot commercial, comptés au
+classement final ». Bogues traités : 55, 56, 76, 92, 100, plus un défaut relevé par une revue (hypothèque bancaire
+sans contrôle de fin de partie) et l'angle mort 5 de l'audit (« environ 30 points d'entrée qui modifient l'état n'ont
+aucune garde gameEndedReason »). Chaque changement du code porte le commentaire « Section 316 ».
+
+1. **Garde unique de fin de partie** (`runActionWithRetry`, `gameEndedActionResult`) — au lieu d'ajouter une garde
+   dans une trentaine de fonctions, le noyau de la section 308 refuse toute action quand la partie est DÉJÀ terminée
+   sur l'état frais : avant l'applyFn (rien n'est exécuté ni enregistré) et de nouveau après un conflit (la fin a pu
+   être enregistrée par un autre appareil pendant l'envoi). Message : « La partie est terminée (raison) — plus aucune
+   action n'est possible : les onglets se consultent seulement. » (code `game-ended`). Le lancer qui TERMINE la
+   partie pose `gameEndedReason` pendant sa propre action : il passe ; les appels imbriqués font partie de l'action
+   englobante. **Liste blanche** (`allowAfterGameEnd`, transmis par `runModalActionWithRetry`) : les trois
+   ajustements d'encaisse de l'administrateur (joueur, entreprise, banque), corrections d'arbitre journalisées.
+   En-tête de la consultation : « 🏁 Partie terminée (…) — consultation seulement, aucune action n'est enregistrée ».
+   Scénario : partie terminée (Co Bob à 0) ; une action quelconque (+5 à Co Alice) : avant, enregistrée (50 → 55) ;
+   après, refusée, l'applyFn n'est même pas appelée (Co Alice reste à 50). **Retouche de la revue** : le refus porte
+   `notSaved:true` et passe le statut d'action à l'échec. Quand il survient après un conflit (Bob confirme une annonce
+   pendant qu'Alice joue le lancer final), l'écran de Bob est redessiné sur l'état frais : avant, 9 refus sur 9 sans
+   écran final ni bandeau, statut bloqué sur « ⏳ » ; après, écran final 9 fois sur 9, aucun statut bloqué.
+2. **Bogue 55 — « Devenir l'assureur » après la fin** — trois contrats banque sur Co Alice (terrain, taxe,
+   sous-standard ; reprises à 0,1200 + 0,3687 + 0,1111). Avant : Bob les reprend après la fin et encaisse 0,5998 sans
+   aucun risque. Après : bouton masqué (`renderDevenirAssureur`), et le clic d'un ancien écran est refusé par la garde ;
+   Co Bob reste à 50, la banque reste l'assureur.
+3. **Bogue 56 — annonce de dividende après la fin** — Co Alice (20 M$) annonce 5 M$ en consultation. Avant : 20 → 15,
+   l'argent immobilisé pour toujours. Après : refus « La partie est terminée », Co Alice garde ses 20 M$ (fenêtre
+   réelle, moteur et banc multi-appareils).
+4. **Bogue 76 — joueur sans entreprise à la fin** — avant : Carl ne voyait que l'écran de fondation, et pouvait fonder
+   « Gamma tardive » puis la faire financer : elle entrait au classement final. Après : en consultation, Carl voit
+   ses onglets (Portefeuille, Produits) ; fonder (`createCompany`) et financer une IPO (`fundCompanyIpo`) sont refusés.
+5. **Revue — hypothèque bancaire après la fin** — `issueMortgage` / `issueMortgageLot` vérifient la fin aussi dans le
+   chemin bancaire (défense en profondeur, même hors file d'actions). Avant : Co Bob empruntait 5,75 M$ à la banque
+   après la fin (un terrain, puis un lot regroupé) ; après : refus.
+6. **Bogue 92 — appel de marge au lancer final** — Carl, à découvert sur Co Bob avec −20 M$, est sous la marge au
+   lancer qui termine la partie. Avant : « ⚠️ Appel de marge … la fermeture forcée a échoué » (le rachat était refusé
+   puisque la partie était finie). Après : aucune tentative ; une ligne « ℹ️ Carl est sous la marge de maintien au
+   lancer final : … valorisées à leur juste valeur marchande au classement final » ; la position reste ouverte (même
+   valeur nette qu'un rachat au cours).
+7. **Bogue 100 — consultation après avoir quitté** — le mode « consulter quand même » est remis à zéro en quittant
+   (`performQuitGame`), en créant (`createGame`) et en chargeant (`loadGame`) une partie. Avant : la partie 2 terminée
+   sur le même appareil n'affichait pas son classement final ; après : elle l'affiche.
+8. **Décision — dividende annoncé dû au lancer final** (`forfeitPendingDividendAnnouncementsAtGameEnd`) — à la durée
+   maximale, la fin est posée avant le versement du changement de semestre : l'annonce échue était rendue à
+   l'entreprise. Elle reste désormais en place et ce versement la paie (règles de la section 307 : montant ÷ parts
+   émises × parts éligibles, banque à position négative). Scénario : Co Alice annonce 6 M$ au lancer 4 (payable au
+   6), la partie finit au lancer 5 → 6. Avant : Alice (30 % des parts) reçoit 0, Co Alice récupère 6. Après : Alice
+   reçoit 1,80, Co Alice ne récupère que 4,20 (parts de la banque, non réclamées). Une annonce pas encore échue (fin au
+   lancer 2, payable au 3) reste rendue à l'entreprise (4 M$). Les autres fins (cours à 0, 100 % banque, prêt de
+   dernier recours) arrivent après ce versement ou entre deux lancers : aucune annonce échue n'y reste.
+9. **Décision — fin de partie en cours d'année** (`settleYearContractsAtGameEnd`, appelée par `settleAtGameEnd` aux
+   quatre endroits qui posent la fin) — soldes des accords de compensation de loyer (`settleRentCompensation` : balance
+   + intérêt au taux fixe de l'accord appliqué au solde, accord clôturé) et pari du lot commercial
+   (`settleTerrainLotYearEnd` : loyers comptés − prix, réparti à parts égales) réglés avec les fonctions de fin d'année ;
+   lignes de journal « 🏁 Fin de partie en cours d'année : … » et « Lot commercial : prix de … ramené au prorata … ».
+   **Prix du lot au prorata** (retouche de la revue, option retenue, à valider par Julien ;
+   `proratedTerrainLotPriceAtGameEnd`) : facturer le prix entier sur une année à peine commencée était injuste. Le prix
+   est réglé au prorata des lancers écoulés depuis la résolution de l'enchère (lancer 6 × année + 1), sur 6 lancers
+   par année : prix × écoulés ÷ 6, contre les loyers réellement comptés (`lastResult` garde `fullYearPrice` et
+   `elapsedRolls`). Le règlement d'une année complète (`processYearEnd`) ne change pas.
+   Scénarios : (a) lot gagné au lancer 7 (prix 9), fin au lancer 8, aucun loyer : prix entier, Co Alice payait 9 ;
+   au prorata, 1,50. (b) Fin au lancer 8, compensation de 3 due par Co Alice à 10 %, lot de Co Alice (prix 6, loyers
+   0,50) : avant la décision, rien n'était réglé (en suspens pour toujours) ; au prix entier, 3,30 + 5,50 = 8,80 ;
+   retenu, 3,30 + 0,50 (prix 1,00 contre 0,50 de loyers) = 3,80 versés à Co Bob, et l'équité des entreprises au
+   classement final en tient compte (Co Bob 54,00 → 57,80). Même règle pour une fin par cours à 0, par 100 % banque,
+   et par prêt de dernier recours (fin au lancer 9 : prix 2,00, Co Alice verse 3,30 + 1,50). À une fin par durée
+   maximale (frontière d'année), `processYearEnd` a déjà tout réglé, au prix entier : rien en double (3,30 + 5,50).
+   Le classement des joueurs (valeur au cours de bourse) n'est pas touché par ces virements entre entreprises ; le
+   classement des entreprises (équité) l'est. Monnaie conservée.
+   **À valider par Julien** : (1) le prorata du lot (à noter : l'enchère se résout au 2e lancer de l'année, si bien
+   qu'une année complète tient le lot 5 lancers au prix entier, alors qu'une fin en cours d'année facture au plus
+   4/6 du prix) ; (2) les intérêts hypothécaires et les dividendes privilégiés de l'année en cours ne sont PAS
+   facturés à une fin en cours d'année ; (3) **asymétrie à une fin par durée maximale** : au lancer final,
+   `processYearEnd` crée `preferredDividendDueThisYear` ; `companyValue` le déduit comme une dette de l'entreprise,
+   mais il n'apparaît pas dans la valeur nette des porteurs de privilégiées (aucune monnaie ne bouge : seul le
+   classement est touché).
+
+**Tests** : `tests/section316-fin-de-partie.test.js` (garde unique, lancer final, 55, 56, 76, hypothèques, 92 :
+33 vérifications), `tests/section316-decisions.test.js` (dividende du lancer final, fins en cours d'année par 100 %
+banque, cours à 0, prêt de dernier recours, frontière d'année, prix du lot au prorata et contre-épreuve « prix
+entier » : 45), `tests/section316-ecrans.test.js` (vrais gestionnaires de clics : 100, 76, 56, 55 — lignes terrain,
+taxe et sous-standard, chacune avec sa contre-épreuve —, consultation de tous les onglets, ajustement de
+l'administrateur : 32), `tests/section316-sync.test.js` (banc multi-appareils : course entre le lancer final et une
+annonce de dividende sur 10 graines — annonce versée quand elle arrive avant, refusée quand elle arrive après, jamais
+en suspens ; écran redessiné après un refus sur conflit, sur 20 graines ; fenêtre ouverte avant la fin et confirmée
+après : 61). Chaque correctif a sa contre-épreuve. `section308-tour` (scénario B) : sa contre-épreuve retire aussi la
+garde unique. **42 fichiers, 2 096 vérifications et 53 cas multi-appareils, 0 échec ; 320 cas multi-appareils avec
+`SYNC_SEEDS=40`.**
+
+**Changements visibles pour les joueurs (cahiers)** : après la fin, la consultation est en lecture seule — toute
+action est refusée avec « La partie est terminée … les onglets se consultent seulement », l'en-tête l'indique, le
+bouton « Devenir l'assureur » disparaît ; seul l'administrateur peut encore corriger une encaisse (ajustement
+journalisé). Un joueur sans entreprise peut consulter les onglets à la fin. Quitter puis rejoindre ou créer une
+partie terminée montre d'abord le classement final. Dividende annoncé payable au lancer qui termine la partie : versé
+aux actionnaires (cahier 8). Fin de partie en cours d'année : accords de compensation et pari du lot commercial
+réglés immédiatement, aux règles de fin d'année, le prix du lot commercial étant ramené au prorata des lancers
+écoulés depuis l'enchère (cahiers des accords de compensation et du lot commercial). Appel de
+marge au lancer final : pas de rachat forcé, positions valorisées au cours (cahiers 1 et 3).
+
+**Intégration** (vague 3) : le dividende du lancer final (point 8) est versé par le code des sections 315 (photo du bilan après les versements, part non versée au semestre clos) et 317 (ligne Banque du découvert) : test croisé décrit à la section 315. `triggerLastResortLoan` : fin de partie (`settleAtGameEnd`) et date du prêt (`roll`, bogue 94) cohabitent. Le règlement du lot commercial à une fin en cours d'année réutilise `settleTerrainLotYearEnd` de la section 310. Les nouvelles actions de la vague 3 (mises REIT groupées, offres de vente de parts REIT, bouton « Faire passer le tour ») passent par le noyau de la section 308, donc par la garde unique ; l'enchaînement automatique des tours s'arrête à la fin. Les écrans de fin et de consultation n'affichent aucun numéro d'année. Sondes de la revue sur la branche intégrée : 60 parties menées jusqu'à une fin (20 par cours à 0, 20 par 100 % banque, 20 par durée maximale), 0 problème (monnaie, rien en suspens) ; dividende échu au lancer final avec banque à position négative et découvert : 1,80 et 4,20 reçus, monnaie conservée ; lot commercial gagné au lancer 7, fin au lancer 8 : prix de 1,50 réglé.
+
+## 317. Audit du 2026-10-19 — bogues faibles d'affichage, de journal, de libellés et de saisie : portefeuille, marché, réglages, entreprise, dividendes, prêts, une seule numérotation des années — 2026-10-25
+
+Section en deux parties (lots 10a et 10b de la vague 3, menés en parallèle). Le code porte le commentaire « Section 317 » dans les deux cas.
+
+### Partie A (lot 10a) — portefeuille, marché, réglages : bogues 77, 78, 79, 85, 86, 87, 91, 96, 98, 99, 101
+
+#### Contexte
+
+Série de corrections de l'audit du 2026-10-19 (`docs/audit/audit-2026-10-19.md`), lot 10a. Demandes de Julien (verbatim) :
+
+« Faibles : tout corriger SAUF 45, 51 et 53 » ; « 101 : corriger (simple) ».
+
+Affichage, journal, libellés et validations de saisie uniquement : aucun montant d'argent ne change (la monnaie est conservée dans chaque test). Les bogues 82, 83, 84, 88, 89, 90, 93, 94, 95 et 97 sont dans la partie B ou dans d'autres sections.
+
+#### Mécanique retenue
+
+1. **Bogue 77 — « Évolution de mon portefeuille ».** Le total comptait le gain ou la perte des options clôturées (`optionRealizedPnl`) mais aucune ligne ne le montrait. La note « Pour mémoire » est reformulée (cumul net des primes et des règlements en argent, déjà réparti entre les deux P&L, à ne pas ajouter). Nouvelle ligne « P&L options clôturées » (affichée dès que le montant n'est pas nul). Avant : Carl a un gain d'options de 0,0219 M$, les lignes totalisent 50,0000 pour une valeur liquidative de 50,0219. Après : 50,0219 = 50,0219.
+2. **Bogue 78 — règlement en argent d'une jambe de stratégie.** `settleOptionStrategyLegCash` ajoute (jambe longue) ou retire (jambe écrite) le montant réglé au cumul `cumOptionNetPremium`, comme le font déjà les clôtures. Le gain n'atterrit plus dans « Autres / ajustement ». Exemple chiffré : bull spread acheté (300 contrats, strikes S et 1,2 S), cours à 1,5 S à l'échéance, +0,6 M$ crédités : le P&L des options passe de −0,199308 à +0,400692 (prime payée comprise), « Autres » de +0,6 à 0. Aucun montant d'argent ne change (même crédit à Carl, même débit de la banque).
+3. **Bogue 79 — « Encaisse considérant l'exercice des options ».** Pour une jambe réglée en argent (`cashSettled`), la projection ajoute (longue) ou retire (écrite) sa valeur intrinsèque au lieu de retirer un prix d'exercice de parts qui ne seront jamais livrées. Exemple : bull call spread de 200 contrats, cours +20 % : 47,84 affichés avant, 50,24 après, exactement l'encaisse obtenue au règlement réel.
+4. **Bogue 85 — bid, passage « parts » vers « montant ».** Le montant converti n'est plus arrondi à 0,01 M$ (6 décimales, soit au dollar près). Le champ de montant accepte toute décimale (pas « any »). Une ligne sous le champ affiche l'ordre : « Ordre qui sera placé : N part(s) à X $/part au plus, soit Y ». 4 000 parts à 1,50 $ donnent 0,006 M$ (avant : 0,01 soit 6 666 parts) ; 3 000 parts donnent 0,0045 (avant : 0,00 et ordre refusé).
+5. **Bogue 86 — bons après un retrait.** À l'affichage, les « intérêts reçus » sont plafonnés au solde positif, et (retouche de la revue) la statistique `cumBondInterest` est plafonnée au solde restant chaque fois que celui-ci baisse (`capBondInterestStat`, appelée par `withdrawBonds`, `shortBonds`, `fillPendingBid` et `raiseCashForForcedSettlement`) : aucun argent ne bouge. Cas de la revue : 10 placés, 0,15 d'intérêts, 10,15 retirés, 5 replacés : solde initial 5 et intérêts 0 (avant 4,85 et 0,15) ; puis emprunt de 2 : dette −2 (avant −2,15). Avant : 0,05 M$ restant après un retrait de 10,10 sur 10,15 avec 0,15 d'intérêts cumulés : « Solde initial (dette empruntée) −0,10 » en rouge. Après : solde initial 0, intérêts 0,05, solde total 0,05. Une vraie dette (solde négatif) reste libellée « dette empruntée ». Aucun nouveau champ d'état.
+6. **Bogue 87 — « Résultats du tour » et bid payé avec des bons.** `fillPendingBid` note les bons vendus pour le bid dans un cumul hors état sauvegardé (`bidBondsSoldThisRoll`, remis à zéro par `snapshotPlayerBondsAndLoans`) que `computePlayerPortfolioDeltas` ajoute à la variation des bons : un échange bons contre actions n'est plus une perte. Avant : bid de 2 M$ payé en bons, variation affichée −1,98 ; après : +0,02, la vraie.
+7. **Bogue 91 — journal du rachat de découvert.** Le journal annonce le montant réellement payé (`r.qty` × cours), plafonné à la position. Découvert de 2 M$, saisie de 10 M$ : « pour 2,00 M$ » (avant : « pour 10,00 M$ »).
+8. **Bogue 98 — répartition sectorielle.** Une dette en bons n'est plus une tranche (valeur plancher à 0) ; une note signale la dette à part. 6 M$ + 4 M$ de parts, dette de 2 M$ : 60 % + 40 % (avant : 75 % + 50 %). Avec une dette plus grosse que les actions, la phrase « aucune position » ne s'affiche plus à tort ; un joueur qui n'a que de la dette voit « Aucune position boursière ni bon gouvernemental positif… » avec le montant de la dette.
+9. **Bogue 96 — réglages de création.** Nouvelle fonction `validateNewGameInputs`, appelée au début de `createGame` : refus avec un message clair (alerte, aucune partie créée) pour : % des parts du CEO hors de 1 à 100 % (0,5 % refusé), réserve REIT hors de 0 à 99 %, rachat minimum de la banque hors de 0 à 100 %, emprunt hypothécaire et seuil de détresse hors de 0 à 100 %, retenues de prêt hors de 0 à 100 % ou minimum supérieur au maximum (le message rappelle qu'un maximum vide vaut 0 %), multiples de prêt inférieurs à 1 ou maximum inférieur au minimum, ratios de dividende hors de 0 à 100 % ou plancher supérieur au plein, années de durée de partie négatives ou minimum supérieur au maximum, encaisses négatives, copropriétaires ou maisons inférieurs à 1, parts par entreprise inférieures à 2, valorisation nulle ou négative. Les réglages par défaut passent.
+10. **Bogue 99 — noms en double.** À la création : deux joueurs de même nom (casse et espaces ignorés) sont refusés. À la fondation : une entreprise ne peut pas porter le nom d'un joueur de la partie (y compris son propre CEO), en plus de la règle existante (pas deux entreprises homonymes). Les parties déjà créées ne changent pas.
+11. **Bogue 101 — logo de l'écran TV.** Nouvelle fonction `safeLogoDataUrl` : seule une data URL d'image (png, jpeg, gif, webp) en base64 est acceptée. `createCompany` enregistre `null` pour tout autre texte ; `tvSlideCompanyShowcase` revalide et échappe (`esc`) le logo à l'affichage, y compris pour une partie déjà sauvegardée avec un logo piégé.
+
+#### Tests
+
+- `tests/section317a-options.test.js` : 15 vérifications (77, 78, 79).
+- `tests/section317a-marche.test.js` : 25 vérifications (85, 86, 87, 91, 98).
+- `tests/section317a-creation.test.js` : 27 vérifications (96, 99, 101).
+- `tests/section317a-contre.test.js` : 29 vérifications. Pour chaque bogue, l'ancien code est réintroduit (`tests/helpers/contre317a.js`, variable `CONTRE_317A`) et le test du bogue doit échouer.
+- Total : 108 vérifications (options 15, marché 31, création 29, contre-épreuves 35, retouches comprises). Suite complète : 42 fichiers verts ; banc multi-appareils à 40 graines vert (320 cas).
+
+#### Changements visibles pour les joueurs (cahiers)
+
+- Fenêtre « Évolution de mon portefeuille » : nouvelle ligne « P&L options clôturées » ; plus de gros « Autres / ajustement » après un spread réglé en argent.
+- Ordre d'achat (bid) : montants convertis sans arrondi, et phrase « Ordre placé : … » sous le champ.
+- Création d'une partie : alertes claires pour les réglages hors bornes et les noms de joueurs en double.
+- Fondation d'une entreprise : refus d'un nom égal à celui d'un joueur.
+- Bons gouvernementaux : « Solde initial » et « Intérêts » cohérents après un retrait ; répartition sectorielle plafonnée à 100 % avec une note pour la dette en bons.
+- Journal du rachat de découvert : montant réellement payé.
+
+### Partie B (lot 10b) — entreprise, dividendes, prêts, numérotation des années : bogues 82, 83, 84, 88, 89, 90, 93, 94, 95, 97
+
+#### Contexte
+
+Série de corrections de l'audit du 2026-10-19 (lot 10b). Demandes de Julien (verbatim) :
+
+- « Faibles : tout corriger SAUF 45, 51 et 53 »
+- « 95 : corriger la double numérotation des années ET réécrire clairement les libellés »
+
+Bogues traités : 82, 83, 84, 88, 89, 90, 93, 94, 95, 97 (la partie A couvre 77-79, 85-87, 91, 96, 98, 99, 101). Aucune règle de jeu ni aucun montant d'argent ne change ; seule exception, une statistique d'affichage (bogue 88) et un champ de date (bogue 94, voir les décisions).
+
+#### Mécanique retenue
+
+1. **Bogue 82 — coût du dividende récurrent.** `modalDividendRecurrentSettings` : « Coût total par semestre (hors part de la banque, rendue à la trésorerie) » = montant par part × parts des porteurs réels, plafonné aux parts émises (une banque négative paie elle-même l'excédent). Avant/après : benchmark 1,50 $/part, 200 000 parts dont 140 000 à la banque : 300 K$ affichés, 90 K$ réellement débités → 90 K$ affichés (palier 5, ×1,40 : 126 K$).
+2. **Bogue 83 — journal du dividende.** Versement annoncé et auto-versement : le paiement compensatoire du vendeur à découvert apparaît aussi côté banque (« Banque (paiement reçu du vendeur à découvert …) », +montant). Le texte ne parle plus de parts « non réclamées » d'actionnaires « ayant vendu » : il distingue la part de la banque et, s'il y en a, celle des actionnaires ayant vendu depuis l'annonce. Avant/après (Co0 annonce 1 M$, Chloé à découvert) : « 700 K$ non réclamé (actionnaire(s) ayant vendu depuis l'annonce) », banque absente → « 700 K$ non versé, rendu à la trésorerie (700 K$ de part de la banque) », banque +0,1 M$ présente. Aucun montant ne change.
+3. **Bogue 84 — fenêtre « Dividende annoncé ».** `showTransactionPopup(titre, lignes, note)` : « écart d'arrondi » seulement pour une somme de moins de 1 centime ; au-delà, la note fournie par l'appelant (ici « montant immobilisé jusqu'au versement, il sera distribué aux actionnaires : ce n'est pas un écart ») ou rien. Avant : « Somme des mouvements : −1.0000 (écart d'arrondi) » pour 1 M$.
+4. **Bogue 88 — regroupement d'un lot.** `mergeGroup` reporte les statistiques d'affichage `state.realEstateCapex` et `state.realEstateRevenue` de la clé de chaque terrain (`prop:…`) vers la clé du lot (`lot:…`), par entreprise, et retire les anciennes clés (pas de double compte). Aucune encaisse ne bouge. Parties déjà regroupées : l'historique est perdu, il n'y a rien à reporter. Avant/après : Co1 a payé 0,9 et touché 0,1 de loyer ; après regroupement, coûts et loyers affichés passaient à 0 ; ils restent 0,9 et 0,1, et après une maison à 0,2 le profit du lot est −1,0 (et non −0,2).
+5. **Bogue 89 — capitalisation boursière.** Libellé corrigé : « Capitalisation boursière (toutes les parts émises, part de la banque comprise) ». Le calcul (prix × parts émises) n'est pas modifié : les ratios P/E, P/S et P/B le divisent par le résultat, les ventes et les capitaux propres de toute l'entreprise, ils n'auraient aucun sens avec une capitalisation hors banque. Le Cahier 4 annonce « hors banque » : à corriger (voir « pour les cahiers »). Exemple : 200 000 parts à 100 $ dont 140 000 à la banque : 20 M$ affichés, comme avant, avec le bon libellé (6 M$ hors banque).
+6. **Bogue 90 — attente de résultat net.** « (moyenne des N dernier(s) semestre(s) clos) » n'est plus affiché pour les deux semestres de départ : 1er semestre « attente de départ : aucun semestre clos encore » ; 2e semestre « attente fixe de départ du 2e semestre, sans lien avec vos résultats » (+2,00 M$, valeur inchangée). À partir du 3e semestre : « moyenne des N derniers semestres clos ».
+7. **Bogue 93 — journal de la subvention d'avance.** `takeGoAdvance` relève le taux (`priceRate`) juste après le calcul du montant, avant que la vente n'alourdisse la dette de l'entreprise, et le journal affiche ce taux (celui de la fenêtre de confirmation de la section 308). Avant/après : fenêtre 1,82 M$ à 10 %, journal « taux 10.9 % » → « taux 10.0 % ».
+8. **Bogue 94 — prêt de dernier recours.** `triggerLastResortLoan` date le prêt (`roll` = lancer courant ; un prêt déjà ouvert cumulé est redaté) comme les prêts ordinaires ; `recentExecutionEntriesForPlayer` l'affiche « Prêt de dernier recours — Banque prête 10.00 M$ à Co (50% des loyers retenu, 2× le capital) » au lieu de « Offre de prêt acceptée ». Avant : sans `roll`, classé au lancer 0 donc absent des 10 exécutions récentes au lancer 30 ; après : en tête.
+9. **Bogue 95 — numérotation des années.** Décision : une seule numérotation, celle des états financiers (année 1 = première année). `currentGameYear()` reste l'indice interne 0-based (clé des enchères REIT et lot commercial, plafond de vente du CEO, durée cachée de la partie : AUCUNE mécanique ne change, y compris « plage N–N = N+1 années jouées ») ; la nouvelle `displayGameYear(y)` (= indice + 1) sert partout où le joueur lit un numéro d'année : barre du haut, écran TV, journal (passage d'année, mises et résultats du lot commercial et des REIT), dividende préférentiel dû, dernière enchère REIT. Libellés : barre du haut « Année : 2 (semestre 1/2 — 0/3 lancers faits) », écran TV « 0/3 lancers de dés faits ce semestre », états financiers « Année 2, Semestre 1 ». Avant/après au lancer 6 : barre « Année : 1 », journal « L'année financière 1 commence », états « Année 2, Semestre 1 » → « 2 » partout. Les « lancer #N » du journal restent le nombre de lancers déjà effectués depuis le début (« lancer #0 » = avant le premier lancer).
+10. **Bogue 97 — maximum empruntable à 0.** `fmtLoanCap` : capacité illimitée écrite « illimité » (infobulle du bouton Prêt : « capacité d'emprunt illimitée, aucun maximum fixé pour cette partie » ; fenêtre « Capacité d'emprunt restante : illimité » ; champ « sans maximum », plus d'attribut `max="Infinity"`). Maximum fixé : affichage inchangé.
+
+11. **Bogue 95 — libellé du réglage de durée (création de partie).** Mécanique inchangée : la fin est fixée par un nombre N tiré dans la plage, et la partie s'arrête quand l'indice interne dépasse N, soit à la fin de l'année N+1 affichée (plage 2–2 = jusqu'à la fin de l'« Année 3 »). Le libellé le dit en années affichées.
+
+#### Décisions à valider par Julien
+
+- **89** : on a corrigé le libellé plutôt que le chiffre (les ratios en dépendent) ; le Cahier 4 doit être aligné. Si Julien préfère afficher la capitalisation hors banque, ajouter un second chiffre sans toucher aux ratios.
+- **88** : exception à la règle « affichage seul » : report de statistiques (coûts/loyers historiques par entreprise, aucune encaisse).
+- **94** : nouveau champ `roll` sur le prêt de dernier recours (comme les prêts ordinaires ; lecture `l.roll||0`, donc pas de défaut à ajouter dans `migrateState`). Les prêts de dernier recours déjà accordés dans une partie en cours restent sans lancer (classés comme avant).
+- **95** : numérotation à partir de 1 choisie (celle des états financiers).
+
+#### Tests
+
+`tests/section317b-dividendes.test.js` (31), `section317b-lot.test.js` (8), `section317b-entreprise.test.js` (11), `section317b-journal.test.js` (13), `section317b-prets.test.js` (8), `section317b-annees.test.js` (23) : 94 vérifications + 18 de contre-épreuve. Contre-épreuves automatiques (loadEngine({transform}) réintroduisant l'ancien code) : 88 et 95 (années) dans leur propre fichier, 82, 83, 84, 89, 90, 93, 94, 97 et le libellé de durée (95) dans tests/section317b-contre.test.js (18 vérifications). Suite complète : 45 fichiers verts ; banc multi-appareils à 40 graines : 320 cas verts.
+
+#### Changements visibles pour les joueurs (cahiers)
+
+- Barre du haut : « Année : N (semestre S/2 — r/3 lancers faits) », année 1 = première année, identique aux états financiers et au journal (Cahiers où l'« année 0 » ou « année 1 » est citée à vérifier).
+- Dividende récurrent : « Coût total par semestre (hors part de la banque …) » (Cahier sur les dividendes).
+- Journal des dividendes : ligne « Banque (paiement reçu du vendeur à découvert …) » ; part de la banque nommée.
+- Fenêtre « Dividende annoncé » : plus d'« écart d'arrondi ».
+- Mon Entreprise : « Capitalisation boursière (toutes les parts émises, part de la banque comprise) » (Cahier 4 annonce « hors banque » : à corriger) ; attente de résultat net : libellés de départ.
+- Subvention d'avance : le journal montre le taux confirmé.
+- Prêt de dernier recours : libellé propre dans les exécutions récentes, visible parmi les 10 plus récentes.
+- Prêt avec maximum à 0 : « illimité ».
+
+**Intégration** (vague 3) : partie A — aucun conflit ; les fonctions partagées avec la section 314 (`fillPendingBid`, `withdrawBonds`, `closeShortPosition`, jambes de stratégie réglées en argent et projection d'encaisse des options) ont été relues ; raccord de la statistique des bons décrit à la section 314. La sonde de la revue qui rejoue la même partie (graine fixe, 8 graines, 43 lancers) avant et après les deux parties ne montre aucune différence d'argent, de parts ni de prêts. Partie B — cinq conflits (quatre avec la section 310, un avec la section 315), résolus comme décrit dans ces sections ; tout numéro d'année affiché passe par `displayGameYear()`, y compris les lignes ajoutées par la section 310 (seule à en ajouter dans la vague) ; les numéros encore écrits avec `currentGameYear()` sont des clés internes (enchères, plafond de vente du CEO, durée cachée). Ligne Banque du bogue 83 présente dans les deux chemins de versement, y compris au lancer final (test croisé de la section 315).

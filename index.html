@@ -15255,14 +15255,19 @@ function resolveRevenueSwapListing(listing){
   }
   
   
-  const clampCash = (s)=>{
+  const clampCash = (s, committed)=>{ // Section 311 — bogue 20 : committed = déjà attribué à ce souscripteur en senior
     const cash = s.holderType==='company' ? (companyById(s.holderId)||{}).cash : (state.players.find(p=>p.id===s.holderId)||{}).cash;
-    return Object.assign({}, s, {maxAmount: Math.max(0, Math.min(s.maxAmount, cash||0))});
+    return Object.assign({}, s, {maxAmount: Math.max(0, Math.min(s.maxAmount, (cash||0) - (committed||0)))});
   };
-  const seniorSubsClamped = listing.seniorSubs.map(clampCash);
-  const juniorSubsClamped = listing.juniorSubs.map(clampCash);
+  const seniorSubsClamped = listing.seniorSubs.map(s=>clampCash(s, 0));
   const seniorHolders = levelAbsSubscriptions(seniorSubsClamped, listing.tranches.seniorAmount);
   const seniorRaised = seniorHolders.reduce((s,h)=>s+h.amount,0);
+  // Section 311 — bogue 20 : le plafond « encaisse » porte sur le TOTAL du souscripteur, toutes tranches confondues. La
+  // senior est répartie d'abord (condition d'existence de l'émission) ; la junior d'un même souscripteur est plafonnée à
+  // son encaisse moins ce qui lui est déjà attribué en senior. Avant : chaque tranche était plafonnée séparément à
+  // l'encaisse entière, et un souscripteur des deux tranches finissait en négatif (2 M$ d'encaisse, 4 M$ payés).
+  const seniorAllocatedTo = (s)=> seniorHolders.filter(h=>h.holderType===s.holderType && h.holderId===s.holderId).reduce((t,h)=>t+h.amount,0);
+  const juniorSubsClamped = listing.juniorSubs.map(s=>clampCash(s, seniorAllocatedTo(s)));
   const juniorHoldersReal = levelAbsSubscriptions(juniorSubsClamped, listing.tranches.juniorAmount);
   const juniorRaisedReal = juniorHoldersReal.reduce((s,h)=>s+h.amount,0);
   
@@ -21234,7 +21239,7 @@ function modalSubscribeRevenueSwapTranche(listingId, tranche, subscriberType, su
       <tr><td>Loyer attendu sur la durée</td><td colspan="2">${fmt(listing.pricing.meanRent)} (± ${fmt(listing.pricing.stdRent)})</td></tr>
       <tr><td>Montant recherché</td><td class="money">${fmt(listing.tranches.seniorAmount)}</td><td class="money">${fmt(listing.tranches.juniorAmount)}</td></tr>
       <tr><td>Seuil pour être servie en entier</td><td class="money">${fmt(listing.tranches.seniorCapTotalTarget)} (prime ${Math.round(listing.tranches.seniorPremiumPct*100)}%)</td><td>sans plafond</td></tr></table>
-    <div class="small" style="margin:8px 0;">Montant recherché pour cette tranche: ${fmt(target)}. Répartition à la résolution: partage égal plafonné entre tous les souscripteurs de la tranche (chacun jusqu'à son propre maximum) — vous pourriez recevoir moins que votre maximum si d'autres souscrivent aussi. Aucun argent ne change de main avant la résolution (prochain lancer de dés).</div>
+    <div class="small" style="margin:8px 0;">Montant recherché pour cette tranche: ${fmt(target)}. Répartition à la résolution: partage égal plafonné entre tous les souscripteurs de la tranche (chacun jusqu'à son propre maximum) — vous pourriez recevoir moins que votre maximum si d'autres souscrivent aussi. Aucun argent ne change de main avant la résolution (prochain lancer de dés). <!-- Section 311 — bogue 20 -->À la résolution, le total investi dans les deux tranches ne dépasse jamais votre encaisse (la tranche senior est servie d'abord).</div>
     <label>Montant maximal que vous acceptez d'investir (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" min="0.01" id="mAbsSubMax" value="${existing?existing.maxAmount:''}" placeholder="ex. 300000">
     <div class="small" id="mRetryStatus" style="margin:8px 0;color:var(--muted);"></div>

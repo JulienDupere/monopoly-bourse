@@ -14061,6 +14061,8 @@ async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBTy
   const absHostA = assetHostProperty(assetA), absHostB = assetHostProperty(assetB);
   if(absHostA && isPropertyLockedByRevenueSwap(absHostA.id, companyAId)) return fail(`${companyA?companyA.name:'?'} a vendu (ou annoncé) le revenu de ${labelA} en ABS — impossible de l'échanger tant que l'accord court.`);
   if(absHostB && isPropertyLockedByRevenueSwap(absHostB.id, companyBId)) return fail(`${companyB?companyB.name:'?'} a vendu (ou annoncé) le revenu de ${labelB} en ABS — impossible de l'échanger tant que l'accord court.`);
+  const rentSwapLockSwap = (absHostA && rentSwapSaleLockMessage(absHostA.id, companyAId, 'd’échanger')) || (absHostB && rentSwapSaleLockMessage(absHostB.id, companyBId, 'd’échanger')); // Section 311 — décision : swap spécifique
+  if(rentSwapLockSwap) return fail(rentSwapLockSwap);
   
   
   if(!transferAssetShare(assetA, companyAId, companyBId, pctA)) return fail('Échange impossible sur '+labelA+'.');
@@ -14184,6 +14186,8 @@ async function sellMergedShare(mergeId, sellerId, buyerId, pct, price, opts){
     const sellerCoName = companyById(sellerId)?.name || 'Cette entreprise';
     return fail(`${sellerCoName} a vendu le revenu de ce lot (swap de revenu fixe/variable) — impossible de le vendre tant que l'accord est actif.`);
   }
+  const rentSwapLockLot = rentSwapSaleLockMessage(props[0].id, sellerId, 'de vendre'); // Section 311 — décision : swap spécifique
+  if(rentSwapLockLot) return fail(rentSwapLockLot);
   if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
     
     
@@ -15040,6 +15044,19 @@ async function cancelRentSwapOffer(id){
 
 
 
+// Section 311 — décision de Julien (« swap de loyer spécifique : bloquer la vente du terrain concerné ») : tant qu'un swap
+// de loyers SPÉCIFIQUE court sur un terrain (ou son lot), l'entreprise qui l'y a engagé ne peut ni vendre ni échanger sa
+// part de ce terrain. Renvoie le message de refus, ou null. Vérifié dans l'applyFn de chaque vente/échange (état frais).
+function rentSwapSaleLockMessage(propId, companyId, actionLabel){
+  const isActive = s => s.budgetMode || s.yearsRemaining>0;
+  const s = (state.rentSwaps||[]).find(s=> isActive(s) &&
+    ((!s.generalA && s.companyA===companyId && samePropertyOrLot(s.propA, propId)) || (!s.generalB && s.companyB===companyId && samePropertyOrLot(s.propB, propId))));
+  if(!s) return null;
+  const co = companyById(companyId), partner = companyById(s.companyA===companyId ? s.companyB : s.companyA);
+  const p = state.properties.find(x=>x.id===propId);
+  const label = p ? (p.groupMergeId ? `Lot ${GROUPS[p.group].label}` : p.name) : '?';
+  return `${co?co.name:'?'} a engagé ${label} dans un swap de loyers avec ${partner?partner.name:'?'} — impossible ${actionLabel||'de vendre'} sa part de ce terrain tant que le swap court (encore ${s.yearsRemaining} an(s)).`;
+}
 function isPropertyLockedByRevenueSwap(propId, companyId){
   // Section 311 — bogue 21 : le terrain est verrouillé dès l'ANNONCE (state.revenueSwapListings), pas seulement une fois
   // l'ABS conclue : avant, l'émettrice pouvait l'hypothéquer, y signer un swap ou le vendre entre l'annonce et la
@@ -17838,6 +17855,8 @@ function modalSellShare(pid){
       if(isPropertyLockedByRevenueSwap(pid, sellerId)){
         return {ok:false, error:`${companyById(sellerId)?.name||'Cette entreprise'} a vendu le revenu de ${prop.name} (swap de revenu fixe/variable) — impossible de le vendre tant que l'accord est actif.`};
       }
+      const rentSwapLock = rentSwapSaleLockMessage(pid, sellerId, 'de vendre'); // Section 311 — décision : swap spécifique
+      if(rentSwapLock) return {ok:false, error:rentSwapLock};
       if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
         
         

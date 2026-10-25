@@ -7,6 +7,9 @@
 //              de CEO, déjà exclues, puis de la valeur nette), d'où un appel de marge à tort. Comptée une fois.
 //   Bogue 37 : une encaisse PERSONNELLE négative ne bloquait pas « Tour Terminé » au semestre. Elle le bloque, comme
 //              l'encaisse de l'entreprise (règle de Julien), revérifiée dans l'applyFn (refus sans sauvegarde).
+//   Retouches de la revue : un résidu d'arrondi (≈ −1e-17) laissé par un paiement financé par les bons ne bloque plus
+//              « Tour Terminé » (résidu prélevé sur les bons, gardes tolérantes à 1e-9) ; un montant de découvert
+//              démesuré est refusé avec un libellé lisible ; contre-épreuve de la garde sur le nombre de parts.
 // Chaque correctif a sa contre-épreuve (ancien code réintroduit par loadEngine({transform}) : le test échoue).
 // Lancer depuis la racine du dépôt :  node tests/section314-marge.test.js
 const { loadEngine, check, near } = require('./helpers/engine');
@@ -27,8 +30,18 @@ const ANCIEN_FINI = src => src
   .split("  if(!Number.isFinite(price) || !Number.isFinite(qty)) return {ok:false, error:'Prix limite ou quantité invalide : saisissez des nombres finis.'};").join('');
 const ANCIEN_MARGE = src => src.replace('    total += secured.ceoDeductionByCompanyId[co.id]||0; // Section 314 — bogue 31\n', '');
 const ANCIEN_PRET = src => src
-  .replace(/    if\(ceoPlayer && \(ceoPlayer\.cash\|\|0\)<0 && tradingWindowOpen\(\)\) return [^\n]*\n/, '')
-  .replace('const blockReadyForNegativeCash = (company.cash<0 || ceoCashNegativeForReady) && tradingWindowOpen();', 'const blockReadyForNegativeCash = company.cash<0 && tradingWindowOpen();');
+  .replace(/    if\(ceoPlayer && \(ceoPlayer\.cash\|\|0\)<-1e-9 && tradingWindowOpen\(\)\) return [^\n]*\n/, '')
+  .replace('const blockReadyForNegativeCash = (company.cash<-1e-9 || ceoCashNegativeForReady) && tradingWindowOpen();', 'const blockReadyForNegativeCash = company.cash<0 && tradingWindowOpen();');
+const SANS_GARDE_PARTS = src => src.replace(/  if\(!Number\.isFinite\(qty\)\) return \{ok:false, error:'Montant invalide : le nombre[^\n]*\n/, '');
+const SANS_DEMESURE = src => src.replace(/  if\(amount>SHORT_AMOUNT_ABSURD_MAX\) return [^\n]*\n/, '');
+// Retouche de la revue : sans prélèvement du résidu sur les bons, ou avec les comparaisons strictes d'avant.
+const SANS_RESIDU = src => src.replace(/function absorbCashRoundingResidueWithBonds\(player\)\{[\s\S]*?\n\}\n/,
+  'function absorbCashRoundingResidueWithBonds(player){}\n');
+const STRICT = src => src
+  .replace('(ceoPlayerForReady.cash||0)<-1e-9', '(ceoPlayerForReady.cash||0)<0')
+  .replace('(company.cash<-1e-9 || ceoCashNegativeForReady)', '(company.cash<0 || ceoCashNegativeForReady)')
+  .replace('if(co.cash<-1e-9 && tradingWindowOpen())', 'if(co.cash<0 && tradingWindowOpen())')
+  .replace('(ceoPlayer.cash||0)<-1e-9 && tradingWindowOpen()', '(ceoPlayer.cash||0)<0 && tradingWindowOpen()');
 
 async function setup(transform){
   const eng = loadEngine(transform ? { transform } : {});
@@ -52,8 +65,16 @@ async function bug11(eng){
     const r = eng.json(`openShortPosition(B, C, ${amt})`);
     ok(!r.ok && /Montant invalide/.test(r.error), `11 : découvert de ${amt} M$ refusé comme montant invalide (et non « marge initiale insuffisante pour Infinity M$ ») — ${r.error}`);
   }
-  const r2 = eng.json(`openShortPosition(B, C, 1e305)`);
-  ok(!r2.ok, `11 : découvert de 1e305 M$ refusé (marge initiale, section 307)`);
+  for(const amt of ['1e305', '1e300']){
+    const r2 = eng.json(`openShortPosition(B, C, ${amt})`);
+    ok(!r2.ok && /Montant démesuré/.test(r2.error) && !/e\+/.test(r2.error), `11 : découvert de ${amt} M$ refusé avec un libellé lisible, sans « 1e+300 » — ${r2.error}`);
+  }
+  // Garde sur le nombre de parts : un cours infime (1e-306 M$) rend le nombre de parts infini pour un montant fini.
+  const p0 = eng.run('B.stockPrice');
+  eng.run('B.stockPrice = 1e-306');
+  const r3 = eng.json(`openShortPosition(B, C, 1000)`);
+  eng.run(`B.stockPrice = ${p0}`);
+  ok(!r3.ok && /nombre de parts correspondant n’est pas un nombre fini/.test(r3.error), `11 : 1 000 M$ à 1e-306 M$/part (parts infinies) refusé par la garde sur le nombre de parts — ${r3.error}`);
   ok(eng.json(`!C.shortPositions || !C.shortPositions[B.id]`) && near(eng.run('C.cash'), 50), '11 : aucun découvert ouvert, encaisse de Carl intacte (50 M$)');
   const bidInf = eng.json(`placeBid(C, B, ${price}, Infinity)`), bidPx = eng.json(`placeBid(C, B, Infinity, 10)`);
   ok(!bidInf.ok && !bidPx.ok, `11 : bid d’une quantité infinie ou à prix limite infini refusé (${bidInf.error})`);
@@ -106,7 +127,7 @@ async function bug37(eng){
   const r = await eng.run(`markCompanyReady(A.id, 0)`);
   const s = eng.json('({ready: A.ready, alert: alerts[alerts.length-1] || "", v: state.version})');
   ok(r && !r.ok && !s.ready, '37 : « Tour Terminé » refusé (Co Alice pas prête)');
-  ok(/encaisse personnelle ≥ 0\$/.test(s.alert), `37 : message clair — ${s.alert}`);
+  ok(/encaisse personnelle ≥ 0\$/.test(s.alert) && /retirez des bons/.test(s.alert) && /empruntez en bons/.test(s.alert) && /vendez des actions/.test(s.alert), `37 : message clair, avec les moyens de remonter à 0 (retrait de bons, emprunt en bons, vente) — ${s.alert}`);
   ok(s.v === v0, '37 : refus sans sauvegarde (version inchangée)');
   // Encaisse redevenue positive : accepté.
   eng.run(`ALICE.cash = 0`);
@@ -117,6 +138,51 @@ async function bug37(eng){
   eng.run(`A.ready = false; state.gameClock.rollCount = 1; ALICE.cash = -456;`);
   const r3 = await eng.run(`markCompanyReady(A.id, 1)`);
   ok(r3 && r3.ok && eng.run('A.ready') === true, '37 : hors semestre, encaisse personnelle −456 M$ → accepté (règle des semestres seulement)');
+}
+
+// --- Retouche de la revue : résidu d'arrondi après un paiement financé par les bons --------------------------------
+async function residu(eng){
+  eng.run(`injectTradingCube = function(){ return 0; };`);
+  const price = eng.run('B.stockPrice');
+  // Scénario de la revue : encaisse −0,3, bons 100, bid de 0,37 M$.
+  eng.run(`ALICE.cash = -0.3; ALICE.bondBalance = 100; ALICE.pendingBids = [];`);
+  const t0 = eng.cashTotal();
+  eng.run(`placeBid(ALICE, B, ${price}, ${0.37 / price}); checkPendingOrders(B);`);
+  const s = eng.json('({cash: ALICE.cash, bonds: ALICE.bondBalance, bids: ALICE.pendingBids.length})');
+  ok(s.bids === 0 && s.cash >= 0 && near(s.cash, 0, 1e-12), `résidu : encaisse −0,3, bons 100, bid 0,37 → bid exécuté, encaisse ${s.cash} (jamais sous 0)`);
+  ok(near(s.bonds, 100 - 0.67, 1e-9) && near(eng.cashTotal(), t0, 1e-9), `résidu : bons ${f4(s.bonds)} (0,67 vendus), monnaie conservée`);
+  eng.run(`myPlayerId = ALICE.id; A.cash = 20; A.ready = false; state.gameClock.rollCount = 12;`);
+  ok(/data-mark-ready=/.test(eng.run('renderEntreprise()')) && !/Votre encaisse personnelle est négative/.test(eng.run('renderEntreprise()')), 'résidu : au semestre, bouton « Tour Terminé » présent, aucun bandeau « −0 K$ »');
+  const r = await eng.run('markCompanyReady(A.id, 12)');
+  ok(r && r.ok && eng.run('A.ready') === true, 'résidu : « Tour Terminé » accepté');
+  // Balayage de la sonde de la revue : 1 000 bids (encaisse −0,1 à −4, montants 0,37 à 9,25) → jamais d'encaisse < 0.
+  let neg = 0;
+  for(let i = 1; i <= 40; i++) for(let j = 1; j <= 25; j++){
+    eng.run(`ALICE.cash = ${-i / 10}; ALICE.bondBalance = 100; ALICE.pendingBids = []; placeBid(ALICE, B, ${price}, ${j * 0.37 / price}); checkPendingOrders(B);`);
+    if(eng.run('ALICE.cash') < 0) neg++;
+  }
+  ok(neg === 0, `résidu : 1 000 bids payés par les bons depuis une encaisse négative → ${neg} encaisse(s) < 0 (avant : 133)`);
+  // Fermetures forcées (appel de marge) payées par les bons : même garantie.
+  let negForce = 0;
+  for(let i = 1; i <= 20; i++) for(let j = 1; j <= 10; j++){
+    eng.run(`C.shortPositions = {}; C.optionPositions = []; C.cash = 50; C.bondBalance = 0;
+      openShortPosition(B, C, ${j * 0.37}); C.cash = ${-i / 10}; C.bondBalance = 100; closeShortPosition(B, C, Number.MAX_SAFE_INTEGER, true);`);
+    if(eng.run('C.cash') < 0) negForce++;
+  }
+  ok(negForce === 0, `résidu : 200 rachats forcés de découvert payés par les bons → ${negForce} encaisse(s) < 0`);
+}
+async function tolerance(eng){
+  eng.run(`myPlayerId = ALICE.id; A.cash = 20; A.ready = false; state.gameClock.rollCount = 12; ALICE.cash = -1e-17;`);
+  ok(/data-mark-ready=/.test(eng.run('renderEntreprise()')), 'tolérance : encaisse personnelle −1e-17 → bouton présent');
+  let r = await eng.run('markCompanyReady(A.id, 12)');
+  ok(r && r.ok, 'tolérance : encaisse personnelle −1e-17 → « Tour Terminé » accepté');
+  eng.run(`A.ready = false; ALICE.cash = 0; A.cash = -1e-17;`);
+  ok(/data-mark-ready=/.test(eng.run('renderEntreprise()')) && !/Encaisse négative/.test(eng.run('renderEntreprise()')), 'tolérance : encaisse de l’entreprise −1e-17 → bouton présent, pas de bandeau');
+  r = await eng.run('markCompanyReady(A.id, 12)');
+  ok(r && r.ok, 'tolérance : encaisse de l’entreprise −1e-17 → « Tour Terminé » accepté');
+  eng.run(`A.ready = false; A.cash = 20; ALICE.cash = -0.001;`);
+  r = await eng.run('markCompanyReady(A.id, 12)');
+  ok(r && !r.ok, 'tolérance : une vraie dette (−1 K$) reste bloquante');
 }
 
 (async () => {
@@ -138,9 +204,31 @@ async function bug37(eng){
     try{ await bug37(await setup(ANCIEN_PRET)); }catch(e){ failed = e.message; }
     ok(failed && /37 :/.test(failed), `contre-épreuve : l’ancien code échoue (${failed})`);
   });
+  await scenario('H. Bogue 11 — contre-épreuve (garde sur le nombre de parts retirée)', async () => {
+    let failed = null;
+    try{ await bug11(await setup(SANS_GARDE_PARTS)); }catch(e){ failed = e.message; }
+    ok(failed && /garde sur le nombre de parts/.test(failed), `contre-épreuve : sans la garde, le refus n’est plus le bon (${failed})`);
+  });
+  await scenario('I. Bogue 11 — contre-épreuve (montant démesuré non refusé : libellé « 1e+300 M$ »)', async () => {
+    let failed = null;
+    try{ await bug11(await setup(SANS_DEMESURE)); }catch(e){ failed = e.message; }
+    ok(failed && /libellé lisible/.test(failed), `contre-épreuve : l’ancien libellé échoue (${failed})`);
+  });
+  await scenario('J. Retouche — résidu d’arrondi après un paiement par les bons : encaisse jamais sous 0', async () => { await residu(await setup()); });
+  await scenario('K. Retouche — contre-épreuve (résidu non prélevé, comparaisons strictes)', async () => {
+    let failed = null;
+    try{ await residu(await setup(src => STRICT(SANS_RESIDU(src)))); }catch(e){ failed = e.message; }
+    ok(failed && /résidu :/.test(failed), `contre-épreuve : l’encaisse finit sous 0 et bloque le tour (${failed})`);
+  });
+  await scenario('L. Retouche — gardes de « Tour Terminé » tolérantes à l’arrondi', async () => { await tolerance(await setup()); });
+  await scenario('M. Retouche — contre-épreuve (comparaisons strictes)', async () => {
+    let failed = null;
+    try{ await tolerance(await setup(STRICT)); }catch(e){ failed = e.message; }
+    ok(failed && /tolérance :/.test(failed), `contre-épreuve : −1e-17 bloque le tour (${failed})`);
+  });
   await scenario('G. Bogue 37 — contre-épreuve (garde du moteur seule retirée : le bouton caché ne suffit pas)', async () => {
     let failed = null;
-    try{ await bug37(await setup(src => src.replace(/    if\(ceoPlayer && \(ceoPlayer\.cash\|\|0\)<0 && tradingWindowOpen\(\)\) return [^\n]*\n/, ''))); }catch(e){ failed = e.message; }
+    try{ await bug37(await setup(src => src.replace(/    if\(ceoPlayer && \(ceoPlayer\.cash\|\|0\)<-1e-9 && tradingWindowOpen\(\)\) return [^\n]*\n/, ''))); }catch(e){ failed = e.message; }
     ok(failed && /37 : « Tour Terminé » refusé/.test(failed), `contre-épreuve : sans la garde de l’applyFn, l’action passe (${failed})`);
   });
   if(failures.length){ console.log(`\n${failures.length} scénario(s) en échec :\n` + failures.join('\n')); process.exit(1); }

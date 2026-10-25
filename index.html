@@ -4711,8 +4711,8 @@ function renderEntreprise(){
   
   
   const ceoPlayerForReady = state.players.find(p=>p.id===company.ceoId); // Section 314 — bogue 37 : encaisse personnelle du CEO aussi
-  const ceoCashNegativeForReady = !!(ceoPlayerForReady && (ceoPlayerForReady.cash||0)<0);
-  const blockReadyForNegativeCash = (company.cash<0 || ceoCashNegativeForReady) && tradingWindowOpen();
+  const ceoCashNegativeForReady = !!(ceoPlayerForReady && (ceoPlayerForReady.cash||0)<-1e-9); // Section 314 — retouche de la revue : tolérance d'arrondi
+  const blockReadyForNegativeCash = (company.cash<-1e-9 || ceoCashNegativeForReady) && tradingWindowOpen();
   const readyActionHtml = company.inJail
     ? `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`
     : (company.ready
@@ -5598,7 +5598,7 @@ function renderEntreprise(){
   
   
   
-  const negativeCashBannerHtml = (company.cash < 0
+  const negativeCashBannerHtml = (company.cash < -1e-9 // Section 314 — retouche de la revue : tolérance d'arrondi (plus de « −0 K$ »)
     ? `<div style="background:var(--brick);color:#fff;padding:8px 14px;border-radius:var(--radius-md);margin-bottom:12px;font-weight:600;">⚠️ Encaisse négative (${fmt(company.cash)}) — remédiez à la situation dès que possible.</div>`
     : '')
     // Section 314 — bogue 37 : « Tour Terminé » disparaît aussi au semestre quand l'encaisse PERSONNELLE du CEO est
@@ -6192,6 +6192,7 @@ const PRODUCTS_MATRIX = [
       `1 contrat couvert = 100 parts détenues`,
       `Parts comptées via l'actionnariat réel`,
       `Vos parts de CEO ne comptent pas`,
+      `Plafond : 15 % des parts de l'entreprise par joueur, toutes options écrites confondues — couvertes comprises`, // Section 314 — décision : plafond des options écrites
     ]},
   {f:'option', nm:`Cash-secured put`, sub:`Être payé pour attendre un point d'entrée`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Encaisse ou bons immobilisés`, duree:`1 à 3 semestres`,
@@ -6208,6 +6209,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Couverture = (encaisse + bons positifs) ÷ (strike × 100)`,
       `Règlement physique : vous recevez les parts`,
+      `Plafond : 15 % des parts de l'entreprise par joueur, toutes options écrites confondues — couvertes comprises`, // Section 314 — décision : plafond des options écrites
     ]},
   {f:'option', nm:`Écriture nue`, sub:`La prime intégrale, et tout le risque avec`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`30 % du notionnel en valeur nette`, duree:`1 à 3 semestres`,
@@ -6241,6 +6243,7 @@ const PRODUCTS_MATRIX = [
       `Achat = long call bas + short call haut`,
       `Deux jambes, même nombre de contrats`,
       `Jamais fusionné avec une position simple existante`,
+      `La jambe écrite compte dans le plafond des options écrites : 15 % des parts de l'entreprise par joueur`, // Section 314 — décision : plafond des options écrites
     ]},
   {f:'option', nm:`Bear spread`, sub:`Le pari baissier à perte bornée`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Débit net (ou crédit net à la vente)`, duree:`1 à 3 semestres`,
@@ -6257,6 +6260,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Achat = long put haut + short put bas`,
       `Un flux net nul à l'ouverture est refusé`,
+      `La jambe écrite compte dans le plafond des options écrites : 15 % des parts de l'entreprise par joueur`, // Section 314 — décision : plafond des options écrites
     ]},
   {f:'option', nm:`ATM straddle`, sub:`Parier sur l'amplitude, pas sur la direction`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Deux primes (payées ou encaissées)`, duree:`1 à 3 semestres`,
@@ -6272,6 +6276,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Long call ATM + long put ATM (ou l'inverse écrit)`,
       `Strike figé à l'ouverture, jamais réajusté`,
+      `Version vendue : les deux jambes écrites comptent dans le plafond des options écrites (15 % des parts par joueur)`, // Section 314 — décision : plafond des options écrites
     ]},
   
   {f:'assur', nm:`Assurance de loyer`, sub:`Payer une prime pour ne pas payer un loyer`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
@@ -11210,6 +11215,7 @@ function tradeCubeRange(company, qty, color, accumField, actorId){
 
 const HTB_BASE_ANNUAL = 0.02, HTB_SLOPE_ANNUAL = 0.5, HTB_MAX_ANNUAL = 0.50;
 const SHORT_MARGIN_MAINTENANCE_PCT = 0.30;
+const SHORT_AMOUNT_ABSURD_MAX = 1e6; // Section 314 — retouche de la revue : 1 000 000 M$ par vente à découvert, au-delà « montant démesuré »
 
 
 
@@ -11673,6 +11679,7 @@ function fillPendingBid(player, company, bid){
     if(bondsNeeded>1e-9){ player.bondBalance += bondsNeeded; player.cash -= bondsNeeded; state.bank.cash += bondsNeeded; }
     return {filled:0};
   }
+  if(bondsNeeded>1e-9) absorbCashRoundingResidueWithBonds(player); // Section 314 — retouche de la revue : jamais −1e-17 d'encaisse
   bid.qty -= qtyToFill;
   return {filled:qtyToFill, entries:r.entries, amount, qty:qtyToFill};
 }
@@ -12254,6 +12261,10 @@ function openShortPosition(company, player, amount){
   // arrêté que par accident (comparaisons NaN de la marge initiale) ; un nombre de parts infini ne se sauvegarde pas
   // (JSON → null) : la dette du découvert disparaissait au rechargement, l'encaisse restait.
   if(!Number.isFinite(amount)) return {ok:false, error:'Montant invalide : saisissez un nombre fini.'};
+  // Section 314 — retouche de la revue : montant démesuré refusé avec un libellé lisible (avant : « découvert de
+  // 1e+300 M$ » dans le message de marge). Le plafond ne gêne aucune partie réelle : la marge initiale limite déjà le
+  // découvert à la valeur nette admissible ÷ 30 %.
+  if(amount>SHORT_AMOUNT_ABSURD_MAX) return {ok:false, error:`Montant démesuré : une vente à découvert est limitée à ${fmt(SHORT_AMOUNT_ABSURD_MAX)} par opération (la marge initiale la limite de toute façon à votre valeur nette admissible ÷ ${(SHORT_MARGIN_MAINTENANCE_PCT*100).toFixed(0)} %).`};
   if(player.id===company.ceoId) return {ok:false, error:`Le CEO de ${company.name} ne peut pas vendre à découvert ses propres parts — délit d'initié intégré au jeu.`};
   if(state.gameEndedReason) return {ok:false, error:'La partie est terminée — plus aucun trading possible.'};
   
@@ -12352,6 +12363,7 @@ function closeShortPosition(company, player, amount, _bypassTradingWindow){
   player.cumRealizedPnl = (player.cumRealizedPnl||0) + (pos.avgOpenPrice-price)*qty;
   player.cash -= effectiveAmount;
   state.bank.cash += effectiveAmount;
+  if(_bypassTradingWindow) absorbCashRoundingResidueWithBonds(player); // Section 314 — retouche de la revue
   let bankEntry = company.shareholders.find(s=>s.playerId==='BANK');
   if(!bankEntry){ bankEntry = {playerId:'BANK', shares:0}; company.shareholders.push(bankEntry); }
   bankEntry.shares += qty; 
@@ -13032,6 +13044,7 @@ function closeOptionPosition(player, positionId, shares, _bypassTradingWindow, _
     }
     player.cash -= notional;
     state.bank.cash += notional;
+    if(_bypassTradingWindow) absorbCashRoundingResidueWithBonds(player); // Section 314 — retouche de la revue
     player.cumOptionNetPremium = (player.cumOptionNetPremium||0) - notional;
     entries.push({label:`${player.name} (rachat de clôture — option ${typeLabel}, ${co.name})`, amount:-notional});
     entries.push({label:`Banque (vente de l'option ${typeLabel} — ${co.name})`, amount:notional});
@@ -13209,6 +13222,18 @@ function settleOptionStrategyLegCash(player, pos, company, intrinsic){
 
 
 
+// Section 314 — retouche de la revue : après un paiement financé par les bons (bid, fermeture forcée, exercice),
+// encaisse + (montant − encaisse) − montant laisse souvent un résidu d'arrondi NÉGATIF (≈ −1e-17) : « Tour Terminé »
+// était alors refusé au semestre avec « −0 K$ ». Ce résidu est prélevé sur les bons (vente à la banque), monnaie
+// conservée : l'encaisse finit à 0 exactement.
+function absorbCashRoundingResidueWithBonds(player){
+  const c = player.cash||0;
+  if(c<0 && c>-1e-9 && (player.bondBalance||0)>=-c){
+    player.bondBalance += c;
+    state.bank.cash += c;
+    player.cash = 0;
+  }
+}
 // Section 307 — reasonLabel (facultatif) : libellé du journal pour les autres règlements forcés (rachat forcé d'un
 // découvert ou d'une option écrite par l'appel de marge) ; sans lui, le libellé historique de l'exercice d'option.
 function raiseCashForForcedSettlement(player, amountNeeded, reasonLabel){
@@ -13253,6 +13278,7 @@ function settleOptionExercise(player, pos, company){
     
     
     
+    if(shortfall>1e-9) absorbCashRoundingResidueWithBonds(player); // Section 314 — retouche de la revue
     const exerciseBuyCubeRange = tradeCubeRange(company, qty, 'green', undefined, player.id); // Section 314 — bogue 67
     if(exerciseBuyCubeRange) injectTradingCube(company, 'green', exerciseBuyCubeRange.qtyMin, exerciseBuyCubeRange.qtyMax);
     
@@ -14257,12 +14283,14 @@ async function markCompanyReady(companyId, expectedRoll){
     
     
     
-    if(co.cash<0 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`};
+    if(co.cash<-1e-9 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse ≥ 0$ pour continuer — l'encaisse de ${co.name} est actuellement de ${fmt(co.cash)}.`};
     // Section 314 — bogue 37 : la règle vaut aussi pour l'encaisse PERSONNELLE du CEO (demande de Julien, archive
     // 227-300 : « l'encaisse négatives des joueurs et des entreprises ne permet pas de passer au tour suivant seulement
     // aux semestres »). Revérifiée ici, sur l'état frais (action de tour de la section 308 : refus sans sauvegarde).
     const ceoPlayer = state.players.find(p=>p.id===co.ceoId);
-    if(ceoPlayer && (ceoPlayer.cash||0)<0 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse personnelle ≥ 0$ pour continuer — votre encaisse personnelle est actuellement de ${fmt(ceoPlayer.cash)}. Retirez des bons gouvernementaux ou vendez des actifs, puis réessayez.`};
+    // Section 314 — retouche de la revue : tolérance d'arrondi (< −1e-9, comme ailleurs dans le moteur, ici et pour
+    // l'encaisse de l'entreprise ci-dessus) ; le message donne les moyens de remonter à 0.
+    if(ceoPlayer && (ceoPlayer.cash||0)<-1e-9 && tradingWindowOpen()) return {ok:false, error:`Vous devez avoir une encaisse personnelle ≥ 0$ pour continuer — votre encaisse personnelle est actuellement de ${fmt(ceoPlayer.cash)}. Pour remonter à 0 : retirez des bons gouvernementaux, empruntez en bons (vente à découvert de bons, dans la limite de la dette maximale de ${fmt(state.settings.bondShortMax||0)}), vendez des actions ou fermez des positions qui vous rapportent de l'encaisse, puis réessayez.`};
     if(co.ready) return {ok:false, error:null, code:'already-ready'};
     co.ready = true;
     log(`${co.name} est prête pour le prochain lancer de dés pour tous.`);

@@ -240,17 +240,24 @@ const SELECT_BLOQUE = src => src.replace("if(appSelectOpenEl && ae===appSelectOp
       await A.cliquer(`[data-etf-sell="${etf}"]`);
       const html = A.fenetre();
       await A.cliquer('mOk');
+      // Section 310 — décision « revente de parts REIT » : la confirmation dépose une offre (rien ne bouge) ; Co Carl l'accepte.
+      const S1 = JSON.parse(T.shared.get('game:' + T.code));
+      const offerCount = (S1.assetSaleOffers || []).filter(o => o.kind === 'etf').length;
+      const carlBeforeAccept = S1.companies.find(x => x.id === c).etfHoldings[etf] || 0;
+      const closedAfterOffer = A.fenetre() === '';
+      if(offerCount) await A.run(`(async ()=>{ const me = myPlayerId; myPlayerId = companyById(${ESC(c)}).ceoId; await acceptAssetSaleOffer(state.assetSaleOffers[0].id); myPlayerId = me; })()`);
       const S = JSON.parse(T.shared.get('game:' + T.code));
       const carl = S.companies.find(x => x.id === c);
       console.log(`    [${variant}] Co Carl reçoit ${carl.etfHoldings[etf] || 0} % pour ${(carl0 - carl.cash).toFixed(2)} M$`);
       if(variant === 'corrigé'){
         ok(form.pct === '30' && form.price === '5' && form.buyer === c, 'D : pourcentage (30), prix (5) et acheteur (Co Carl) conservés (avant : 1 et 0)');
-        ok(/Vendre des parts de REIT/.test(html) && /<b>30%<\/b>/.test(html) && html.includes(A.run('fmt(5)')) && !/Prix nul/.test(html), 'D : « Vendre » ouvre une confirmation qui récapitule 30 % à Co Carl pour 5,00 M$');
-        ok(near(carl.etfHoldings[etf], 30) && near(carl0 - carl.cash, 5), 'D : confirmée, la vente cède 30 % pour 5 M$');
+        ok(/Proposer une vente de parts de REIT/.test(html) && /<b>30%<\/b>/.test(html) && html.includes(A.run('fmt(5)')) && !/Prix nul/.test(html), 'D : « Proposer la vente » ouvre une confirmation qui récapitule 30 % à Co Carl pour 5,00 M$');
+        ok(offerCount === 1 && carlBeforeAccept === 0, 'D : confirmée, une offre est déposée et rien ne bouge avant l’acceptation (section 310)');
+        ok(near(carl.etfHoldings[etf], 30) && near(carl0 - carl.cash, 5), 'D : acceptée par Co Carl, la vente cède 30 % pour 5 M$');
         ok(near(A.eng.cashTotal(), T0), 'D : conservation de la monnaie');
-        ok(A.fenetre() === '', 'D : la fenêtre se ferme après la vente');
+        ok(closedAfterOffer, 'D : la fenêtre se ferme après le dépôt de l’offre');
       } else {
-        ok(form.price === '0' && form.pct === '1', 'D : contre-épreuve — sans la préservation, le prix revient à 0 et le pourcentage à 1');
+        ok(form.price === '' && form.pct === '1', 'D : contre-épreuve — sans la préservation, le prix est vidé (section 310 : champ vide par défaut) et le pourcentage revient à 1');
         ok(/Prix nul/.test(html), 'D : contre-épreuve — la confirmation (C2) signale alors « Prix nul » avant de céder 1 % pour 0 $');
       }
     }

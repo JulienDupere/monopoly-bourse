@@ -37,7 +37,7 @@ async function setup(opts = {}){
   const s2 = attente(3);
   ok(/\+2\.00 M\$/.test(s2), `2e semestre : l'attente fixe de +2,00 M$ est affichée (${s2.replace(/<[^>]*>/g, '')})`);
   ok(!/moyenne/.test(s2), `2e semestre : ne parle plus de « moyenne » (${s2.replace(/<[^>]*>/g, '')})`);
-  ok(/attente fixe de départ du 2e semestre/.test(s2), '2e semestre : « attente fixe de départ du 2e semestre, sans lien avec vos résultats »');
+  ok(/attente fixe de départ pour le 2e semestre de l.entreprise/.test(s2), "2e semestre de l'entreprise : attente fixe de départ, sans lien avec ses résultats");
   const s1 = attente(0);
   ok(!/moyenne des 0/.test(s1), `1er semestre : plus de « moyenne des 0 dernier(s) semestre(s) » (${s1.replace(/<[^>]*>/g, '')})`);
   const s3 = attente(6);

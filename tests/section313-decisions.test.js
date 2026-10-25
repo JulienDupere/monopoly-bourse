@@ -100,6 +100,78 @@ const PLAFOND_TAXE = s => s.replace(/const insurerPortion = insurerExists\(ins\.
     ok(near(eng.json(`liveTakeoverTaxQuote(4, A.id, 'recurring', 0, 'year', 0.8)`).exposure, 0.8), 'contre-épreuve : exposition 0,8 — T3 détecte la régression');
   });
 
+  // ---------------------------------------------------------------- S. Sous-standard remboursée automatiquement
+  // A signe d'abord une sous-standard sur Bleu foncé 2 (lancer 0), puis un contrat annuel sur la même case.
+  async function avecSousStandard(opts = {}){
+    const eng = await partie(opts);
+    const r = await signer(eng, [KEY_P], 'sub', 0);
+    if(!r.ok) throw new Error('sous-standard non signée : ' + r.error);
+    return { eng, prime: eng.run('P.subInsurance.premium') };
+  }
+  await scenario('S1 — contrat annuel sur une case couverte par la sous-standard de A : annulée et remboursée par la banque, dans la même action', async () => {
+    const { eng, prime } = await avecSousStandard();
+    const c = eng.json(`insuranceBundleConditions(A.id, [${JSON.stringify(KEY_P)}], 'recurring', 'year', 0)`);
+    ok(near(c.items[0].subRefund, prime) && c.items[0].subRefundInsurerId === 'BANK', `conditions affichées : remboursement de ${f4(prime)} par la banque`);
+    const html = eng.run(`insuranceBundleDescribe(${JSON.stringify(c)})`);
+    ok(/sous-standard sur cette case sera annulée et sa prime \([^)]*\) remboursée automatiquement par Banque/.test(html) && !/ne servira plus/.test(html), 'fenêtre de confirmation : mention claire du remboursement (plus d’avertissement « ne servira plus »)');
+    const s0 = snap(eng), m0 = eng.cashTotal(), n0 = eng.run('state.log.length');
+    const r = await signer(eng, [KEY_P], 'year', 0);
+    const s1 = snap(eng);
+    ok(r.ok && eng.run('!!P.insurance') && eng.run('P.subInsurance') === null, 'contrat annuel signé ; sous-standard annulée');
+    ok(near(s0.A - s1.A, r.cond.total - prime) && near(s1.bank - s0.bank, r.cond.total - prime), `A paie la prime annuelle ${f4(r.cond.total)} et récupère ${f4(prime)} (net ${f4(s0.A - s1.A)})`);
+    ok(near(eng.cashTotal(), m0), 'monnaie conservée');
+    const lignes = eng.json(`state.log.slice(0, state.log.length - ${n0})`);
+    const ligne = lignes.find(e => /contrat groupé/.test(JSON.stringify(e)));
+    const txt = JSON.stringify(ligne || {});
+    ok(/sous-standard sur Bleu foncé 2 annulée, prime de .+? remboursée par Banque/.test(txt), 'journal : la ligne du contrat mentionne l’annulation et le remboursement');
+    ok(ligne && Array.isArray(ligne.entries) && ligne.entries.some(e => near(e.amount, prime) && /remboursement sous-standard/.test(e.label)) && ligne.entries.some(e => near(e.amount, -prime) && /Banque/.test(e.label)), 'transaction du contrat : remboursement +prime à A, −prime à la banque');
+  });
+  await scenario('S2 — sous-standard reprise par C : c’est C, l’assureur actuel, qui rembourse', async () => {
+    const { eng, prime } = await avecSousStandard();
+    eng.run('myPlayerId = __ids[2];');
+    await eng.run(`takeOverSubInsurance(P.id)`);
+    eng.run('myPlayerId = __ids[0];');
+    ok(eng.run('P.subInsurance.insurerId') === eng.run('C.id'), 'C a repris la sous-standard (et perçu la prime)');
+    const s0 = snap(eng), m0 = eng.cashTotal();
+    const r = await signer(eng, [KEY_P], 'year', 0);
+    const s1 = snap(eng);
+    ok(r.ok && eng.run('P.subInsurance') === null, 'contrat annuel signé, sous-standard annulée');
+    ok(near(s0.C - s1.C, prime) && near(s1.bank - s0.bank, r.cond.total), `C rembourse ${f4(prime)} ; la banque garde la prime annuelle ${f4(r.cond.total)}`);
+    ok(near(eng.cashTotal(), m0), 'monnaie conservée');
+  });
+  await scenario('S3 — assureur de la sous-standard introuvable : annulée sans remboursement (aucun argent créé)', async () => {
+    const { eng } = await avecSousStandard();
+    eng.run(`P.subInsurance.insurerId = 'disparue';`);
+    const c = eng.json(`insuranceBundleConditions(A.id, [${JSON.stringify(KEY_P)}], 'recurring', 'year', 0)`);
+    ok(c.items[0].subRefund === 0 && /annulée sans remboursement/.test(eng.run(`insuranceBundleDescribe(${JSON.stringify(c)})`)), 'fenêtre : « annulée sans remboursement (assureur introuvable) »');
+    const s0 = snap(eng), m0 = eng.cashTotal();
+    const r = await signer(eng, [KEY_P], 'year', 0);
+    ok(r.ok && eng.run('P.subInsurance') === null && near(s0.A - snap(eng).A, r.cond.total), 'sous-standard annulée, A ne récupère rien');
+    ok(near(eng.cashTotal(), m0), 'monnaie conservée');
+  });
+  await scenario('S4 — contrat semestriel de A sur une case où la sous-standard est celle d’une AUTRE entreprise (C) : rien n’est annulé', async () => {
+    const eng = await partie();
+    eng.run(`P.subInsurance = {insuredCompanyId:C.id, premium:0.05, insurerId:'BANK', deductible:0, signedAtRoll:0, coveredAmount:0.5};`);
+    const m0 = eng.cashTotal(), s0 = snap(eng);
+    const r = await signer(eng, [KEY_P], 'semester', 0);
+    ok(r.ok && eng.run('P.subInsurance.insuredCompanyId') === eng.run('C.id') && near(snap(eng).C, s0.C), 'sous-standard de C conservée, C non remboursé');
+    ok(near(eng.cashTotal(), m0), 'monnaie conservée');
+  });
+  await scenario('S5 — sous-standard annulée à la main entre l’affichage et la signature : « conditions changées », rien signé', async () => {
+    const { eng } = await avecSousStandard();
+    const c = eng.json(`insuranceBundleConditions(A.id, [${JSON.stringify(KEY_P)}], 'recurring', 'year', 0)`);
+    await eng.run(`cancelSubInsurance(P.id)`);
+    const m0 = eng.cashTotal(), a0 = eng.run('A.cash');
+    const r = await eng.run(`attemptActionWithRetry(()=>purchaseInsuranceBundle(${JSON.stringify(c.items.map(i=>({item:{type:i.type, id:i.id, label:i.label}, insurerId:'BANK', premium:i.premium})))}, 'recurring', 'year', {silent:true, deductible:0, expectedConditions:${JSON.stringify(c)}}))`);
+    ok(r.ok === false && r.code === 'stale-conditions' && !eng.run('P.insurance') && near(eng.run('A.cash'), a0) && near(eng.cashTotal(), m0), 'refus « conditions changées » : le remboursement affiché n’existe plus');
+  });
+  await scenario('S6 — contre-épreuve : sans l’annulation automatique, la sous-standard reste et sa prime est perdue', async () => {
+    const { eng, prime } = await avecSousStandard({ transform: s => s.replace("if(subInsuranceRefundableOnNormal(p, myCo.id)){", "if(false){") });
+    const s0 = snap(eng);
+    const r = await signer(eng, [KEY_P], 'year', 0);
+    ok(r.ok && eng.run('!!P.subInsurance') && near(s0.A - snap(eng).A, r.cond.total), `contre-épreuve : sous-standard toujours là, A ne récupère pas ${f4(prime)} — S1 détecte la régression`);
+  });
+
   if(failures.length){ console.log(`\nÉCHEC : ${failures.length} scénario(s) : ${failures.join(' | ')}`); process.exit(1); }
   console.log(`\nOK : section 313 (décisions de Julien) — ${n} vérifications, 0 scénario(s) en échec`);
 })().catch(e => { console.error(e); process.exit(1); });

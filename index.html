@@ -8717,6 +8717,7 @@ async function purchaseInsuranceBundle(selections, claimMode, term, opts){
     const group = groups[insurerId];
     const contractId = uid();
     let totalPremium = 0;
+    const subRefundEntries = [], subRefundTexts = []; // Section 313 — décision de Julien (2026-10-25)
     group.forEach(s=>{
       totalPremium += s.premium;
       // Section 313 — bogue 39 (décision de Julien) : coveredAmount = montant couvert affiché à la signature ;
@@ -8727,6 +8728,9 @@ async function purchaseInsuranceBundle(selections, claimMode, term, opts){
         
         
         p.insurance = {insuredCompanyId:myCo.id, premium:s.premium, insurerId, deductible, contractId, claimMode:fresh.claimMode, signedAtRoll:state.gameClock.rollCount, quotedTerm:term||null, coveredAmount:s.item.covered};
+        // Section 313 — décision de Julien (2026-10-25) : la sous-standard de la MÊME entreprise sur cette case ne servirait
+        // plus (l'assurance normale passe en premier) : annulée et remboursée dans la même action (avant : avertissement).
+        if(subInsuranceRefundableOnNormal(p, myCo.id)){ const rf = cancelSubInsuranceForNormalContract(p); subRefundEntries.push(...rf.entries); subRefundTexts.push(rf.text); }
       } else {
         state.taxInsurances.push({id:uid(), contractId, taxPos:s.item.id, insuredCompanyId:myCo.id, premium:s.premium, insurerId, deductible, claimMode:fresh.claimMode, signedAtRoll:state.gameClock.rollCount, quotedTerm:term||null, coveredAmount:null}); // Section 313 — décision de Julien (2026-10-25) : taxe non plafonnée
       }
@@ -8735,10 +8739,10 @@ async function purchaseInsuranceBundle(selections, claimMode, term, opts){
     logFin(myCo.id, 'insurance_premium_expense', -totalPremium);
     const insuredPl = state.players.find(x=>x.id===myCo.ceoId);
     if(insuredPl) insuredPl.stats.spentInsurance += totalPremium;
-    const entries = [{label:`${myCo.name} (prime du contrat groupé)`, amount:-totalPremium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:totalPremium}];
+    const entries = [{label:`${myCo.name} (prime du contrat groupé)`, amount:-totalPremium}, {label:`${insurerLabel(insurerId)} (vendeur)`, amount:totalPremium}].concat(subRefundEntries); // Section 313 — décision de Julien (2026-10-25) : remboursements dans la transaction
     if(insurerId==='BANK') state.bank.cash += totalPremium;
     else { const ins=companyById(insurerId); if(ins){ ins.cash += totalPremium; logFin(ins.id, 'insurance_premium_revenue', totalPremium); } }
-    log(`${myCo.name} signe un contrat groupé (${group.length} case${group.length>1?'s':''}: ${group.map(s=>s.item.label).join(', ')}) auprès de ${insurerLabel(insurerId)} pour une prime totale de ${totalPremium.toFixed(2)} — ${claimMode==='single'?'un seul sinistre par terrain':'sinistres récurrents'}.`, entries);
+    log(`${myCo.name} signe un contrat groupé (${group.length} case${group.length>1?'s':''}: ${group.map(s=>s.item.label).join(', ')}) auprès de ${insurerLabel(insurerId)} pour une prime totale de ${totalPremium.toFixed(2)} — ${claimMode==='single'?'un seul sinistre par terrain':'sinistres récurrents'}${subRefundTexts.length ? ` — ${subRefundTexts.join(' ; ')} (l’assurance normale passe en premier)` : ''}.`, entries); // Section 313 — décision de Julien (2026-10-25)
   }
   if(!opts.silent){ await saveGame(); render(); }
   return {ok:true, alreadyCovered};
@@ -8771,6 +8775,13 @@ function insuranceBundleConditions(companyId, keys, claimMode, term, deductible)
     else dropped.push(insuranceItemLabel(k));
   });
   if(items.length===0) return {unavailable: dropped.length ? `Plus aucune des cases choisies n'est assurable pour ce terme (${dropped.join(', ')}) : déjà assurée, ou plus à portée depuis la position actuelle.` : 'Aucune case choisie.'};
+  // Section 313 — décision de Julien (2026-10-25) : sous-standard de cette entreprise remboursée à la signature d'un contrat
+  // normal ; montant et assureur qui rembourse font partie des conditions confirmées (annulée entre-temps : reconfirmation).
+  if(!isSub) items.forEach(it=>{
+    const p = it.type==='prop' ? state.properties.find(x=>x.id===it.id) : null;
+    const sub = subInsuranceRefundableOnNormal(p, companyId);
+    if(sub){ it.subRefund = insurerExists(sub.insurerId) ? sub.premium : 0; it.subRefundInsurerId = sub.insurerId || 'BANK'; }
+  });
   return {companyName:co.name, term, claimMode:mode, termRolls, deductible:ded, items, dropped, total:items.reduce((s,i)=>s+i.premium, 0)};
 }
 // Section 313 — bogue 39 (décision de Julien : « plafonner l'indemnité d'assurance au montant couvert affiché à la
@@ -20207,13 +20218,40 @@ function insuranceItemIsService(it){
 }
 // Section 313 — retouche de la revue (bogue 52 dans l'ordre inverse) : contrat annuel ou semestriel signé sur une case
 // déjà couverte par la sous-standard de la MÊME entreprise : l'assurance normale passe en premier, la sous-standard ne
-// servira plus. Avertissement seulement (elle reste annulable, prime remboursée, tant qu'aucun lancer n'a eu lieu).
+// servira plus. Section 313 — décision de Julien (2026-10-25) : elle est annulée et sa prime remboursée automatiquement
+// à la signature ; la fenêtre le dit clairement (avant : simple avertissement, annulation manuelle).
 function insuranceSubWarningHtml(it, term, companyId){
   if(!it || it.type!=='prop' || term==='sub') return '';
   const p = state.properties.find(x=>x.id===it.id);
   const co = companyId ? companyById(companyId) : myCompany();
   if(!p || !co || !p.subInsurance || p.subInsurance.insuredCompanyId!==co.id) return '';
-  return ` <span style="color:var(--brick,#C0392B);">⚠️ votre assurance sous-standard sur cette case ne servira plus (l’assurance normale passe en premier) ; vous pouvez l’annuler, prime remboursée, avant le prochain lancer.</span>`;
+  const sub = subInsuranceRefundableOnNormal(p, co.id);
+  if(!sub) return ` <span style="color:var(--brick,#C0392B);">⚠️ votre assurance sous-standard sur cette case ne servira plus (l’assurance normale passe en premier).</span>`;
+  if(!insurerExists(sub.insurerId)) return ` <span style="color:var(--brick,#C0392B);">ℹ️ votre assurance sous-standard sur cette case sera annulée sans remboursement à la signature (assureur introuvable ; l’assurance normale passe en premier).</span>`;
+  return ` <span style="color:var(--success,#047857);">ℹ️ votre assurance sous-standard sur cette case sera annulée et sa prime (${fmt(sub.premium)}) remboursée automatiquement par ${esc(insurerLabel(sub.insurerId))} à la signature (l’assurance normale passe en premier).</span>`;
+}
+// Section 313 — décision de Julien (2026-10-25) : sous-standard de companyId sur p qu'un contrat normal annule et
+// rembourse : celle du lancer en cours (comme cancelSubInsurance ; après un lancer, elle a déjà servi). Sinon null.
+function subInsuranceRefundableOnNormal(p, companyId){
+  const sub = p && p.subInsurance;
+  if(!sub || sub.insuredCompanyId!==companyId) return null;
+  return state.gameClock.rollCount===sub.signedAtRoll ? sub : null;
+}
+// Section 313 — décision de Julien (2026-10-25) : annule la sous-standard de p et rembourse sa prime à l'assurée (même
+// logique que cancelSubInsurance). Rembourse l'assureur ACTUEL du contrat : la banque, ou l'entreprise qui l'a repris
+// (elle a reçu la prime, ou le prix de reprise, et porte le risque). Assureur introuvable : annulée sans remboursement
+// (personne ne peut payer ; aucun argent créé). À appeler dans une applyFn. Renvoie {entries, text}.
+function cancelSubInsuranceForNormalContract(p){
+  const sub = p.subInsurance;
+  const co = companyById(sub.insuredCompanyId);
+  const premium = sub.premium, insurerId = sub.insurerId;
+  p.subInsurance = null;
+  if(!insurerExists(insurerId)) return {entries:[], text:`sous-standard sur ${p.name} annulée sans remboursement (assureur introuvable)`};
+  if(co){ co.cash += premium; logFin(co.id, 'insurance_refund_revenue', premium); }
+  if(!insurerId || insurerId==='BANK') state.bank.cash -= premium;
+  else { const ins = companyById(insurerId); ins.cash -= premium; logFin(ins.id, 'insurance_refund_expense', -premium); }
+  return {entries:[{label:`${co?co.name:'?'} (remboursement sous-standard ${p.name})`, amount:premium}, {label:`${insurerLabel(insurerId)} (sous-standard annulée)`, amount:-premium}],
+    text:`sous-standard sur ${p.name} annulée, prime de ${fmt(premium)} remboursée par ${insurerLabel(insurerId)}`};
 }
 function insuranceBundleDescribe(c){
   const termLabel = c.term==='sub' ? 'Assurance sous-standard (le tout prochain lancé)' : `${c.term==='semester' ? 'Semestre' : 'Année financière'} (${c.termRolls} lancé(s) restant(s))`;

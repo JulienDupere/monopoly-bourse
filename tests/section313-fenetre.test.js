@@ -247,7 +247,7 @@ const CLIC_DIRECT = "  if(!sameConditions(shown, fresh)){ openFresh(); return {o
     A.run('state.companies[0].position = 2; modalInsureBundle()'); await A.calme();
     ok(/Service 1 : [^<]*à risque pour un lancer de 7/.test(A.fenetre()), 'fenêtre : « à risque pour un lancer de 7 » sur la ligne du service');
     A.run('closeModal(); state.companies[0].position = 30; modalInsureBundle()'); await A.calme();
-    ok(/Bleu foncé 2[^]*sous-standard sur cette case ne servira plus/.test(A.fenetre()), 'contrat annuel : avertissement « votre assurance sous-standard sur cette case ne servira plus »');
+    ok(/Bleu foncé 2[^]*sous-standard sur cette case sera annulée et sa prime \([^)]*\) remboursée automatiquement par Banque/.test(A.fenetre()) && !/ne servira plus/.test(A.fenetre()), 'contrat annuel : mention « votre assurance sous-standard sur cette case sera annulée et sa prime remboursée automatiquement » (décision de Julien du 2026-10-25, remplace l’avertissement)');
     const html = A.run(`insuranceBundleDescribe(insuranceBundleConditions(myCompany().id, [{type:'prop', id:state.properties.find(p=>p.name==='Service 1').id}], 'recurring', 'year', 0))`);
     ok(/pour un lancer de 7/.test(html), 'fenêtre de confirmation : colonne « Couvert au plus » précisée pour un lancer de 7');
   });

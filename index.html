@@ -9387,14 +9387,32 @@ function forfeitPendingDividendAnnouncementsAtGameEnd(){
 // balance + intérêt annuel versés par la débitrice, accord clôturé ; pari du lot commercial (loyers accumulés − prix)
 // réparti à parts égales. À une frontière d'année (durée maximale), processYearEnd a déjà tout réglé : rien à faire.
 // Monnaie conservée : de simples virements entre entreprises.
+// Section 316 — retouche de la revue (option retenue, à valider par Julien) : le prix ENTIER du lot sur une année à
+// peine commencée était injuste (lot gagné au lancer 7, fin au lancer 8, aucun loyer : 9 M$ payés). Le prix est réglé
+// au prorata des lancers écoulés depuis la résolution de l'enchère, sur 6 lancers par année (prix × écoulés ÷ 6), contre
+// les loyers réellement comptés. Le règlement d'une année complète (processYearEnd) ne change pas. L'intérêt de la
+// compensation reste le taux fixe appliqué au solde. Décision à valider : les intérêts hypothécaires et les dividendes
+// privilégiés de l'année en cours ne sont PAS facturés à une fin en cours d'année.
+function proratedTerrainLotPriceAtGameEnd(lot){
+  const year = lot.year!=null ? lot.year : currentGameYear();
+  const resolvedAtRoll = year*6 + 1; // l'enchère se résout au lancer qui part de rollCount % 6 === 1 (maybeResolveTerrainLotAuction)
+  const elapsed = Math.max(0, Math.min(6, state.gameClock.rollCount - resolvedAtRoll));
+  return {elapsed, price: lot.price * elapsed / 6, fullYearPrice: lot.price};
+}
 function settleYearContractsAtGameEnd(){
   const comps = state.rentCompensations || [];
   const lot = (state.settings.features.terrainLot && state.terrainLot) ? state.terrainLot.active : null;
   if(comps.length===0 && !lot) return;
-  log(`🏁 Fin de partie en cours d’année : ${[comps.length ? 'les accords de compensation de loyer' : '', lot ? 'le pari du lot commercial' : ''].filter(Boolean).join(' et ')} ${comps.length && lot ? 'sont réglés' : 'est réglé'} maintenant, aux règles de fin d’année, et compté${comps.length && lot ? 's' : ''} au classement final.`);
+  log(`🏁 Fin de partie en cours d’année : ${[comps.length ? 'les accords de compensation de loyer' : '', lot ? 'le pari du lot commercial (prix au prorata des lancers écoulés)' : ''].filter(Boolean).join(' et ')} ${comps.length && lot ? 'sont réglés' : 'est réglé'} maintenant, aux règles de fin d’année, et compté${comps.length && lot ? 's' : ''} au classement final.`);
   comps.forEach(c=>settleRentCompensation(c));
   state.rentCompensations = [];
-  if(lot) settleTerrainLotYearEnd(lot.year!=null ? lot.year : currentGameYear(), state.gameClock.rollCount);
+  if(lot){
+    const pr = proratedTerrainLotPriceAtGameEnd(lot);
+    log(`Lot commercial : prix de ${fmt(pr.fullYearPrice)} pour l’année, ramené au prorata de ${pr.elapsed} lancer(s) écoulé(s) sur 6 depuis l’enchère : ${fmt(pr.price)}, comparé aux loyers commerciaux réellement comptés (${fmt(lot.accrued)}).`);
+    lot.price = pr.price; // Section 316 — retouche de la revue : prix au prorata
+    settleTerrainLotYearEnd(lot.year!=null ? lot.year : currentGameYear(), state.gameClock.rollCount);
+    if(state.terrainLot.lastResult) Object.assign(state.terrainLot.lastResult, {fullYearPrice: pr.fullYearPrice, elapsedRolls: pr.elapsed});
+  }
 }
 // Section 316 — règlements de fin de partie, appelés là où gameEndedReason est posé (durée maximale, cours à 0,
 // 100 % banque, prêt de dernier recours).

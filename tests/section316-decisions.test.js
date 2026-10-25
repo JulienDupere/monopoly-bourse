@@ -5,6 +5,8 @@
 //   elle est désormais versée avec les règles actuelles (section 307). Une annonce pas encore échue reste rendue.
 // « fin de partie en cours d'année : régler les soldes de compensation et le pari du lot commercial, comptés au
 //   classement final » : mêmes fonctions et mêmes règles qu'en fin d'année ; rien en double à une frontière d'année.
+//   Retouche de la revue (option à valider par Julien) : le prix du lot commercial est réglé au prorata des lancers
+//   écoulés depuis l'enchère, sur 6 (prix × écoulés ÷ 6), contre les loyers comptés ; l'année complète ne change pas.
 //
 // Chaque décision a sa contre-épreuve (loadEngine({transform}) : l'ancien code réintroduit fait échouer le test).
 // Lancer depuis la racine du dépôt :  node tests/section316-decisions.test.js
@@ -24,6 +26,7 @@ const ESC = s => JSON.stringify(s);
 // --- Contre-épreuves -------------------------------------------------------------------------------------------------
 const DIVIDENDE_DU_RENDU = src => src.replace("  const pending = state.dividendAnnouncements.filter(ann=>!(ann.payAtRoll<=state.gameClock.rollCount)); // Section 316 — décision", "  const pending = state.dividendAnnouncements;");
 const SANS_REGLEMENT_FIN = src => src.replace("  settleYearContractsAtGameEnd(); // Section 316 — décision", '');
+const PRIX_ENTIER = src => src.replace('    lot.price = pr.price; // Section 316 — retouche de la revue : prix au prorata', '');
 
 // Partie à trois : Alice (créatrice, Co Alice), Bob (Co Bob), Carl (aucune entreprise). Bob possède Bleu foncé 2
 // (case 39, loyer 0,5) ; Co Alice et Co Bob sont en case 10 (un lancer de 2 à 12 n'atteint ni GO, ni une taxe, ni
@@ -98,10 +101,13 @@ const masse = T => T.eng.cashTotal() + T.run('(state.dividendAnnouncements||[]).
 
   // ------------------------------------------------------------------------------------------------- Décision fin en cours d'année
   // Compensation Co Alice ⇄ Co Bob : balance 3 due par Co Alice, intérêt 10 % → 3,30 versé à Co Bob.
-  // Lot commercial de Co Alice : prix 6, loyers accumulés 4 → pari raté de 2, versé à Co Bob (seule autre entreprise).
+  // Lot commercial de Co Alice (année 1, enchère résolue au lancer 7) : prix 6 pour l'année, loyers comptés 0,5.
+  // Retouche de la revue : à une fin en cours d'année, prix au prorata des lancers écoulés depuis l'enchère, sur 6 :
+  // fin au lancer 8 → 1 lancer → prix 1,00 → pari raté de 0,50 versé à Co Bob (seule autre entreprise).
+  // Prix entier (ancien règlement) : pari raté de 5,50.
   const CONTRATS = `state.settings.features.rentCompensation = true; state.settings.features.terrainLot = true;
     state.rentCompensations.push({id:'rc1', companyA:A().id, companyB:B().id, interestRate:0.1, balance:3, createdAt:'x'});
-    state.terrainLot.active = {companyId:A().id, price:6, loyer:1, numSquares:2, squares:[2,7], accrued:4, year:1};`;
+    state.terrainLot.active = {companyId:A().id, price:6, loyer:1, numSquares:2, squares:[2,7], accrued:0.5, year:1};`;
   async function finEnCoursDAnnee(transform, declencheur){
     const T = await partie({ roll: 7, transform });
     await T.run(`attemptActionWithRetry(async ()=>{ ${CONTRATS} ${declencheur.setup || ''} return {ok:true}; })`);
@@ -118,20 +124,22 @@ const masse = T => T.eng.cashTotal() + T.run('(state.dividendAnnouncements||[]).
     ['F2', { titre: 'cours de Co Bob à 0', raison: 'stockFloor', draws: "function(co){ return {gameOver: co.name==='Co Bob'}; }" }],
   ]){
     await scenario(`${code} — décision : fin en cours d’année (${declencheur.titre}) : compensation et lot commercial réglés, comptés au classement`, async () => {
-      for(const variante of ['corrigé', 'ancien']){
-        const R = await finEnCoursDAnnee(variante === 'ancien' ? SANS_REGLEMENT_FIN : undefined, declencheur);
+      for(const variante of ['corrigé', 'ancien', 'prix entier']){
+        const R = await finEnCoursDAnnee(variante === 'ancien' ? SANS_REGLEMENT_FIN : variante === 'prix entier' ? PRIX_ENTIER : undefined, declencheur);
         const { T, S } = R;
         const v1 = T.json('({A: companyValue(A()), B: companyValue(B())})');
         console.log(`    [${variante}] fin ${ESC(S.gameEndedReason && S.gameEndedReason.reason)} au lancer ${S.gameClock.rollCount} ; Co Alice ${f4(R.a0)} → ${f4(R.a1)} ; Co Bob ${f4(R.b0)} → ${f4(R.b1)} ; compensations ${S.rentCompensations.length} ; lot actif ${!!S.terrainLot.active} ; valeur Co Bob ${f4(R.v0.B)} → ${f4(v1.B)}`);
         ok(S.gameEndedReason && S.gameEndedReason.reason === declencheur.raison && S.gameClock.rollCount === 8, `mise en place : fin de partie au lancer 8 (${declencheur.raison}), en cours d’année`);
         if(variante === 'corrigé'){
-          ok(near(R.a1 - R.a0, -5.3) && near(R.b1 - R.b0, 5.3), `${code} : Co Alice verse 3,30 (compensation + 10 %) + 2,00 (pari raté) = 5,30 à Co Bob`);
-          ok(S.rentCompensations.length === 0 && !S.terrainLot.active && S.terrainLot.lastResult && near(S.terrainLot.lastResult.balance, -2), `${code} : accord soldé et clôturé, lot commercial réglé (solde −2 consigné)`);
-          ok(near(v1.B - R.v0.B, 5.3) && near(v1.A - R.v0.A, -5.3), `${code} : l’équité des entreprises (classement final) en tient compte (±5,30)`);
+          ok(near(R.a1 - R.a0, -3.8) && near(R.b1 - R.b0, 3.8), `${code} : Co Alice verse 3,30 (compensation + 10 %) + 0,50 (pari raté au prorata : 1 lancer sur 6, prix 1,00 contre 0,50 de loyers) = 3,80 à Co Bob`);
+          ok(S.rentCompensations.length === 0 && !S.terrainLot.active && S.terrainLot.lastResult && near(S.terrainLot.lastResult.balance, -0.5) && S.terrainLot.lastResult.elapsedRolls === 1 && near(S.terrainLot.lastResult.fullYearPrice, 6), `${code} : accord soldé et clôturé, lot commercial réglé (solde −0,50, 1 lancer écoulé, prix annuel 6 consignés)`);
+          ok(near(v1.B - R.v0.B, 3.8) && near(v1.A - R.v0.A, -3.8), `${code} : l’équité des entreprises (classement final) en tient compte (±3,80)`);
           ok(S.log.some(l => /Fin de partie en cours d’année/.test(l.text || '')), `${code} : le journal annonce le règlement de fin de partie`);
           ok(near(masse(T), R.m0), `${code} : monnaie conservée`);
-        } else {
+        } else if(variante === 'ancien'){
           ok(near(R.a1, R.a0) && S.rentCompensations.length === 1 && !!S.terrainLot.active, `${code} : contre-épreuve — l’ancien code laisse la balance et le pari en suspens pour toujours`);
+        } else {
+          ok(near(R.a1 - R.a0, -8.8) && near(masse(T), R.m0), `${code} : contre-épreuve — au prix entier, Co Alice paierait 3,30 + 5,50 = 8,80 pour un seul lancer de lot`);
         }
       }
     });
@@ -139,7 +147,7 @@ const masse = T => T.eng.cashTotal() + T.run('(state.dividendAnnouncements||[]).
 
   await scenario('F4 — décision : fin entre deux lancers (prêt de dernier recours qui fait tomber le cours à 0) : réglée aussi', async () => {
     for(const variante of ['corrigé', 'ancien']){
-      const T = await partie({ roll: 7, transform: variante === 'ancien' ? SANS_REGLEMENT_FIN : undefined });
+      const T = await partie({ roll: 9, transform: variante === 'ancien' ? SANS_REGLEMENT_FIN : undefined });
       await T.run(`attemptActionWithRetry(async ()=>{ ${CONTRATS} const b = B(); b.cash = -1; state.bank.cash += 51; b.stockPrice = b.stockPriceFounding * STOCK_FOUNDING_FLOOR_PCT * 1.01; return {ok:true}; })`);
       const a0 = T.run('A().cash'), m0 = masse(T);
       const r = await T.run(`attemptActionWithRetry(()=>triggerLastResortLoan(B().id))`);
@@ -148,10 +156,33 @@ const masse = T => T.eng.cashTotal() + T.run('(state.dividendAnnouncements||[]).
       console.log(`    [${variante}] prêt ${r && r.ok} ; fin ${ESC(S.gameEndedReason && S.gameEndedReason.reason)} au lancer ${S.gameClock.rollCount} ; Co Alice ${f4(a0)} → ${f4(a1)} ; compensations ${S.rentCompensations.length} ; lot actif ${!!S.terrainLot.active}`);
       ok(r && r.ok && S.gameEndedReason && S.gameEndedReason.reason === 'stockFloor', 'mise en place : le prêt de dernier recours fait tomber le cours de Co Bob sous le plancher : fin de partie');
       if(variante === 'corrigé'){
-        ok(near(a1 - a0, -5.3) && S.rentCompensations.length === 0 && !S.terrainLot.active, 'F4 : Co Alice verse 3,30 + 2,00 ; accord et lot commercial réglés');
+        ok(near(a1 - a0, -4.8) && S.rentCompensations.length === 0 && !S.terrainLot.active, 'F4 : fin au lancer 9 (2 lancers de lot) : Co Alice verse 3,30 + 1,50 (prix 2,00 au prorata contre 0,50 de loyers) ; accord et lot commercial réglés');
         ok(near(masse(T), m0), 'F4 : monnaie conservée');
       } else {
         ok(near(a1, a0) && S.rentCompensations.length === 1, 'F4 : contre-épreuve — l’ancien code laisse tout en suspens');
+      }
+    }
+  });
+
+  await scenario('F5 — retouche de la revue : lot gagné au lancer 7, fin au lancer 8, aucun loyer : prix 9 × 1/6 = 1,50 et non 9', async () => {
+    for(const variante of ['corrigé', 'prix entier']){
+      const T = await partie({ roll: 7, transform: variante === 'prix entier' ? PRIX_ENTIER : undefined });
+      // Mise de Co Alice : prix 9, loyer 1, cases 2 et 7 (hors de portée d'un lancer depuis la case 10).
+      await T.run(`attemptActionWithRetry(async ()=>{ state.settings.features.terrainLot = true; state.terrainLot.active = null;
+        state.terrainLot.bids = [{companyId:A().id, price:9, loyer:1, numSquares:2}]; return {ok:true}; })`);
+      T.run(`drawStockCubes = function(){ return []; }; resolveStockDraws = function(co){ return {gameOver: co.name==='Co Bob'}; };`);
+      const a0 = T.run('A().cash'), b0 = T.run('B().cash'), m0 = masse(T);
+      await T.run('rollDiceAndMove(B().id)');   // lancer 7 → 8 : l'enchère se résout, puis Co Bob tombe à 0
+      const S = enregistre(T);
+      const a1 = S.companies.find(c => c.name === 'Co Alice').cash, b1 = S.companies.find(c => c.name === 'Co Bob').cash;
+      console.log(`    [${variante}] fin ${ESC(S.gameEndedReason && S.gameEndedReason.reason)} au lancer ${S.gameClock.rollCount} ; lot ${ESC(S.terrainLot.lastResult)} ; Co Alice ${f4(a0)} → ${f4(a1)} ; Co Bob ${f4(b0)} → ${f4(b1)}`);
+      ok(S.gameEndedReason && S.gameEndedReason.reason === 'stockFloor' && S.gameClock.rollCount === 8 && S.terrainLot.lastResult && S.terrainLot.lastResult.companyId === S.companies.find(c => c.name === 'Co Alice').id, 'mise en place : Co Alice remporte le lot au lancer 7 → 8, la partie se termine à ce lancer');
+      if(variante === 'corrigé'){
+        ok(near(a1 - a0, -1.5) && near(b1 - b0, 1.5), 'F5 : Co Alice paie 1,50 (9 × 1 lancer ÷ 6, aucun loyer) à Co Bob');
+        ok(S.log.some(l => /ramené au prorata de 1 lancer\(s\) écoulé\(s\) sur 6/.test(l.text || '')), 'F5 : le journal explique le prorata');
+        ok(near(masse(T), m0), 'F5 : monnaie conservée');
+      } else {
+        ok(near(a1 - a0, -9), 'F5 : contre-épreuve — au prix entier, Co Alice paie 9 pour un lot tenu un seul lancer');
       }
     }
   });
@@ -166,7 +197,7 @@ const masse = T => T.eng.cashTotal() + T.run('(state.dividendAnnouncements||[]).
     const a1 = S.companies.find(c => c.name === 'Co Alice').cash, b1 = S.companies.find(c => c.name === 'Co Bob').cash;
     console.log(`    fin ${ESC(S.gameEndedReason && S.gameEndedReason.reason)} au lancer ${S.gameClock.rollCount} ; Co Alice ${f4(a0)} → ${f4(a1)} ; Co Bob ${f4(b0)} → ${f4(b1)}`);
     ok(S.gameEndedReason && S.gameEndedReason.reason === 'maxDuration', 'mise en place : fin au lancer 6 (durée maximale)');
-    ok(near(a1 - a0, -5.3) && near(b1 - b0, 5.3), 'F3 : 5,30 versés une seule fois (pas de double règlement)');
+    ok(near(a1 - a0, -8.8) && near(b1 - b0, 8.8), 'F3 : année complète, prix entier (inchangé) : 3,30 + 5,50 = 8,80 versés une seule fois (pas de double règlement)');
     ok(!S.log.some(l => /Fin de partie en cours d’année/.test(l.text || '')), 'F3 : pas de ligne « fin de partie en cours d’année » (tout est déjà réglé)');
     ok(near(masse(T), m0), 'F3 : monnaie conservée');
   });

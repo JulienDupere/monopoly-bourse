@@ -2405,7 +2405,26 @@ function finishAction(gen, btn, res){
     scheduleDeferredPopups(); // Section 308 — fenêtres d'information mises en attente pendant l'action
   }catch(e){ console.error('Rafraîchissement après action impossible :', e); } // le résultat de l'action reste transmis à l'appelant
 }
-async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen){
+// Section 316 — garde unique de fin de partie (bogues 55, 56, 76 et angle mort 5 de l'audit : ~30 points d'entrée
+// modifiaient l'état après la fin, en mode « consulter quand même »). Toute action est refusée quand la partie est
+// DÉJÀ terminée sur l'état frais, avant son applyFn (rien n'est exécuté ni enregistré), et de nouveau après un
+// conflit (la fin a pu être enregistrée par un autre appareil entre-temps). Le lancer qui TERMINE la partie pose
+// gameEndedReason pendant sa propre action : il passe. Les appels imbriqués font partie de l'action englobante.
+// Liste blanche : opts.allowAfterGameEnd (ajustements d'encaisse de l'administrateur, corrections d'arbitre
+// journalisées : voir modalAdjustPlayer / modalAdjustCompany / modalAdjustBank).
+function gameEndedReasonLabel(r){
+  if(!r) return '';
+  if(r.reason==='maxDuration') return 'durée maximale atteinte';
+  if(r.reason==='bankOwnsAll') return `${r.companyName||'?'} à 100 % banque`;
+  if(r.reason==='stockFloor') return `${r.companyName||'?'} à 0 en bourse`;
+  return '';
+}
+function gameEndedActionMessage(){
+  const lbl = gameEndedReasonLabel(state && state.gameEndedReason);
+  return `La partie est terminée${lbl ? ` (${lbl})` : ''} — plus aucune action n’est possible : les onglets se consultent seulement.`;
+}
+function gameEndedActionResult(){ return {ok:false, error:gameEndedActionMessage(), code:'game-ended'}; }
+async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label, allowAfterGameEnd}, gen){
   let res = null;
   let needsReapply = true;
   let baseRaw = null, baseLocals = null, failure = null;
@@ -2418,6 +2437,7 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label}, gen)
       if(attempt===1 && isKnownOffline()) return offlineActionResult(); // Section 308 — retouche de la revue : action en file, connexion coupée entre-temps
       if(attempt===1) adoptReceivedStateBeforeAction(); // Section 308 — C2 : revérifiée sur l'état à jour
       if(baseLocals) restoreActionLocals(baseLocals);
+      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(); // Section 316
       baseRaw = JSON.stringify(state);
       baseLocals = snapshotActionLocals();
       actionApplyDepth++;
@@ -5764,7 +5784,7 @@ function renderDevenirAssureur(){
   const bankSubInsuredProps = f.subInsurance ? allSubInsuredProps.filter(p=>p.subInsurance.insurerId==='BANK') : [];
   const liveTakeoverPropRow = p=>{
     const insuredCo = companyById(p.insurance.insuredCompanyId);
-    const canTakeOver = myCoId!==p.insurance.insuredCompanyId;
+    const canTakeOver = myCoId!==p.insurance.insuredCompanyId && !state.gameEndedReason; // Section 316 — bogue 55 : plus de bouton après la fin
     const live = liveTakeoverPropQuote(p, p.insurance.insuredCompanyId, p.insurance.claimMode, p.insurance.deductible, p.insurance.quotedTerm, p.insurance.coveredAmount); // Section 313 — bogue 39
     return `<tr>
       <td>${propertyColorChip(p)}</td>
@@ -5776,7 +5796,7 @@ function renderDevenirAssureur(){
   };
   const liveTakeoverTaxRow = t=>{
     const insuredCo = companyById(t.insuredCompanyId);
-    const canTakeOver = myCoId!==t.insuredCompanyId;
+    const canTakeOver = myCoId!==t.insuredCompanyId && !state.gameEndedReason; // Section 316 — bogue 55
     const label = (TAX_SQUARES.find(x=>x.pos===t.taxPos)||{}).label || 'Taxe';
     const live = liveTakeoverTaxQuote(t.taxPos, t.insuredCompanyId, t.claimMode, t.deductible, t.quotedTerm, t.coveredAmount); // Section 313 — bogue 39
     return `<tr>
@@ -5789,7 +5809,7 @@ function renderDevenirAssureur(){
   };
   const liveTakeoverSubRow = p=>{
     const insuredCo = companyById(p.subInsurance.insuredCompanyId);
-    const canTakeOver = myCoId!==p.subInsurance.insuredCompanyId;
+    const canTakeOver = myCoId!==p.subInsurance.insuredCompanyId && !state.gameEndedReason; // Section 316 — bogue 55
     
     
     
@@ -7857,7 +7877,9 @@ function render(){
   const me = state.players.find(p=>p.id===myPlayerId);
   
   
-  if(me && !me.companyId){ renderCompanySetupGate(me); return; }
+  // Section 316 — bogue 76 : partie terminée (consultation) : un joueur sans entreprise consulte les onglets au lieu
+  // de l'écran de fondation (fonder est de toute façon refusé par la garde de fin de partie).
+  if(me && !me.companyId && !state.gameEndedReason){ renderCompanySetupGate(me); return; }
   
   
   
@@ -7900,7 +7922,7 @@ function render(){
   
   
   const gameEndedHeaderHtml = state.gameEndedReason
-    ? `&nbsp;|&nbsp; <b style="color:var(--brick,#C0392B);">🏁 Partie terminée (${state.gameEndedReason.reason==='maxDuration' ? 'durée maximale atteinte' : `${esc(state.gameEndedReason.companyName)}${state.gameEndedReason.reason==='bankOwnsAll' ? ' à 100% banque' : ' à 0'}`})</b>`
+    ? `&nbsp;|&nbsp; <b style="color:var(--brick,#C0392B);">🏁 Partie terminée (${state.gameEndedReason.reason==='maxDuration' ? 'durée maximale atteinte' : `${esc(state.gameEndedReason.companyName)}${state.gameEndedReason.reason==='bankOwnsAll' ? ' à 100% banque' : ' à 0'}`}) — consultation seulement, aucune action n’est enregistrée</b>` // Section 316 — garde unique de fin de partie
     : '';
   
   
@@ -14638,7 +14660,7 @@ function modalBuyMergedShare(mergeId){
   });
 }
 
-async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
+async function runModalActionWithRetry(applyFn, {maxAttempts, label, allowAfterGameEnd}={}){ // Section 316 — allowAfterGameEnd : liste blanche de la garde de fin de partie
   const okBtn = document.getElementById('mOk');
   const statusEl = document.getElementById('mRetryStatus');
   if(!label && okBtn) label = (okBtn.textContent||'').trim() || undefined;
@@ -14659,6 +14681,7 @@ async function runModalActionWithRetry(applyFn, {maxAttempts, label}={}){
     res = await attemptActionWithRetry(applyFn, {
       maxAttempts,
       label,
+      allowAfterGameEnd, // Section 316
       onRetry: (attempt, failure)=>{ if(statusEl) statusEl.textContent = failure==='network' ? `Connexion au serveur perdue — nouvel essai d’enregistrement (${attempt})...` : `Un autre appareil vient de sauvegarder en même temps — nouvel essai automatique (${attempt})...`; }, // Section 308
     });
   } catch(e){
@@ -15251,6 +15274,7 @@ async function issueMortgage(propId, borrowerId, lenderId, opts){
   
   opts = opts || {};
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  if(state.gameEndedReason) return fail(gameEndedActionMessage()); // Section 316 — revue : chemin bancaire
   const p = state.properties.find(x=>x.id===propId);
   if(!p) return fail(null);
   // Section 309 — bogue 34 : un terrain regroupé en lot (regroupement fait entre l'ouverture et la confirmation) ne
@@ -15312,6 +15336,7 @@ async function issueMortgageLot(mergeId, borrowerId, lenderId, opts){
   
   opts = opts || {};
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  if(state.gameEndedReason) return fail(gameEndedActionMessage()); // Section 316 — revue : chemin bancaire
   const host = lotMortgageHost(mergeId);
   if(!host) return fail(null);
   const share = propertyOwnedShare(host, borrowerId);
@@ -18470,7 +18495,7 @@ function modalAdjustPlayer(pid){
       log(`${pl.name}: ${amt>=0?'+':''}${amt.toFixed(2)} (${reason})`,
         [{label:`${pl.name} (${reason})`, amount:amt}, {label:'Banque', amount:-amt}]);
       return {ok:true};
-    });
+    }, {allowAfterGameEnd:true}); // Section 316 — décision : correction d'arbitre permise après la fin (journalisée)
   });
 }
 
@@ -18504,7 +18529,7 @@ function modalAdjustCompany(companyId){
       log(`${co.name}: ${amt>=0?'+':''}${amt.toFixed(2)} (${reason})`,
         [{label:`${co.name} (${reason})`, amount:amt}, {label:'Banque', amount:-amt}]);
       return {ok:true};
-    });
+    }, {allowAfterGameEnd:true}); // Section 316 — décision : correction d'arbitre permise après la fin (journalisée)
   });
 }
 
@@ -18525,7 +18550,7 @@ function modalAdjustBank(){
       state.bank.cash += amt;
       log(`Banque ajustée de ${amt>=0?'+':''}${amt.toFixed(2)}`, [{label:'Banque (ajustement)', amount:amt}]);
       return {ok:true};
-    });
+    }, {allowAfterGameEnd:true}); // Section 316 — décision : correction d'arbitre permise après la fin (journalisée)
   });
 }
 

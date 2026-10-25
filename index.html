@@ -4018,6 +4018,7 @@ function renderPortefeuilleFinancials(){
     <tr style="font-weight:600;"><td>Actifs long terme</td>${statements.map(s=>`<td>${bsCell(s,'assetsLongTerm')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Terrains (valeur comptable)</td>${statements.map(s=>`<td>${bsCell(s,'realEstate')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Prêts hypothécaires à recevoir</td>${statements.map(s=>`<td>${bsCell(s,'mortgageReceivable')}</td>`).join('')}</tr>
+    <!-- Section 311 — bogue 42 : titres ABS détenus --><tr><td class="small">↳ Titres ABS détenus (flux attendus)</td>${statements.map(s=>`<td>${!s.bs ? '<span class="small">–</span>' : `<span class="money">${fmt(s.bs.absReceivable||0)}</span>`}</td>`).join('')}</tr>
     ${sepRow}
     <tr style="font-weight:700;"><td>Total du passif</td>${statements.map(s=>`<td>${bsCell(s,'totalLiabilities')}</td>`).join('')}</tr>
     <tr><td>Passif court terme</td>${statements.map(s=>`<td>${bsCell(s,'liabilitiesShortTerm')}</td>`).join('')}</tr>
@@ -4251,6 +4252,7 @@ function renderEntrepriseFinancials(company){
     <tr style="font-weight:600;"><td>Actifs long terme</td>${statements.map(s=>`<td>${bsCell(s,'assetsLongTerm')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Terrains (valeur comptable)</td>${statements.map(s=>`<td>${bsCell(s,'realEstate')}</td>`).join('')}</tr>
     <tr><td class="small">↳ Prêts hypothécaires à recevoir</td>${statements.map(s=>`<td>${bsCell(s,'mortgageReceivable')}</td>`).join('')}</tr>
+    <!-- Section 311 — bogue 42 : titres ABS détenus --><tr><td class="small">↳ Titres ABS détenus (flux attendus)</td>${statements.map(s=>`<td>${!s.bs ? '<span class="small">–</span>' : `<span class="money">${fmt(s.bs.absReceivable||0)}</span>`}</td>`).join('')}</tr>
     ${sepRow}
     <tr style="font-weight:700;"><td>Total du passif</td>${statements.map(s=>`<td>${bsCell(s,'totalLiabilities')}</td>`).join('')}</tr>
     <tr><td>Passif court terme</td>${statements.map(s=>`<td>${bsCell(s,'liabilitiesShortTerm')}</td>`).join('')}</tr>
@@ -7014,7 +7016,7 @@ function etfValue(player){
 function companyValue(company){
   const receiv = companyReceivablesForStatements(company);
   return company.cash + companyRealEstateValue(company) + companyEtfValue(company)
-    + receiv.shortTerm + receiv.longTerm - companyDebt(company);
+    + receiv.shortTerm + receiv.longTerm + (receiv.absHoldings||0) - companyDebt(company); // Section 311 — bogue 42
 }
 
 function companySharePrice(company){
@@ -10209,6 +10211,7 @@ function companyReceivablesForStatements(company){
   return {
     shortTerm: loanReceivable,
     longTerm: mortgageReceivable,
+    absHoldings: companyAbsHoldingsValue(company.id), // Section 311 — bogue 42 : titres ABS détenus (actif long terme)
   };
 }
 
@@ -10223,13 +10226,14 @@ function snapshotBalanceSheets(semesterIndex){
     const etf = companyEtfValue(co);
     const realEstate = companyRealEstateValue(co);
     const loanReceivable = receiv.shortTerm, mortgageReceivable = receiv.longTerm;
+    const absReceivable = receiv.absHoldings||0; // Section 311 — bogue 42
     const assetsShortTerm = cash + etf + loanReceivable;
-    const assetsLongTerm = realEstate + mortgageReceivable;
+    const assetsLongTerm = realEstate + mortgageReceivable + absReceivable;
     const totalAssets = assetsShortTerm + assetsLongTerm;
     const totalLiabilities = liab.shortTerm + liab.longTerm;
     const equity = totalAssets - totalLiabilities;
     const existingIdx = state.balanceSheetSnapshots.findIndex(s=>s.semesterIndex===semesterIndex && s.companyId===co.id);
-    const snap = {semesterIndex, companyId:co.id, cash, etf, realEstate, loanReceivable, mortgageReceivable, assetsShortTerm, assetsLongTerm, totalAssets,
+    const snap = {semesterIndex, companyId:co.id, cash, etf, realEstate, loanReceivable, mortgageReceivable, absReceivable, assetsShortTerm, assetsLongTerm, totalAssets, // Section 311 — bogue 42
       liabilitiesShortTerm:liab.shortTerm, liabilitiesLongTerm:liab.longTerm, totalLiabilities, equity};
     if(existingIdx>=0) state.balanceSheetSnapshots[existingIdx] = snap;
     else state.balanceSheetSnapshots.push(snap);
@@ -10559,10 +10563,10 @@ function balanceSheetFor(companyId, semesterIndex){
   const liab = companyLiabilitiesForStatements(co);
   const receiv = companyReceivablesForStatements(co); 
   const cash = co.cash, etf = companyEtfValue(co), realEstate = companyRealEstateValue(co);
-  const loanReceivable = receiv.shortTerm, mortgageReceivable = receiv.longTerm;
-  const assetsShortTerm = cash+etf+loanReceivable, assetsLongTerm = realEstate+mortgageReceivable, totalAssets = assetsShortTerm+assetsLongTerm;
+  const loanReceivable = receiv.shortTerm, mortgageReceivable = receiv.longTerm, absReceivable = receiv.absHoldings||0; // Section 311 — bogue 42
+  const assetsShortTerm = cash+etf+loanReceivable, assetsLongTerm = realEstate+mortgageReceivable+absReceivable, totalAssets = assetsShortTerm+assetsLongTerm;
   const totalLiabilities = liab.shortTerm+liab.longTerm;
-  return {companyId, semesterIndex, cash, etf, realEstate, loanReceivable, mortgageReceivable, assetsShortTerm, assetsLongTerm, totalAssets,
+  return {companyId, semesterIndex, cash, etf, realEstate, loanReceivable, mortgageReceivable, absReceivable, assetsShortTerm, assetsLongTerm, totalAssets,
     liabilitiesShortTerm:liab.shortTerm, liabilitiesLongTerm:liab.longTerm, totalLiabilities, equity:totalAssets-totalLiabilities};
 }
 
@@ -15475,6 +15479,34 @@ function distributeAbsCashflow(deal, cededAmount, entries){
 
 
 
+// Section 311 — bogue 42 (décision de Julien : « souscripteur d'ABS : garder un actif à son bilan ») — valeur d'une
+// participation ABS = flux qu'elle doit ENCORE rapporter, selon le modèle même qui a fixé son prix (computeAbsPricing,
+// recalculé sur l'état du moment pour les lancers restants), répartis selon la cascade : la senior reçoit au plus ce
+// qui reste de son plafond (seniorCapTotal − seniorPaidSoFar), la junior l'espérance au-delà ; chaque porteur au prorata
+// de sa mise dans sa tranche. Non actualisé, comme les prêts à recevoir (totalDue − repaidSoFar). Sans double compte :
+// ce qui est déjà encaissé est dans la trésorerie et sort de la valeur (plafond senior consommé, lancers écoulés) ; la
+// valeur tombe à 0 à l'échéance ; la rétention junior de l'émettrice n'est pas comptée (ses terrains le sont déjà, et
+// l'absence de dette côté émettrice reste voulue, section 304). Avant : la mise disparaissait du bilan du souscripteur.
+function absDealRemainingRolls(deal){
+  if(deal.endRoll!=null) return Math.max(0, deal.endRoll - state.gameClock.rollCount);
+  return Math.max(0, ((deal.yearsRemaining||0) - 1)*6 + rollsUntilYearEnd()); // accord d'une ancienne version : échéance en fin d'année
+}
+function companyAbsHoldingsValue(companyId){
+  let v = 0;
+  (state.revenueSwaps||[]).forEach(deal=>{
+    if(deal.sellerId===companyId) return;
+    const mine = h=> h.holderType==='company' && h.holderId===companyId;
+    if(!(deal.seniorHolders||[]).some(mine) && !(deal.juniorHolders||[]).some(mine)) return;
+    const rolls = absDealRemainingRolls(deal);
+    const expected = rolls>0 ? computeAbsPricing(deal.sellerId, deal.propertyIds, deal.cededPctOfShare, rolls/6).meanRent : 0;
+    const seniorLeft = Math.max(0, (deal.seniorCapTotal||0) - (deal.seniorPaidSoFar||0));
+    const toSenior = Math.min(expected, seniorLeft), toJunior = Math.max(0, expected - seniorLeft);
+    if(deal.seniorRaised>1e-9) (deal.seniorHolders||[]).forEach(h=>{ if(mine(h)) v += toSenior * (h.amount/deal.seniorRaised); });
+    const juniorTarget = (deal.juniorHolders||[]).reduce((s,h)=>s+h.amount, 0);
+    if(juniorTarget>1e-9) (deal.juniorHolders||[]).forEach(h=>{ if(mine(h)) v += toJunior * (h.amount/juniorTarget); });
+  });
+  return v;
+}
 function myAbsHoldings(holderType, holderId){
   const rows = [];
   state.revenueSwaps.forEach(deal=>{

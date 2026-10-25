@@ -1640,6 +1640,7 @@ function migrateState(s){
   
   
   s.companies.forEach(co=>{ if(co.ready===undefined) co.ready = false; });
+  s.companies.forEach(co=>{ if(co.tradeImpactBudget===undefined) co.tradeImpactBudget = {window:null, used:{}}; }); // Section 314 — bogue 67 : budget d'impact cumulé de la fenêtre de marché
   
   
   
@@ -11168,7 +11169,15 @@ const STOCK_TRIGGER_NEGATIVE_CASH_MIN = 1, STOCK_TRIGGER_NEGATIVE_CASH_MAX = 2;
 const STOCK_TRADE_IMPACT_UNIT_PCT = 0.005; 
 const STOCK_TRADE_IMPACT_MAX_UNITS = 12; 
 
-function tradeCubeRange(company, qty, color, accumField){
+// Section 314 — bogue 67 : le plafond de STOCK_TRADE_IMPACT_MAX_UNITS unités s'applique au CUMUL et non plus à chaque
+// ordre (avant : 3 ordres de 1 M$ = 30 unités, un ordre de 3 M$ = 12, contrairement au Cahier 4). Fenêtre de cumul :
+// par joueur (actorId), par entreprise, par couleur, par accumulateur (trading joueur / actions corporatives) et par
+// fenêtre de marché = le lancer en cours (state.gameClock.rollCount : le marché n'ouvre qu'un lancer par semestre,
+// tous les ordres d'une même fenêtre portent le même numéro ; les fermetures forcées et exercices des autres lancers
+// ont leur propre fenêtre). Par joueur : l'ordre d'un joueur ne consomme jamais l'impact de l'ordre d'un autre.
+// Budget : company.tradeImpactBudget = {window, used:{clé: unités}} (défaut dans migrateState), remis à zéro quand la
+// fenêtre change. L'accumulateur fractionnaire (tradeImpactAccum) est inchangé.
+function tradeCubeRange(company, qty, color, accumField, actorId){
   accumField = accumField || 'tradeImpactAccum';
   if(!company || !(company.totalShares>0) || !(qty>0)) return null;
   if(!company[accumField]) company[accumField] = {green:0, red:0};
@@ -11178,7 +11187,14 @@ function tradeCubeRange(company, qty, color, accumField){
   company[accumField][color] = after;
   const unitsCrossed = Math.floor(after/unitSize) - Math.floor(before/unitSize);
   if(unitsCrossed<=0) return null;
-  const units = Math.min(unitsCrossed, STOCK_TRADE_IMPACT_MAX_UNITS);
+  const windowId = state.gameClock.rollCount;
+  if(!company.tradeImpactBudget || company.tradeImpactBudget.window!==windowId) company.tradeImpactBudget = {window: windowId, used: {}};
+  if(!company.tradeImpactBudget.used) company.tradeImpactBudget.used = {};
+  const budgetKey = `${accumField}|${actorId||'?'}|${color}`;
+  const usedUnits = company.tradeImpactBudget.used[budgetKey] || 0;
+  const units = Math.min(unitsCrossed, Math.max(0, STOCK_TRADE_IMPACT_MAX_UNITS - usedUnits));
+  if(units<=0) return null;
+  company.tradeImpactBudget.used[budgetKey] = usedUnits + units;
   return {qtyMin: units, qtyMax: units*2};
 }
 
@@ -11518,7 +11534,7 @@ function executeShareTrade(company, player, direction, amount, _viaCeoAnnounceme
     }
     const realQty = qty-exemptQty;
     if(realQty>1e-9){
-      const buyCubeRange = tradeCubeRange(company, realQty, 'green');
+      const buyCubeRange = tradeCubeRange(company, realQty, 'green', undefined, player.id); // Section 314 — bogue 67 : budget du joueur
       if(buyCubeRange) injectTradingCube(company, 'green', buyCubeRange.qtyMin, buyCubeRange.qtyMax);
     }
     entries.push({label:`${player.name} (achat d'actions — ${company.name})`, amount:-amount});
@@ -11549,7 +11565,7 @@ function executeShareTrade(company, player, direction, amount, _viaCeoAnnounceme
     
     
     
-    const sellCubeRange = tradeCubeRange(company, qty, 'red');
+    const sellCubeRange = tradeCubeRange(company, qty, 'red', undefined, player.id); // Section 314 — bogue 67
     if(sellCubeRange) injectTradingCube(company, 'red', sellCubeRange.qtyMin, sellCubeRange.qtyMax);
     entries.push({label:`${player.name} (vente d'actions — ${company.name})`, amount});
     entries.push({label:`Banque (contrepartie de marché — ${company.name})`, amount:-amount});
@@ -11754,7 +11770,7 @@ function issueNewShares(company, qty){
   
   
   
-  const base = tradeCubeRange(company, qty, 'red', 'corpActionImpactAccum');
+  const base = tradeCubeRange(company, qty, 'red', 'corpActionImpactAccum', company.id); // Section 314 — bogue 67 : budget de l'entreprise
   const bonus = STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MIN + Math.floor(Math.random()*(STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MAX-STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MIN+1));
   let cubesInjected = injectStockCube(company, 'red', bonus, bonus);
   if(base) cubesInjected += injectStockCube(company, 'red', base.qtyMin, base.qtyMax);
@@ -11785,7 +11801,7 @@ function buybackShares(company, qty){
   company.cumulativeSharesEmittedNet = Math.max(0, (company.cumulativeSharesEmittedNet||0) - qty);
   
   
-  const base = tradeCubeRange(company, qty, 'green', 'corpActionImpactAccum');
+  const base = tradeCubeRange(company, qty, 'green', 'corpActionImpactAccum', company.id); // Section 314 — bogue 67
   const bonus = STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MIN + Math.floor(Math.random()*(STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MAX-STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MIN+1));
   let cubesInjected = injectStockCube(company, 'green', bonus, bonus);
   if(base) cubesInjected += injectStockCube(company, 'green', base.qtyMin, base.qtyMax);
@@ -12282,7 +12298,7 @@ function openShortPosition(company, player, amount){
   state.bank.cash -= amount;
   
   
-  const shortOpenCubeRange = tradeCubeRange(company, qty, 'red');
+  const shortOpenCubeRange = tradeCubeRange(company, qty, 'red', undefined, player.id); // Section 314 — bogue 67
   if(shortOpenCubeRange) injectTradingCube(company, 'red', shortOpenCubeRange.qtyMin, shortOpenCubeRange.qtyMax);
   const entries = [
     {label:`${player.name} (vente à découvert — ${company.name})`, amount},
@@ -12341,7 +12357,7 @@ function closeShortPosition(company, player, amount, _bypassTradingWindow){
   pos.shares -= qty;
   if(pos.shares<=1e-9) delete player.shortPositions[company.id]; 
   
-  const shortCloseCubeRange = tradeCubeRange(company, qty, 'green');
+  const shortCloseCubeRange = tradeCubeRange(company, qty, 'green', undefined, player.id); // Section 314 — bogue 67
   if(shortCloseCubeRange) injectTradingCube(company, 'green', shortCloseCubeRange.qtyMin, shortCloseCubeRange.qtyMax);
   const entries = [
     {label:`${player.name} (rachat pour clôturer — ${company.name})`, amount:-effectiveAmount},
@@ -13236,7 +13252,7 @@ function settleOptionExercise(player, pos, company){
     
     
     
-    const exerciseBuyCubeRange = tradeCubeRange(company, qty, 'green');
+    const exerciseBuyCubeRange = tradeCubeRange(company, qty, 'green', undefined, player.id); // Section 314 — bogue 67
     if(exerciseBuyCubeRange) injectTradingCube(company, 'green', exerciseBuyCubeRange.qtyMin, exerciseBuyCubeRange.qtyMax);
     
     
@@ -13277,7 +13293,7 @@ function settleOptionExercise(player, pos, company){
     player.cash += notional; 
     state.bank.cash -= notional;
     
-    const exerciseSellCubeRange = tradeCubeRange(company, qty, 'red');
+    const exerciseSellCubeRange = tradeCubeRange(company, qty, 'red', undefined, player.id); // Section 314 — bogue 67
     if(exerciseSellCubeRange) injectTradingCube(company, 'red', exerciseSellCubeRange.qtyMin, exerciseSellCubeRange.qtyMax);
     
     

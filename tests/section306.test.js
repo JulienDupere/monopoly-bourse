@@ -121,6 +121,9 @@ const run = (code) => vm.runInContext(code, sandbox);
        globalThis.__ovIS = {}; globalThis.__ovDiv = {};
        incomeStatementFor = function(id, sem){ const r = __realIS(id, sem); if(__ovIS[id]!==undefined) r.netIncome = __ovIS[id]; return r; };
        dividendPaidInSemester = function(id, sem){ return __ovDiv[id]!==undefined ? __ovDiv[id] : __realDiv(id, sem); };
+       // Section 315 — le ratio compte les dividendes réellement versés (dividendNetPaidInSemester) : même substitution.
+       globalThis.__realNet = dividendNetPaidInSemester;
+       dividendNetPaidInSemester = function(id, sem){ return __ovDiv[id]!==undefined ? __ovDiv[id] : __realNet(id, sem); };
        // Tirages neutralisés : ils ont lieu APRÈS les contrôles de semestre et blanchissent des cubes au hasard.
        drawStockCubes = function(){ return []; };
        resolveStockDraws = function(){ return {gameOver:false}; };`);
@@ -129,6 +132,7 @@ const run = (code) => vm.runInContext(code, sandbox);
     A.typeReserve = ${JSON.stringify(startA)}; B.typeReserve = ${JSON.stringify(startB)};
     __ovIS[A.id] = ${netA}; __ovDiv[A.id] = ${divA};
     __ovIS[B.id] = ${netB}; __ovDiv[B.id] = ${divB};
+    A.dividendAutoPay = ${divA}>0;           // Section 315 — bogue 25 : un versement = le dividende récurrent (seul à protéger le sac type)
     state.gameClock.rollCount = 2;           // 2 -> 3 : fin du semestre 0, pas de fin d'année
     const nLog = state.log ? state.log.length : 0;
     advanceGameClock();

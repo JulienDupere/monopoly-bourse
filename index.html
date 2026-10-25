@@ -14056,6 +14056,11 @@ async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBTy
   const companyB = companyById(companyBId);
   const labelA = tradableAssets().find(a=>a.type===assetAType && a.id===assetAId)?.label || '?';
   const labelB = tradableAssets().find(a=>a.type===assetBType && a.id===assetBId)?.label || '?';
+  // Section 311 — bogue 21 : un échange cède une part comme une vente : refusé sur un terrain dont le donneur a vendu (ou
+  // annoncé) le revenu en ABS. Avant : aucun contrôle, l'échange vidait l'ABS de sa substance.
+  const absHostA = assetHostProperty(assetA), absHostB = assetHostProperty(assetB);
+  if(absHostA && isPropertyLockedByRevenueSwap(absHostA.id, companyAId)) return fail(`${companyA?companyA.name:'?'} a vendu (ou annoncé) le revenu de ${labelA} en ABS — impossible de l'échanger tant que l'accord court.`);
+  if(absHostB && isPropertyLockedByRevenueSwap(absHostB.id, companyBId)) return fail(`${companyB?companyB.name:'?'} a vendu (ou annoncé) le revenu de ${labelB} en ABS — impossible de l'échanger tant que l'accord court.`);
   
   
   if(!transferAssetShare(assetA, companyAId, companyBId, pctA)) return fail('Échange impossible sur '+labelA+'.');
@@ -15013,7 +15018,10 @@ async function cancelRentSwapOffer(id){
 
 
 function isPropertyLockedByRevenueSwap(propId, companyId){
-  return state.revenueSwaps.some(s=>s.sellerId===companyId && s.propertyIds.some(pid=>samePropertyOrLot(pid, propId)));
+  // Section 311 — bogue 21 : le terrain est verrouillé dès l'ANNONCE (state.revenueSwapListings), pas seulement une fois
+  // l'ABS conclue : avant, l'émettrice pouvait l'hypothéquer, y signer un swap ou le vendre entre l'annonce et la
+  // résolution, et les souscripteurs payaient pour un flux qui n'existait plus.
+  return state.revenueSwaps.concat(state.revenueSwapListings||[]).some(s=>s.sellerId===companyId && s.propertyIds.some(pid=>samePropertyOrLot(pid, propId)));
 }
 
 
@@ -15135,13 +15143,16 @@ async function postRevenueSwapListing(companyId, propertyIds, cededPctOfShare, a
     const label = p.groupMergeId ? `Lot ${GROUPS[p.group].label}` : p.name;
     if(propertyOwnedShare(host, companyId)<=0) return fail(`${co.name} ne possède aucune part de ${label} — impossible de l'inclure dans cette annonce.`);
     if((host.mortgages||[]).some(m=>m.companyId===companyId)) return fail(`${co.name} a hypothéqué sa part de ${label} — remboursez l'hypothèque avant de pouvoir en vendre le revenu.`);
+    if(state.revenueSwapListings.some(l=>l.sellerId===companyId && l.propertyIds.some(x=>samePropertyOrLot(x,pid)))) return fail(`${label} est déjà inclus dans une annonce de ${co.name} en attente.`); // Section 311 — bogue 21 : testé avant le verrou, qui couvre désormais les annonces
     if(isPropertyLockedByRevenueSwap(pid, companyId)) return fail(`${label} fait déjà l'objet d'une émission ABS active.`);
-    if(state.revenueSwapListings.some(l=>l.sellerId===companyId && l.propertyIds.some(x=>samePropertyOrLot(x,pid)))) return fail(`${label} est déjà inclus dans une annonce de ${co.name} en attente.`);
   }
+  // Section 311 — bogue 21 : parts détenues à l'annonce, revérifiées à la résolution.
+  const ownedShares = {};
+  uniquePropertyIds.forEach(pid=>{ const p = state.properties.find(x=>x.id===pid); ownedShares[pid] = propertyOwnedShare(p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p, companyId); });
   const pricing = computeAbsPricing(companyId, uniquePropertyIds, cededPctOfShare, years);
   const tranches = computeAbsTranches(pricing, amountSought);
   state.revenueSwapListings.push({id:uid(), sellerId:companyId, propertyIds:uniquePropertyIds, cededPctOfShare, amountSought, years,
-    pricing, tranches, seniorSubs:[], juniorSubs:[], createdAt:nowLabel(), createdRoll:state.gameClock.rollCount});
+    pricing, tranches, seniorSubs:[], juniorSubs:[], createdAt:nowLabel(), createdRoll:state.gameClock.rollCount, ownedShares}); // Section 311 — bogue 21
   const labels = uniquePropertyIds.map(pid=>{ const p=state.properties.find(x=>x.id===pid); return p.groupMergeId?`Lot ${GROUPS[p.group].label}`:p.name; }).join(', ');
   log(`${co.name} publie une émission ABS adossée au revenu de ${labels}: ${Math.round(cededPctOfShare*100)}% de sa part cédée pendant ${years} an(s), ${fmt(amountSought)} recherché(s) (${fmt(tranches.seniorAmount)} senior à ${Math.round(tranches.seniorPremiumPct*100)}% de prime, ${fmt(tranches.juniorAmount)} junior) — souscriptions ouvertes jusqu'au prochain lancer de dés (onglets Mon Entreprise et Portefeuille).`);
   if(!opts.silent){ await saveGame(); render(); }
@@ -15252,6 +15263,21 @@ function resolveRevenueSwapListing(listing){
       log(`Émission ABS de ${seller.name} (${labels}) annulée — ${notEligible} Aucun argent n'a changé de main.`);
       return;
     }
+    // Section 311 — bogue 21 : le terrain doit être resté tel qu'annoncé (le verrou l'empêche ; défense en profondeur
+    // pour une annonce d'une ancienne version ou une saisie forcée) : pas d'hypothèque de l'émettrice, pas d'autre ABS,
+    // part détenue au moins égale à celle de l'annonce. Sinon annulation propre : personne ne paie.
+    const absCancel = (why)=>{ log(`Émission ABS de ${seller.name} (${labels}) annulée — ${why} Aucun argent n'a changé de main.`); };
+    const label = p.groupMergeId ? `Lot ${GROUPS[p.group].label}` : p.name;
+    if((host.mortgages||[]).some(m=>m.companyId===seller.id)){ absCancel(`${label} a été hypothéqué depuis l'annonce.`); return; }
+    if(state.revenueSwaps.some(s=>s.sellerId===seller.id && s.propertyIds.some(x=>samePropertyOrLot(x, pid)))){ absCancel(`${label} fait déjà l'objet d'une autre émission ABS.`); return; }
+    if(listing.ownedShares && listing.ownedShares[pid]!=null && propertyOwnedShare(host, seller.id) < listing.ownedShares[pid] - 1e-9){ absCancel(`la part de ${seller.name} dans ${label} a diminué depuis l'annonce (${listing.ownedShares[pid]}% → ${propertyOwnedShare(host, seller.id)}%).`); return; }
+  }
+  // Section 311 — bogue 21 : le loyer attendu, recalculé sur l'état du moment, ne doit pas être inférieur à celui affiché
+  // aux souscripteurs (maisons vendues, palier d'aéroport perdu…) ; sinon annulation propre, l'émettrice peut republier.
+  const freshPricing = computeAbsPricing(seller.id, listing.propertyIds, listing.cededPctOfShare, listing.years);
+  if(listing.pricing && freshPricing.meanRent < listing.pricing.meanRent*(1-1e-6) - 1e-9){
+    log(`Émission ABS de ${seller.name} (${labels}) annulée — le loyer attendu sur la durée est passé de ${fmt(listing.pricing.meanRent)} à ${fmt(freshPricing.meanRent)} depuis l'annonce, les conditions affichées aux souscripteurs ne tiennent plus. Aucun argent n'a changé de main.`);
+    return;
   }
   
   

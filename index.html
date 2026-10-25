@@ -1282,6 +1282,7 @@ function migrateState(s){
   
   
   s.revenueSwaps.forEach(deal=>{
+    if(deal.endRoll===undefined) deal.endRoll = null; // Section 311 — bogue 19 : null = accord d'une ancienne version, décompte annuel
     (deal.seniorHolders||[]).forEach(h=>{ if(h.receivedSoFar===undefined) h.receivedSoFar = 0; });
     (deal.juniorHolders||[]).forEach(h=>{ if(h.receivedSoFar===undefined) h.receivedSoFar = 0; });
   });
@@ -9114,14 +9115,7 @@ function processYearEnd(year){
   
   
   
-  state.revenueSwaps.forEach(s=>{ s.yearsRemaining -= 1; });
-  const expiredRevenueSwaps = state.revenueSwaps.filter(s=>s.yearsRemaining<=0);
-  expiredRevenueSwaps.forEach(s=>{
-    const seller = companyById(s.sellerId);
-    const seniorPct = s.seniorCapTotal>1e-9 ? Math.round(Math.min(1, s.seniorPaidSoFar/s.seniorCapTotal)*100) : 100;
-    log(`L'émission ABS de ${seller?seller.name:'?'} arrive à échéance après ${s.years} an(s) — ${seller?seller.name:'?'} récupère le contrôle plein de ses terrains. Non-recours: la tranche senior a été servie à ${seniorPct}% de son plafond, chaque porteur garde ce qu'il a reçu, aucune obligation résiduelle de ${seller?seller.name:'?'}.`);
-  });
-  state.revenueSwaps = state.revenueSwaps.filter(s=>s.yearsRemaining>0);
+  expireRevenueSwaps(true); // Section 311 — bogue 19 : échéance comptée en lancers (voir expireRevenueSwaps)
   
   
   
@@ -9181,6 +9175,26 @@ function forfeitPendingDividendAnnouncementsAtGameEnd(){
   state.dividendAnnouncements = [];
 }
 
+// Section 311 — bogue 19 : une ABS est tarifée sur years × 6 lancers (computeAbsPricing) ; elle est désormais servie
+// exactement ce nombre de lancers à partir de sa résolution (deal.endRoll = lancer de résolution + years × 6, toujours
+// un début de semestre), même publiée au 2e semestre. Avant : la durée était décomptée en fins d'année, si bien qu'une
+// ABS d'un an publiée au 2e semestre n'était servie que 3 lancers. Appelée en fin d'année (processYearEnd) et à chaque
+// changement de semestre. Accords d'une ancienne version (endRoll null) : décompte annuel inchangé.
+function expireRevenueSwaps(isYearEnd){
+  const rc = state.gameClock.rollCount;
+  state.revenueSwaps.forEach(s=>{
+    if(s.endRoll!=null) s.yearsRemaining = Math.max(0, (s.endRoll - rc)/6);
+    else if(isYearEnd) s.yearsRemaining -= 1;
+  });
+  const isExpired = s=> s.endRoll!=null ? rc>=s.endRoll : s.yearsRemaining<=0;
+  const expiredRevenueSwaps = state.revenueSwaps.filter(isExpired);
+  expiredRevenueSwaps.forEach(s=>{
+    const seller = companyById(s.sellerId);
+    const seniorPct = s.seniorCapTotal>1e-9 ? Math.round(Math.min(1, s.seniorPaidSoFar/s.seniorCapTotal)*100) : 100;
+    log(`L'émission ABS de ${seller?seller.name:'?'} arrive à échéance après ${s.years} an(s) — ${seller?seller.name:'?'} récupère le contrôle plein de ses terrains. Non-recours: la tranche senior a été servie à ${seniorPct}% de son plafond, chaque porteur garde ce qu'il a reçu, aucune obligation résiduelle de ${seller?seller.name:'?'}.`);
+  });
+  state.revenueSwaps = state.revenueSwaps.filter(s=>!isExpired(s));
+}
 function advanceGameClock(){
   const before = currentGameYear();
   const semesterBefore = Math.floor(state.gameClock.rollCount/3);
@@ -9220,6 +9234,7 @@ function advanceGameClock(){
     
     
     
+    expireRevenueSwaps(false); // Section 311 — bogue 19 : ABS échue en milieu d'année (publiée au 2e semestre)
     const hadSemesterContracts = state.properties.some(p=>p.insurance && p.insurance.quotedTerm==='semester') || state.taxInsurances.some(t=>t.quotedTerm==='semester');
     state.properties.forEach(p=>{ if(p.insurance && p.insurance.quotedTerm==='semester') p.insurance = null; });
     state.taxInsurances = state.taxInsurances.filter(t=>t.quotedTerm!=='semester');
@@ -15306,6 +15321,7 @@ function resolveRevenueSwapListing(listing){
   const seniorCapTotal = seniorRaised * (1+listing.tranches.seniorPremiumPct);
   state.revenueSwaps.push({id:uid(), sellerId:seller.id, propertyIds:[...listing.propertyIds], cededPctOfShare:listing.cededPctOfShare,
     years:listing.years, yearsRemaining:listing.years, pricing:listing.pricing, seniorPremiumPct:listing.tranches.seniorPremiumPct,
+    endRoll: state.gameClock.rollCount + listing.years*6, // Section 311 — bogue 19 : servie years × 6 lancers, la durée payée
     seniorRaised, juniorRaised:juniorRaisedReal, seniorCapTotal, seniorPaidSoFar:0, seniorHolders, juniorHolders, createdAt:nowLabel()});
   
   

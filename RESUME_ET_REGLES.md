@@ -990,6 +990,35 @@ Monnaie conservée vérifiée sur chaque scénario. **19 fichiers, 1 338 vérifi
 
 **Intégration** (vague 2, branche `serie-309`) : les verrous de la section 311 (ABS conclue OU annoncée, swap de loyers spécifique) s'appliquent à toutes les voies de vente de cette section : vente à la banque, dépôt à blanc et acceptation d'une offre de part de terrain (`sellPropertyShare`, raccord fait à l'intégration) ou de lot (`sellMergedShare`). Une offre déposée puis rattrapée par une annonce d'ABS ou par un swap spécifique est refusée à l'acceptation (« Offre non exécutée — Co Bob a annoncé une émission ABS sur Aéroport 1… »), rien ne bouge, l'offre reste en attente, monnaie conservée. Échange de parts : un seul contrôle ABS et swap spécifique, dans `shareSwapGiveRefusal`, avec les messages de la section 311 (le contrôle en double d'`executeShareSwap` est retiré). Garde « terrain regroupé » d'`issueMortgage` unique, commune avec la section 312 ; dans la fenêtre d'hypothèque de la section 312, ce refus s'affiche dans la fenêtre redessinée « Les conditions ont changé ». Accepter ou refuser une offre de vente passe par le contrôle commun `offerResponderRefusal` (messages inchangés). Les offres de vente expirent au même endroit du cycle que les offres d'hypothèque (`advanceGameClock`, à côté de `expirePendingLoanRequests`, même écriture). Une offre de vente devenue inexécutable reste affichée jusqu'à son expiration au lancer suivant (refus clair à l'acceptation), alors qu'une offre d'hypothèque caduque est retirée tout de suite : choix du lot 2 conservé. Les maisons de réserve ne sont rattachées à aucun terrain : aucun verrou ABS ni swap ne s'y applique. Tests : `tests/section309-integration.test.js` (54 vérifications, contre-épreuve pour chaque raccord) ; `section309-lots` adapté (bogue 34 lu dans la fenêtre redessinée, message ABS de la section 311). Suite intégrée : 35 fichiers, 1 811 vérifications et 53 cas multi-appareils, 0 échec ; 320 cas multi-appareils avec `SYNC_SEEDS=40`.
 
+**Décisions de Julien (2026-10-25)** — réponse aux questions du point d'étape, verbatim : « Ok go pour tes reco ».
+Chaque changement du code porte le commentaire « Section 309 — décision de Julien (2026-10-25) ».
+
+- **Plancher de valeur d'un terrain = prix réellement payé, en moyenne pondérée par les parts** (question de fond du
+  point 10) — `modalBuyShares` (Administration › « Acheter des parts ») ne recopie plus le prix convenu dans
+  `acquisitionPrice` (plancher de `intrinsicValue` pour 100 % du terrain). Nouveau plancher = plancher précédent ×
+  (100 − parts achetées) / 100 + prix convenu × parts achetées / 100, le plancher précédent étant le prix de base s'il
+  n'y en a pas. Les parts acquises sans prix enregistré (ou détenues par la banque) comptent au plancher précédent
+  plutôt qu'au prix de base : il résume déjà les achats antérieurs (100 % achetés à 1,2, 50 % revendus à la banque puis
+  rachetés à 1,0 → 1,1 ; avec le prix de base, 0,8 : un rachat partiel effacerait le prix payé avant). Le plancher
+  monte au plus du montant réellement payé : la triche fait perdre de l'argent. *Avant* : Brun 1 (base 0,6), 99 %
+  détenus, 1 % racheté « à 500 pour 100 % » (5 M$) → plancher 500, revente de 100 % à la banque : +370 M$. *Après* :
+  plancher 0,99 × 0,6 + 0,01 × 500 = 5,594, valeur de rachat de 100 % 4,1955, gain net −0,80 M$. Achat honnête de
+  100 % à 1,2 : plancher 1,2. Deux acheteurs (30 % + 20 %) à 2 sur Brun 2 (base 1,2) : 1,6. Un achat refusé ne change
+  rien. La fenêtre rappelle la règle et affiche le plancher actuel. `wasSeized` (prix suggéré = valeur intrinsèque si
+  le terrain a déjà été acheté par l'Administration) est inchangé : `acquisitionPrice` reste non nul après un premier
+  achat. `modalBuyShares` est le seul endroit qui écrit `acquisitionPrice` (le rachat d'une part de lot,
+  `buyMergedShareFromBank`, n'y touche pas). Parties existantes : un plancher déjà enregistré est conservé tel quel
+  (les parts achetées à l'époque sont inconnues) ; champ absent → `null` (prix de base) par `migrateState`, comme avant.
+- **Sans code** : part de la banque ou du REIT dans le coût d'une maison payée par la banque (gardé) ; pas de
+  compensation en argent de l'écart d'arrondi du regroupement (gardé) ; choix déjà faits confirmés (vente de part à une
+  entreprise par offre à accepter, prix proposé = valeur de rachat de la banque, compensation de maison refusée si un
+  copropriétaire ne peut pas payer).
+- **Tests** : `tests/section309-decisions.test.js` (22 vérifications, par la vraie fenêtre sur le mini-DOM ;
+  contre-épreuve : l'ancienne ligne réintroduite redonne un plancher de 500 et +370 M$) ; contre-épreuve de
+  `tests/section309-retouches.test.js` adaptée (plancher 5,594 et non 500).
+- **Joueurs** (cahier 5, aide-mémoire) : le prix convenu lors d'un achat de parts à la banque ne relève le plancher de
+  valeur du terrain qu'au prorata des parts achetées.
+
 ## 311. Titrisation (ABS), swaps de loyers et accords de compensation : lot de couleur regroupé exigé, durée servie = durée payée, terrain verrouillé dès l'annonce, actif au bilan du souscripteur — 2026-10-24
 
 Contexte : lot 4 de la série de corrections des bogues moyens et faibles de l'audit du 2026-10-19 (cadre de
@@ -1105,6 +1134,41 @@ valeur nette (pas dans sa marge) ; un côté épuisé d'un swap à budget ne blo
 propres à une annonce d'ABS ; seul le CEO destinataire répond à une offre de swap ou de compensation.
 
 **Intégration** (vague 2) : la fenêtre « Vendre une part » est désormais celle de la section 309 (vendeur imposé, offre à accepter, banque au prix de rachat). Le verrou du swap spécifique (point 6) et le verrou ABS (point 4) y sont reportés dans `sellPropertyShare` : vente à la banque, dépôt de l'offre et acceptation, revérifiés sur l'état frais. Échange de parts : un seul contrôle, dans `shareSwapGiveRefusal`. Offre d'hypothèque de la section 312 : verrou ABS (annonce comprise) et message de cette section dans `mortgageAssetTerms`. L'annonce d'une ABS retire, dans la même écriture, une offre d'hypothèque en attente sur le terrain (trace au journal). `rentOfferResponderRefusal` délègue au contrôle commun `offerResponderRefusal`. Loyer : les chemins ABS et compensation (point 9) passent par la retenue de prêt de la section 312 (`applyRentLoanWithholding`, seule voie) dans `settlePropertyRent` et `settleNeutralPawnRent`. `mergeGroup` : refus pendant une ABS et arrondi de la section 309 conservés tous deux. Tests : `section311-swap-vente` réécrit sur la nouvelle fenêtre (19 vérifications, dont « offre déposée puis swap spécifique signé » et la vente à la banque) ; contre-épreuve de `section311-offres` recadrée sur le contrôle commun ; scénarios croisés dans `section309-integration`.
+
+**Décisions de Julien (2026-10-25)** — réponse aux questions du point d'étape, verbatim : « Ok go pour tes reco ».
+Chaque changement du code porte le commentaire « Section 311 — décision de Julien (2026-10-25) ».
+
+- **Résiliation amiable d'un swap à budget** (question 8 de la revue) — un swap à budget cumulatif n'a pas de durée et
+  ne prend fin qu'à l'épuisement de ses deux côtés : s'aucun côté ne progresse, il liait les deux entreprises sans
+  limite. L'un des deux CEO propose la résiliation (`proposeRentSwapTermination`, bouton « Proposer une résiliation
+  amiable » dans le tableau des swaps actifs) ; la demande est enregistrée dans `state.rentSwapTerminationRequests`
+  (défaut `[]` dans `migrateState` et à la création : `{id, swapId, fromCompanyId, toCompanyId, byPlayerId, roll,
+  createdAt}`). Seul le CEO de l'autre entreprise l'accepte ou la refuse (`rentOfferResponderRefusal`), l'auteur peut
+  la retirer ; elle s'affiche dans « Propositions en attente » des deux entreprises et expire au lancer de dés suivant
+  (`expireRentSwapTerminationRequests`, à côté de `expireAssetSaleOffers`, trace au journal). À l'acceptation, le swap
+  prend fin sans aucun paiement (ce qui a été reçu reste acquis). Tout est revérifié dans les applyFn sur l'état frais :
+  swap encore actif et à budget, CEO d'une des deux entreprises, une seule demande en attente par swap, destinataire,
+  lancer inchangé ; un swap déjà épuisé rend la demande « sans objet » (retirée). Un swap à durée ne se résilie pas (il
+  prend fin à son échéance). Un ancien swap sans identifiant en reçoit un déterministe (`rs-ancien-<rang>-<A>-<B>`,
+  identique sur tous les appareils). *Avant* : swap à budget A ⇄ B (5 / 5) sans progrès → A ne pouvait plus signer
+  aucun swap général. *Après* : Alice propose, Bob accepte → le swap prend fin, encaisses et monnaie inchangées, A signe
+  ensuite un swap général avec C ; Alice ne peut pas accepter sa propre demande, un tiers ne peut ni accepter ni refuser.
+- **Regroupement refusé avec deux swaps spécifiques d'une même entreprise sur le lot** (question 9) — `mergeGroup`
+  (`mergeGroupSpecificSwapsRefusal`, comme pour une ABS en cours) refuse le regroupement quand une même entreprise a
+  des swaps spécifiques actifs sur deux terrains (côtés) différents du lot, avec un message qui nomme l'entreprise, les
+  terrains et les partenaires. *Avant* : Brun 1 et Brun 2 à A, swaps A (Brun 1) ⇄ B (Jaune 1) et A (Brun 2) ⇄ C
+  (Vert 1) ; après regroupement, `swapSplit` ne retenait que le premier pour le lot : le loyer de Brun 2 partait chez B
+  et C ne recevait plus rien. *Après* : « Regroupement impossible : Co Alice a des swaps de loyers spécifiques actifs
+  sur plusieurs terrains de ce lot — Brun 1 (avec Co Bob), Brun 2 (avec Co Carl)… » ; à l'échéance de l'un d'eux, le
+  regroupement redevient possible. Restent permis : un seul swap spécifique (avec ou sans swap général), et deux
+  entreprises différentes ayant chacune un swap sur un terrain du lot. Les côtés sont comptés (et pas seulement les
+  terrains) : deux swaps spécifiques d'une même entreprise sur le même terrain, possibles seulement dans une partie
+  antérieure au bogue 22, bloquent aussi le regroupement.
+- **Tests** : `tests/section311-decisions.test.js` (42 vérifications, dont les vrais boutons sur le mini-DOM ;
+  contre-épreuves : contrôle du destinataire retiré, expiration retirée, refus du regroupement retiré).
+- **Joueurs** (cahier 8, aide-mémoire) : un swap à budget peut être résilié à l'amiable, sans paiement, si les deux CEO
+  sont d'accord (demande valable jusqu'au lancer suivant) ; un lot ne se regroupe pas tant qu'une même entreprise a des
+  swaps spécifiques sur deux de ses terrains.
 
 ## 312. Financement et crédit : ratio d'endettement, taux plafonné, prêts et hypothèques (audit, lot 5) — 2026-10-24
 
@@ -1315,3 +1379,38 @@ assurance normale, et avertissement si l'on signe un contrat annuel par-dessus s
 dont l'assureur a disparu ne couvre plus rien.
 
 **Intégration** (vague 2) : aucun conflit ni raccord nécessaire avec les sections 309, 311 et 312. Les sinistres (`settlePropertyRent`, `payTax`) cohabitent sans changement avec les retenues de prêt et les chemins ABS et compensation (suite complète et sondes de la revue vertes).
+
+**Décisions de Julien (2026-10-25)** — réponse aux questions du point d'étape, verbatim : « Ok go pour tes reco ».
+Chaque changement du code porte le commentaire « Section 313 — décision de Julien (2026-10-25) ».
+
+- **Cases taxe non plafonnées** (question 3 et remarque b du réviseur) — le plafond de l'indemnité du bogue 39 ne vise
+  plus que les loyers (terrains, aéroports, services, sous-standard). Pour l'Impôt sur le revenu et la TPS/TVQ,
+  l'assureur paie la taxe due au sinistre moins la franchise (`payTax`) ; le contrat est signé sans plafond
+  (`coveredAmount = null`) ; un contrat de taxe déjà signé avec un plafond n'est plus plafonné ; le prix de reprise
+  (`liveTakeoverTaxQuote`) est calculé sur le montant actuel. La fenêtre de confirmation affiche « aujourd'hui (non
+  plafonné) » pour une taxe et précise que seules les indemnités des terrains sont plafonnées. *Avant* : Impôt assuré
+  avec une valeur de 8 (0,8), sinistre avec une valeur de 20 (2) → l'assuré payait 1,2 de la hausse naturelle de sa
+  valeur. *Après* : l'assureur paie 2, l'assuré 0 ; franchise 0,3 et assureur B : assuré 0,3, B 1,7 (avant : 1,6 et 0,4).
+  Seul un assureur introuvable laisse encore la taxe à la charge de l'assuré. Loyers inchangés (terrain couvert 0,5,
+  hôtel ensuite : assureur 0,5, assuré 19,5) ; prorata des services gardé (question 2).
+- **Sous-standard remboursée automatiquement** (proposition 6) — quand une entreprise signe un contrat normal (annuel ou
+  semestriel) sur une case où ELLE a une assurance sous-standard du lancer en cours, celle-ci est annulée et sa prime
+  remboursée dans la même action (`purchaseInsuranceBundle`, `cancelSubInsuranceForNormalContract`, même logique que
+  `cancelSubInsurance`). Rembourse l'assureur ACTUEL du contrat : la banque, ou l'entreprise qui l'a repris (elle a
+  reçu la prime, ou le prix de reprise, et porte le risque) ; assureur introuvable : annulée sans remboursement
+  (personne ne peut payer, aucun argent créé). Trace : la ligne du contrat au journal mentionne l'annulation et le
+  remboursement, et sa transaction contient les deux mouvements. Le remboursement attendu (montant, assureur) fait
+  partie des conditions confirmées : une sous-standard annulée entre l'affichage et la signature donne « Les conditions
+  ont changé ». L'avertissement du lot 6 est remplacé par « votre assurance sous-standard sur cette case sera annulée et
+  sa prime (…) remboursée automatiquement par … à la signature ». Une sous-standard d'une autre entreprise n'est pas
+  touchée. Exemple : sous-standard sur Bleu foncé 2 à 0,1111, puis contrat annuel à 0,1200 → A paie net 0,0089 ;
+  reprise par C : C rembourse 0,1111, la banque garde 0,1200 ; monnaie conservée.
+- **Sans code** : prorata des services gardé ; contrats antérieurs sans plafond, franchise confirmée devenant celle du
+  tour et prix de reprise plafonné (loyers) confirmés.
+- **Tests** : `tests/section313-decisions.test.js` (30 vérifications, 11 scénarios dont 3 de contre-épreuve : plafond
+  des taxes réintroduit, reprise plafonnée réintroduite, annulation automatique retirée) ; adaptés :
+  `section313-assurance` 39c (taxe non plafonnée), 39g (contre-épreuve = plafond réintroduit), R4b (+1 créé au lieu de
+  +0,4), `section313-fenetre` F1 (aucun plafond enregistré sur la taxe) et F7 (mention du remboursement).
+- **Joueurs** (cahier 7, aide-mémoire) : une taxe assurée est couverte en entier (moins la franchise), même si elle a
+  augmenté depuis la signature ; signer un contrat annuel ou semestriel sur une case déjà couverte par sa propre
+  sous-standard l'annule et rembourse sa prime automatiquement.

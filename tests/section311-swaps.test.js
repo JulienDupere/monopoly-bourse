@@ -77,6 +77,35 @@ async function scenarioAudit(eng){
     ok(run(`state.rentSwapOffers.length`) === 1 && run(`state.rentSwapOffers[0].id`) === ids[1], 'la seconde proposition reste en attente (rien n’est perdu)');
     ok(/général/.test(run(`__alerts.join(' | ')`)), 'message clair à la signature refusée');
   }
+  // Retouche de la revue : un swap à budget dont un côté est épuisé (le partenaire a reçu tout son plafond) ne bloque
+  // plus cette entreprise ; l'autre côté, qui peut encore progresser (terrains présents ET futurs), reste actif.
+  async function budgetEpuise(eng){
+    const { run, json } = eng;
+    run(`state.rentSwaps = [];`);
+    const r = await run(`createRentSwap(null, A.id, null, B.id, null, null, null, true, true, 3, 3, {silent:true})`); // B (Jaune 1) aussi propriétaire
+    run(`PB.owners = []; PA.houses = 5; globalThis.RENT = colorRentAt(PA, PA.houses) * maxPlayerOwnPct()/100;`);
+    let visits = 0;
+    while(run(`(state.rentSwaps[0]||{}).disbursedB||0`) < 3 - 1e-9 && visits < 200){ json(`swapSplit(PA.id, A.id, D.id, RENT)`); visits++; }
+    const after = await run(general('A', 'C'));
+    const visitA = json(`swapSplit(PA.id, A.id, D.id, 1)`), visitC = json(`swapSplit(PC.id, C.id, D.id, 1)`);
+    const forB = await run(`proposeRentSwap(null, B.id, null, D.id, 2, null, null, true, true, 0, 0, {silent:true})`);
+    return { r, visits, after, visitA, visitC, forB, budgetLeft: run(`state.rentSwaps.filter(s=>s.budgetMode).length`) };
+  }
+  console.log('3b — swap à budget : côté épuisé, l’entreprise retrouve sa liberté');
+  {
+    const eng = await setup();
+    const v = await budgetEpuise(eng);
+    console.log(`  côté de A épuisé après ${v.visits} passage(s) ; nouveau swap général A ⇄ C : ${v.after.ok ? 'signé' : 'refusé'}`);
+    ok(v.r.ok && v.budgetLeft === 1, 'swap à budget 3/3 signé ; toujours actif (côté de B non épuisé, B n’a plus de terrain)');
+    ok(v.after.ok, 'A, dont le côté est épuisé, signe un swap général avec C');
+    ok(v.visitA.partnerId === eng.run('C.id') && v.visitC.partnerId === eng.run('A.id'), 'le swap A ⇄ C joue dans les deux sens');
+    ok(!v.forB.ok, 'B, dont le côté peut encore progresser (achats futurs), reste lié par le swap à budget');
+  }
+  {
+    const eng = await setup({ transform: (src) => src.replace("function rentSwapBudgetSideExhausted(s, sideIsA){\n  if(!s.budgetMode) return false;", "function rentSwapBudgetSideExhausted(s, sideIsA){\n  return false;") });
+    const v = await budgetEpuise(eng);
+    ok(!v.after.ok, 'contre-épreuve : sans la règle du côté épuisé, A reste bloquée à vie');
+  }
   console.log('4 — contre-épreuve : contrôle de conflit retiré');
   {
     const eng = await setup({ transform: (src) => src.replace("  if(!clash) return null;\n", "  return null;\n") });

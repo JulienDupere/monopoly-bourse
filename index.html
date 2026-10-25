@@ -14804,13 +14804,22 @@ function swapAssetValueSummary(propId, companyId, isGeneral){
 
 
 
+// Section 311 — retouche de la revue (bogue 22) : le côté d'un swap à budget est ÉPUISÉ quand le partenaire a reçu tout
+// son plafond (section 259 : « sa part arrête », l'autre côté continue). Un côté épuisé ne redirige plus rien : il
+// n'est plus retenu par swapSplit et n'entre plus en conflit (rentSwapConflictReason), sinon un swap à budget dont
+// l'autre côté ne progresse pas (partenaire sans terrain) bloquait à vie tout nouveau swap général. Économie inchangée :
+// un côté épuisé redirigeait déjà 0.
+function rentSwapBudgetSideExhausted(s, sideIsA){
+  if(!s.budgetMode) return false;
+  return sideIsA ? (s.disbursedB||0) >= (s.budgetCapB||0) - 1e-9 : (s.disbursedA||0) >= (s.budgetCapA||0) - 1e-9;
+}
 function swapSplit(propId, ownerId, visitorId, cutAmount){
   const isActive = s => s.budgetMode || s.yearsRemaining>0;
   const specificMatch = s => isActive(s) &&
     ((!s.generalA && samePropertyOrLot(s.propA,propId) && s.companyA===ownerId) ||
      (!s.generalB && samePropertyOrLot(s.propB,propId) && s.companyB===ownerId));
   const generalMatch = s => isActive(s) &&
-    ((s.generalA && s.companyA===ownerId) || (s.generalB && s.companyB===ownerId));
+    ((s.generalA && s.companyA===ownerId && !rentSwapBudgetSideExhausted(s, true)) || (s.generalB && s.companyB===ownerId && !rentSwapBudgetSideExhausted(s, false))); // Section 311 — retouche
   let swap = state.rentSwaps.find(specificMatch);
   let isA;
   if(swap){
@@ -14818,7 +14827,7 @@ function swapSplit(propId, ownerId, visitorId, cutAmount){
   } else {
     swap = state.rentSwaps.find(generalMatch);
     if(!swap) return {toOwner:cutAmount, toPartner:0, partnerId:null};
-    isA = swap.generalA && swap.companyA===ownerId;
+    isA = swap.generalA && swap.companyA===ownerId && !rentSwapBudgetSideExhausted(swap, true); // Section 311 — retouche
   }
   const partnerId = isA ? swap.companyB : swap.companyA;
   if(visitorId===ownerId || visitorId===partnerId){
@@ -14883,8 +14892,8 @@ function swapSplit(propId, ownerId, visitorId, cutAmount){
 function rentSwapConflictReason(companyId, isGeneral, propId){
   const co = companyById(companyId);
   const isActive = s => s.budgetMode || s.yearsRemaining>0;
-  const clash = state.rentSwaps.find(s=> isActive(s) && [[s.companyA, s.generalA, s.propA], [s.companyB, s.generalB, s.propB]].some(([cid, gen, pid])=>
-    cid===companyId && (isGeneral ? !!gen : (!gen && samePropertyOrLot(pid, propId)))));
+  const clash = state.rentSwaps.find(s=> isActive(s) && [[s.companyA, s.generalA, s.propA, true], [s.companyB, s.generalB, s.propB, false]].some(([cid, gen, pid, sideIsA])=>
+    cid===companyId && !rentSwapBudgetSideExhausted(s, sideIsA) && (isGeneral ? !!gen : (!gen && samePropertyOrLot(pid, propId))))); // Section 311 — retouche : côté épuisé ignoré
   if(!clash) return null;
   const partner = companyById(clash.companyA===companyId ? clash.companyB : clash.companyA);
   if(isGeneral) return `${co?co.name:'?'} a déjà un swap de loyers général ou à budget actif avec ${partner?partner.name:'?'} — un second swap général ne jouerait que dans un sens. Attendez la fin du premier.`;

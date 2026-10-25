@@ -30,7 +30,7 @@ const ANCIEN_FUSION = src => src.split('pos.expiryRoll===expiryRoll && !pos.stra
 const SANS_PLAFOND_ECRIT = src => src.split('if(nakedAfter > capWritten + 1e-9 && nakedAfter > nakedBefore + 1e-9){').join('if(false){');
 // Plafond de la section 314 avant la réponse de Julien : TOUS les contrats écrits comptent (couverts et jambes protégées).
 const TOUTES_ECRITES = src => src
-  .replace('  let shareCoverLeft = Math.floor(Math.max(0, stake ? stake.shares : 0)/OPTION_CONTRACT_MULTIPLIER + 1e-9);', '  let shareCoverLeft = 0;')
+  .replace('  let shareCoverLeft = Math.floor(Math.max(0, heldShares)/OPTION_CONTRACT_MULTIPLIER + 1e-9);', '  let shareCoverLeft = 0;')
   .replace('      qty -= Math.min(qty, longQty);', '      qty -= 0;');
 const ANCIEN_FERMER = src => src.replace(/function closeOptionStrategy\(player, strategyId\)\{[\s\S]*?\n\}\n/,
   `function closeOptionStrategy(player, strategyId){

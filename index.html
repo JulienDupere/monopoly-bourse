@@ -11656,11 +11656,17 @@ function optionWrittenCapContracts(company){
 // Section 314 — retouche de la revue : la répartition est faite par writtenOptionCoverage, partagée avec la marge de
 // maintien (requiredMaintenanceMargin) : le plafond et la marge voient les mêmes calls couverts et les mêmes calls nus.
 // Renvoie une Map position écrite → {spreadProtected, shareCovered, naked} (contrats).
-function writtenOptionCoverage(player, companyId, extraPositions){
-  const all = (player.optionPositions||[]).concat(extraPositions||[]).filter(p=>p.companyId===companyId && p.shares>1e-9);
+// Section 314 — décision de Julien (2026-10-25) : override (facultatif) simule une opération AVANT de la faire :
+// override.heldShares = parts détenues après l'opération ; override.positionShares = {idPosition: contrats restants}.
+function writtenOptionCoverage(player, companyId, extraPositions, override){
+  const posShares = (override && override.positionShares) || null;
+  const all = (player.optionPositions||[]).concat(extraPositions||[])
+    .map(p=>(posShares && p.id!==undefined && Object.prototype.hasOwnProperty.call(posShares, p.id)) ? Object.assign({}, p, {shares: posShares[p.id]}) : p) // Section 314 — décision de Julien (2026-10-25)
+    .filter(p=>p.companyId===companyId && p.shares>1e-9);
   const co = companyById(companyId);
   const stake = co ? (co.shareholders||[]).find(x=>x.playerId===player.id) : null;
-  let shareCoverLeft = Math.floor(Math.max(0, stake ? stake.shares : 0)/OPTION_CONTRACT_MULTIPLIER + 1e-9);
+  const heldShares = (override && override.heldShares!==undefined) ? override.heldShares : (stake ? stake.shares : 0); // Section 314 — décision de Julien (2026-10-25)
+  let shareCoverLeft = Math.floor(Math.max(0, heldShares)/OPTION_CONTRACT_MULTIPLIER + 1e-9);
   const out = new Map();
   all.filter(p=>p.side==='short').forEach(pos=>{
     let qty = pos.shares, spreadProtected = 0, shareCovered = 0;
@@ -11677,10 +11683,31 @@ function writtenOptionCoverage(player, companyId, extraPositions){
   });
   return out;
 }
-function playerNakedWrittenContracts(player, companyId, extraPositions){
+function playerNakedWrittenContracts(player, companyId, extraPositions, override){
   let naked = 0;
-  writtenOptionCoverage(player, companyId, extraPositions).forEach(c=>{ naked += c.naked; });
+  writtenOptionCoverage(player, companyId, extraPositions, override).forEach(c=>{ naked += c.naked; }); // Section 314 — décision de Julien (2026-10-25) : override
   return naked;
+}
+// Section 314 — décision de Julien (2026-10-25), verbatim : « […] et refus des opérations qui portent les options nues
+// au-delà du plafond. » Une opération VOLONTAIRE qui découvre des options écrites (vente de parts qui couvraient des
+// calls : vente directe, ask exécuté, annonce CEO ; clôture seule de la jambe achetée d'une stratégie) est refusée si,
+// après elle, le joueur aurait plus de contrats écrits NUS que le plafond sur l'entreprise ET plus qu'avant (une position
+// héritée au-delà du plafond ne bloque que ce qui l'augmente). Calcul AVANT toute mutation, par simulation (override de
+// writtenOptionCoverage). Jamais appelée par les voies forcées : appel de marge (enforceMarginCalls, closeOptionPosition
+// avec _bypassTradingWindow), règlement à l'échéance (settleExpiredOptions / settleOptionExercise, qui ne passent ni par
+// executeShareTrade ni par closeOptionPosition), clôture d'une stratégie entière (closeOptionStrategy, _cashPrechecked :
+// toutes les jambes sortent, le nombre de contrats nus ne peut que baisser).
+// Renvoie null si l'opération est permise, sinon {cap, before, after}.
+function nakedWrittenCapBreach(player, company, override){
+  if(!player || !company) return null;
+  const cap = optionWrittenCapContracts(company);
+  const before = playerNakedWrittenContracts(player, company.id);
+  const after = playerNakedWrittenContracts(player, company.id, null, override);
+  if(after > cap + 1e-9 && after > before + 1e-9) return {cap, before, after};
+  return null;
+}
+function nakedWrittenCapBreachMessage(company, b, what, advice){
+  return `${what} refusée : elle porterait vos options écrites NUES sur ${company.name} à ${+b.after.toFixed(4)} contrat(s), au-delà du plafond de ${b.cap} contrat(s) nu(s) par joueur (${OPTION_WRITTEN_CAP_PCT*100}% de ${fmtShares(company.totalShares)} parts ÷ ${OPTION_CONTRACT_MULTIPLIER} parts/contrat ; vous en avez ${+b.before.toFixed(4)} aujourd'hui). Un call écrit n'est couvert que par 100 parts détenues par contrat ; une jambe écrite de stratégie, par la jambe achetée.${advice ? ' ' + advice : ''}`;
 }
 function optionWrittenCapErrorMessage(company, capContracts, already, after){
   const room = Math.max(0, capContracts - already);
@@ -11973,6 +12000,15 @@ function executeShareTrade(company, player, direction, amount, _viaCeoAnnounceme
     const myEntry = company.shareholders.find(s=>s.playerId===player.id);
     const myShares = myEntry ? myEntry.shares : 0;
     if(qty>myShares+1e-9) return {ok:false, error:'Vous ne détenez pas assez de parts pour cette vente (pas de vente à découvert dans cette phase).'};
+    // Section 314 — décision de Julien (2026-10-25) : vente VOLONTAIRE (vente directe, ask exécuté, annonce CEO : seules
+    // voies qui appellent executeShareTrade) refusée si elle découvre des calls écrits au-delà du plafond des options nues.
+    const nakedBreach = nakedWrittenCapBreach(player, company, {heldShares: myShares-qty});
+    if(nakedBreach){
+      const coveredNow = [...writtenOptionCoverage(player, company.id).values()].reduce((t,c)=>t+c.shareCovered, 0);
+      const keepBlocks = Math.max(0, coveredNow - Math.max(0, nakedBreach.cap - nakedBreach.before));
+      const maxSell = Math.max(0, myShares - keepBlocks*OPTION_CONTRACT_MULTIPLIER);
+      return {ok:false, nakedCap:true, error: nakedWrittenCapBreachMessage(company, nakedBreach, `Vente de ${fmtShares(qty)} part(s) de ${company.name}`, `Vente possible sans dépasser le plafond : au plus ${fmtShares(maxSell)} part(s) ; ou rachetez d'abord des calls écrits.`)};
+    }
     
     
     
@@ -12117,6 +12153,10 @@ function fillPendingAsk(player, company, ask){
   if(qtyToFill<=1e-9) return {filled:0};
   const amount = qtyToFill*price;
   const r = executeShareTrade(company, player, 'sell', amount, false, price);
+  if(!r.ok && r.nakedCap && !ask.nakedCapNotified){ // Section 314 — décision de Julien (2026-10-25) : ask refusé (options nues), expliqué une fois au journal ; l'ordre reste en attente
+    ask.nakedCapNotified = true;
+    log(`🎯 Ask NON exécuté — ${player.name}, ${company.name} à ${fmtPrice(price)}/part : ${r.error} L'ordre reste en attente.`);
+  }
   if(!r.ok) return {filled:0};
   ask.qty -= qtyToFill;
   return {filled:qtyToFill, entries:r.entries, amount, qty:qtyToFill};
@@ -13478,6 +13518,16 @@ function closeOptionPosition(player, positionId, shares, _bypassTradingWindow, _
   if(!co) return {ok:false, error:'Entreprise introuvable.'};
   let qty = shares;
   if(qty>pos.shares) qty = pos.shares; 
+  // Section 314 — décision de Julien (2026-10-25) : clôture VOLONTAIRE (sans _bypassTradingWindow = appel de marge, ni
+  // _cashPrechecked = stratégie entière) refusée si elle découvre des jambes écrites au-delà du plafond des options nues
+  // (cas : clôturer seule la jambe achetée d'un spread).
+  if(!_bypassTradingWindow && !_cashPrechecked){
+    const nakedBreach = nakedWrittenCapBreach(player, co, {positionShares: {[pos.id]: pos.shares-qty}});
+    if(nakedBreach){
+      const room = Math.max(0, Math.floor(nakedBreach.cap - nakedBreach.before + 1e-9));
+      return {ok:false, error: nakedWrittenCapBreachMessage(co, nakedBreach, `Clôture de ${+qty.toFixed(4)} contrat(s) de cette option`, pos.strategyId ? `Clôturez plutôt la stratégie entière${room>0 ? `, ou au plus ${room} contrat(s) de cette jambe` : ''}.` : '')};
+    }
+  }
   
   
   const premium = optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll, pos.side==='short');

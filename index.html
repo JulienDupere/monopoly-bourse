@@ -7251,7 +7251,9 @@ function recentExecutionEntriesForPlayer(player, limit){
     if(!asBorrower && !asLender) return;
     const borrowerCo = companyById(l.borrowerId);
     entries.push({roll: l.roll||0, ok: true,
-      text: `Offre de prêt acceptée — ${loanLenderLabel(l)} prête ${fmt(l.principal)} à ${borrowerCo?borrowerCo.name:'?'} (${l.secured?'garanti':'non garanti'}, ${Math.round(l.withholdingPct*100)}% des loyers retenu, ${l.multiple}× le capital).`});
+      text: l.lastResort // Section 317 — bogue 94 : le prêt de dernier recours n'est pas une offre acceptée
+        ? `Prêt de dernier recours — ${loanLenderLabel(l)} prête ${fmt(l.principal)} à ${borrowerCo?borrowerCo.name:'?'} (${Math.round(l.withholdingPct*100)}% des loyers retenu, ${l.multiple}× le capital).`
+        : `Offre de prêt acceptée — ${loanLenderLabel(l)} prête ${fmt(l.principal)} à ${borrowerCo?borrowerCo.name:'?'} (${l.secured?'garanti':'non garanti'}, ${Math.round(l.withholdingPct*100)}% des loyers retenu, ${l.multiple}× le capital).`});
   });
   
   
@@ -16816,11 +16818,12 @@ function triggerLastResortLoan(companyId){
   if(existing){
     existing.principal += principal;
     existing.totalDue += addedDue;
+    existing.roll = state.gameClock.rollCount; // Section 317 — bogue 94 : daté du dernier recours (« Exécutions récentes »)
     loan = existing;
     totalDue = existing.totalDue;
   } else {
     totalDue = addedDue;
-    loan = {id:uid(), lenderId:'BANK', lenderKind:'bank', borrowerId:company.id, principal, totalDue, repaidSoFar:0, withholdingPct:LAST_RESORT_LOAN_WITHHOLDING_PCT, multiple:LAST_RESORT_LOAN_MULTIPLE, createdAt:nowLabel(), lastResort:true};
+    loan = {id:uid(), lenderId:'BANK', lenderKind:'bank', borrowerId:company.id, principal, totalDue, repaidSoFar:0, withholdingPct:LAST_RESORT_LOAN_WITHHOLDING_PCT, multiple:LAST_RESORT_LOAN_MULTIPLE, createdAt:nowLabel(), roll: state.gameClock.rollCount, lastResort:true}; // Section 317 — bogue 94 : sans lancer, ce prêt était classé comme le plus ancien
     state.loans.push(loan);
   }
   state.bank.cash -= principal;

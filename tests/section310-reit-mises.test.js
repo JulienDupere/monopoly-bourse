@@ -132,7 +132,7 @@ const OLD_VALUATION = s => s.replace('etf.valuationPrice = valuationPrice; // Se
     }
   });
 
-  await scenario('E. Bogue 29 — détenteur à 60 % : la valeur suit ce qui a été réellement payé', async () => {
+  await scenario('E. Bogue 29 — détenteur à 60 % : la part rachetée à Co Bob est valorisée au plus à l’ancienne valeur', async () => {
     for(const variant of ['corrigé', 'ancien']){
       const E = await setup(variant === 'ancien' ? { transform: OLD_VALUATION } : {});
       E.run(`C0.cash = 20; C1.cash = 0; C0.etfHoldings.rue1 = 60; C1.etfHoldings.rue1 = 40; E('rue1').lastAuctionPrice = 2; E('rue1').valuationPrice = 2;`);
@@ -144,8 +144,10 @@ const OLD_VALUATION = s => s.replace('etf.valuationPrice = valuationPrice; // Se
       console.log(`    [${variant}] Co Alice paie ${(20 - E.run('C0.cash')).toFixed(2)} M$ à Co Bob ; valeur du lot ${E.run(`etfLotValuationPrice(E('rue1'))`)} ; valeur de Co Alice ${cv0.toFixed(2)} → ${cv1.toFixed(2)}`);
       if(variant === 'corrigé'){
         ok(near(E.run('C0.cash'), 12) && near(E.run('C1.cash'), 8), 'Co Alice rachète les 40 % de Co Bob au prix de la mise : 8 M$');
-        ok(near(E.run(`etfLotValuationPrice(E('rue1'))`), 9.2), 'lot valorisé 2 × 60 % + 20 × 40 % = 9,2 M$');
-        ok(near(cv1, cv0), 'valeur de Co Alice inchangée : −8 M$ d’encaisse, +8 M$ de REIT');
+        // Retouche de la revue (complice) : la part rachetée à une AUTRE entreprise par un détenteur est valorisée au
+        // plus petit de la mise (20) et de l'ancienne valeur (2) — choix prudent, à valider par Julien.
+        ok(near(E.run(`etfLotValuationPrice(E('rue1'))`), 2), 'lot valorisé 2 × 60 % + min(20 ; 2) × 40 % = 2 M$');
+        ok(near(cv1 - cv0, -7.2), 'valeur de Co Alice : −8 M$ d’encaisse, +0,8 M$ de REIT (−7,2) : jamais de hausse au-delà du payé');
         ok(near(E.cash(), T0), 'monnaie conservée');
       } else {
         ok(near(cv1 - cv0, 10.8), 'contre-épreuve : l’ancienne évaluation gonfle Co Alice de 10,8 M$ pour 8 M$ payés');
@@ -161,6 +163,51 @@ const OLD_VALUATION = s => s.replace('etf.valuationPrice = valuationPrice; // Se
     ok(near(E.run(`etfLotValuationPrice(E('rue3'))`), 6) && near(E.run('companyEtfValue(C0)'), 6), 'aucun détenteur : lot valorisé au prix payé, 6 M$');
     E.run(`state.etfs.forEach(e=>{ delete e.valuationPrice; }); E('rue2').lastAuctionPrice = 3; migrateState(state);`);
     ok(E.run(`E('rue2').valuationPrice`) === 3 && E.run(`E('rue3').valuationPrice`) === 6, 'partie en cours : migrateState reprend le dernier prix d’enchère comme valeur du lot');
+  });
+
+  await scenario('G. Bogue 29, retouche de la revue — complice : revendre 99 % à Co Bob pour 19,8 puis remiser 20', async () => {
+    for(const variant of ['corrigé', 'ancien']){
+      const E = await setup(variant === 'ancien' ? { transform: s => s.replace("const fromCompaniesValue = winnerPriorPct>1e-9 ? Math.min(winner.price, prevValuation) : winner.price;", 'const fromCompaniesValue = winner.price;') } : {});
+      E.run(`C0.cash = 20; C1.cash = 20; C0.etfHoldings.rue1 = 100; E('rue1').lastAuctionPrice = 2; E('rue1').valuationPrice = 2; E('rue1').lastAuctionYear = 0;`);
+      const val = co => E.run(`${co}.cash + companyEtfValue(${co})`);
+      const a0 = val('C0'), b0 = val('C1');
+      E.run('as(C0)'); await E.run(`sellEtfUnits('rue1', C0.id, C1.id, 99, 19.8)`);
+      E.run('as(C1)'); await E.run(`acceptAssetSaleOffer(state.assetSaleOffers[0].id)`);
+      E.run('as(C0)'); await E.run(`submitEtfBids(C0.id, [{etfId:'rue1', price:20}])`);
+      const T0 = E.cash();
+      await resolve(E);
+      const a1 = val('C0'), b1 = val('C1');
+      console.log(`    [${variant}] encaisses ${E.run('C0.cash').toFixed(2)} / ${E.run('C1.cash').toFixed(2)} ; lot valorisé ${E.run(`etfLotValuationPrice(E('rue1'))`).toFixed(2)} ; valeur Co Alice ${a0.toFixed(2)} → ${a1.toFixed(2)}, Co Bob ${b0.toFixed(2)} → ${b1.toFixed(2)}`);
+      ok(near(E.run('C0.cash'), 20) && near(E.run('C1.cash'), 20) && E.run('C0.etfHoldings.rue1') === 100, `[${variant}] aller-retour : encaisses revenues à 20 / 20, Co Alice de nouveau à 100 %`);
+      if(variant === 'corrigé'){
+        ok(near(E.run(`etfLotValuationPrice(E('rue1'))`), 2) && near(a1, a0), 'lot toujours valorisé 2 : la valeur de Co Alice reste 22 (avant : 39,82)');
+        ok(near(E.cash(), T0), 'monnaie conservée');
+      } else {
+        ok(near(a1, 39.82), 'contre-épreuve : sans la retouche, le lot vaut 19,82 et Co Alice passe de 22 à 39,82');
+      }
+    }
+  });
+
+  await scenario('H. Retouches de la revue — seul le CEO mise ; une mise de 0 est toujours permise', async () => {
+    for(const variant of ['corrigé', 'ancien']){
+      const E = await setup(variant === 'ancien' ? { transform: s => s.replace("  const notCeo = offerResponderRefusal(companyId, 'cette entreprise', 'miser pour elle'); // Section 310 — retouche de la revue : seul le CEO mise\n  if(notCeo) return notCeo;\n", '') } : {});
+      E.run(`C0.cash = 20; as(C1);`);
+      const r = await E.run(`submitEtfBids(C0.id, [{etfId:'rue1', price:20}])`);
+      const n = E.run(`(E('rue1').bids||[]).length`);
+      if(variant === 'corrigé'){
+        ok(!r.ok && /Seul le CEO de Co Alice/.test(r.error) && n === 0, `le CEO de Co Bob ne peut pas miser pour Co Alice (« ${r.error} »)`);
+      } else {
+        ok(r.ok && n === 1, 'contre-épreuve : sans le contrôle, le CEO de Co Bob engage 20 M$ de Co Alice');
+      }
+    }
+    const E = await setup();
+    E.run(`C0.cash = 20; as(C0);`);
+    await E.run(`submitEtfBids(C0.id, [{etfId:'rue1', price:12}, {etfId:'rue2', price:8}])`);
+    E.run('C0.cash = -1;'); // l'encaisse devient négative
+    let r = await E.run(`submitEtfBids(C0.id, [{etfId:'rue1', price:0}, {etfId:'rue2', price:8}])`);
+    ok(r.ok && E.run(`(E('rue1').bids||[]).length`) === 0, 'encaisse négative : retirer sa mise (0) est accepté, même si une autre mise reste au-dessus de l’encaisse');
+    r = await E.run(`submitEtfBids(C0.id, [{etfId:'rue1', price:1}, {etfId:'rue2', price:8}])`);
+    ok(!r.ok, 'mais une hausse reste refusée');
   });
 
   if(failures.length){ console.log(`\nÉCHEC : section 310 (mises REIT) — ${failures.length} scénario(s) en échec :`); failures.forEach(f => console.log('  ' + f)); process.exit(1); }

@@ -59,7 +59,7 @@ async function setup(opts = {}){
     const X = await setup({ transform: s => s.replace("  if(!(Number.isFinite(price) && price>0)) return fail('Le prix convenu doit être un nombre strictement positif.'); // Section 310 — bogue 46\n", '') });
     const x3 = X.json(`executeEtfSale('rue1', C0.id, C1.id, 10, -5, {silent:true})`);
     ok(x3.ok && near(X.run('C0.cash'), 15), 'contre-épreuve (garde retirée) : le cœur de la vente cède 10 % ET fait payer 5 M$ au vendeur');
-    ok(/min="0\.01" step="0\.01" id="etfSellPrice_\$\{etf\.id\}"/.test(require('./helpers/engine').engineSource()), 'champ « Prix convenu » : minimum 0,01 (avant : 0)');
+    ok(/min="0\.01" step="0\.01" id="etfSellPrice_\$\{etf\.id\}" value=""/.test(require('./helpers/engine').engineSource()), 'champ « Prix convenu » : minimum 0,01 et vide par défaut (avant : 0)');
   });
 
   await scenario('B. Décision — l’offre ne bouge rien avant l’acceptation du CEO acheteur', async () => {
@@ -143,6 +143,14 @@ async function setup(opts = {}){
         ok(count === 2, 'contre-épreuve : sans la garde, le double envoi dépose deux offres identiques');
       }
     }
+  });
+
+  await scenario('D2. Retouche de la revue — contre-épreuve de la garde « parts déjà promises »', async () => {
+    const X = await setup({ transform: s => s.replace(/    if\(promised\+offer\.pct>heldNow\+1e-9\)[^\n]*\n/, '') });
+    X.run('as(C0)');
+    await X.run(`sellEtfUnits('rue1', C0.id, C2.id, 30, 5)`); await X.run(`sellEtfUnits('rue1', C0.id, C3.id, 60, 9)`);
+    const r = await X.run(`sellEtfUnits('rue1', C0.id, C1.id, 20, 3)`);
+    ok(r.ok && X.run('offers().length') === 3 && X.run('offers().reduce((s,o)=>s+o.pct,0)') === 110, 'contre-épreuve (garde retirée) : 110 % du REIT promis dans trois offres — le test D détecte la régression');
   });
 
   await scenario('E. Fenêtres : la confirmation de la section 308 dépose l’offre ; l’acheteur accepte dans sa fenêtre', async () => {

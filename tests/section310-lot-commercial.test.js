@@ -127,6 +127,70 @@ async function landOnLot(E){
     ok(JSON.stringify(E.cashes()) === JSON.stringify(c1) && near(E.cash(), T0), '2e appel : rien ne bouge (pari déjà clos), monnaie conservée');
   });
 
+  // Retouche de la revue : la mise du lot compte dans le même total que les mises REIT (dépôt et résolution).
+  const NO_CUMUL = s => s.replace('  const lotBid = terrainLotCommittedBid(companyId);', '  const lotBid = 0;')
+    .replace(/    if\(clampedPrice>0 && clampedPrice\+etfCommitted>[^\n]*\n/, '')
+    .replace('    const lotExposure = terrainLotActiveExposure(co.id);', '    const lotExposure = 0;');
+  const withEtf = E => E.run(`state.settings.features.etf = true; state.etfs.forEach(e=>{ e.opened = true; }); A.cash = 20; B.cash = 20;`);
+  const resolveAll = E => E.run(`act(async ()=>{ maybeResolveTerrainLotAuction(); maybeResolveEtfAuctions(); return {ok:true}; })`);
+  await scenario('E. Retouche de la revue — Co Alice (20 M$) mise 20 sur le lot ET 20 sur un REIT', async () => {
+    for(const variant of ['corrigé', 'ancien']){
+      const E = await setup(variant === 'ancien' ? { transform: NO_CUMUL } : {});
+      withEtf(E);
+      E.run('as(A)');
+      await E.run(`submitTerrainLotBid(A.id, 20, 0.1, 1)`);
+      const r = await E.run(`submitEtfBids(A.id, [{etfId:'rue1', price:20}])`);
+      const T0 = E.cash();
+      await resolveAll(E);
+      await yearEnd(E); // personne n'est tombé sur le lot
+      console.log(`    [${variant}] mise REIT ${r.ok ? 'acceptée' : 'refusée'} ; encaisse de Co Alice après la fin d'année : ${E.run('A.cash').toFixed(2)} M$`);
+      if(variant === 'corrigé'){
+        ok(!r.ok && /lot commercial/.test(r.error) && /40[,.]00/.test(r.error), `la mise REIT est refusée : total engagé 40 pour 20 d'encaisse (« ${r.error} »)`);
+        ok(near(E.run('A.cash'), 0) && near(E.cash(), T0), 'Co Alice gagne le lot, rate son pari et finit à 0 (avant : −20)');
+      } else {
+        ok(r.ok && near(E.run('A.cash'), -20), 'contre-épreuve : sans le cumul, les deux mises passent et Co Alice finit à −20');
+      }
+    }
+    // Ordre inverse : REIT d'abord, puis le lot.
+    const E = await setup();
+    withEtf(E); E.run('as(A)');
+    await E.run(`submitEtfBids(A.id, [{etfId:'rue1', price:20}])`);
+    E.alerts.length = 0;
+    await E.run(`submitTerrainLotBid(A.id, 20, 0.1, 1)`);
+    ok(E.run('state.terrainLot.bids.length') === 0 && /mises REIT/.test(E.alerts[0] || ''), `ordre inverse : la mise sur le lot est refusée (« ${E.alerts[0]} »)`);
+    await E.run(`submitTerrainLotBid(A.id, 0, 0.1, 1)`);
+    ok(E.run('state.terrainLot.bids.length') === 1, 'une mise de 0 sur le lot reste permise');
+  });
+
+  await scenario('F. Retouche de la revue — résolution : le lot (résolu d’abord) réduit l’encaisse disponible pour les REIT', async () => {
+    for(const variant of ['corrigé', 'ancien']){
+      const E = await setup(variant === 'ancien' ? { transform: NO_CUMUL } : {});
+      withEtf(E);
+      E.run('as(A)'); await E.run(`submitTerrainLotBid(A.id, 10, 0.1, 1)`); await E.run(`submitEtfBids(A.id, [{etfId:'rue1', price:10}])`);
+      E.run('as(B)'); await E.run(`submitEtfBids(B.id, [{etfId:'rue1', price:3}])`);
+      E.run('A.cash -= 5; state.bank.cash += 5;'); // Co Alice dépense 5 avant l'enchère : 15 pour 20 engagés
+      await resolveAll(E);
+      const rue1 = E.run(`state.companies.find(c=>(c.etfHoldings.rue1||0)>=100).name`);
+      console.log(`    [${variant}] lot à ${E.run('companyById(state.terrainLot.active.companyId).name')}, Première rue à ${rue1} ; encaisse de Co Alice ${E.run('A.cash').toFixed(2)}`);
+      if(variant === 'corrigé'){
+        ok(E.run('state.terrainLot.active.companyId === A.id') && rue1 === 'Co Bob' && near(E.run('A.cash'), 15), 'lot gagné par Co Alice (10 engagés) ; sa mise REIT de 10 dépasse les 5 restants : écartée, Co Bob gagne');
+        ok(E.json('state.log.some(l=>l.text.includes("engagés sur le lot commercial"))'), 'le journal explique la part engagée sur le lot');
+      } else {
+        ok(rue1 === 'Co Alice' && near(E.run('A.cash'), 5), 'contre-épreuve : sans le cumul, Co Alice gagne aussi le REIT (5 M$ pour 10 engagés sur le lot)');
+      }
+    }
+  });
+
+  await scenario('G. Retouche de la revue — seul le CEO mise sur le lot', async () => {
+    for(const variant of ['corrigé', 'ancien']){
+      const E = await setup(variant === 'ancien' ? { transform: s => s.replace("    const notCeo = offerResponderRefusal(companyId, 'cette entreprise', 'miser pour elle'); // Section 310 — retouche de la revue : seul le CEO mise\n    if(notCeo) return notCeo;\n", '') } : {});
+      E.run('as(B)'); await E.run(`submitTerrainLotBid(A.id, 5, 1, 7)`);
+      const n = E.run('state.terrainLot.bids.length');
+      if(variant === 'corrigé') ok(n === 0 && /Seul le CEO de Co Alice/.test(E.alerts[0] || ''), `le CEO de Co Bob ne peut pas miser pour Co Alice (« ${E.alerts[0]} »)`);
+      else ok(n === 1, 'contre-épreuve : sans le contrôle, le CEO de Co Bob engage Co Alice sur le lot');
+    }
+  });
+
   if(failures.length){ console.log(`\nÉCHEC : section 310 (lot commercial) — ${failures.length} scénario(s) en échec :`); failures.forEach(f => console.log('  ' + f)); process.exit(1); }
   console.log(`\nOK : section 310 (lot commercial) — ${n} vérifications, 0 scénario(s) en échec`);
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

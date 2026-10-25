@@ -257,7 +257,7 @@ const SELECT_BLOQUE = src => src.replace("if(appSelectOpenEl && ae===appSelectOp
         ok(near(A.eng.cashTotal(), T0), 'D : conservation de la monnaie');
         ok(closedAfterOffer, 'D : la fenêtre se ferme après le dépôt de l’offre');
       } else {
-        ok(form.price === '0' && form.pct === '1', 'D : contre-épreuve — sans la préservation, le prix revient à 0 et le pourcentage à 1');
+        ok(form.price === '' && form.pct === '1', 'D : contre-épreuve — sans la préservation, le prix est vidé (section 310 : champ vide par défaut) et le pourcentage revient à 1');
         ok(/Prix nul/.test(html), 'D : contre-épreuve — la confirmation (C2) signale alors « Prix nul » avant de céder 1 % pour 0 $');
       }
     }

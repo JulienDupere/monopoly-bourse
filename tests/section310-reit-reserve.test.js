@@ -127,7 +127,7 @@ const OLD_FORMULA = s => s.replace(/  \/\/ Section 310 — décision \(bogue 54\
     await E.run('openAllEtfs()');
     const txt = E.run(`state.log[0].text`);
     ok(E.run('state.etfs.every(e=>e.opened)'), 'REIT ouverts');
-    ok(!/commence à collecter/.test(txt) && /parts vendues/.test(txt), `message : « ${txt} »`);
+    ok(!/commence à collecter/.test(txt) && /avant la première enchère/.test(txt) && /réserve entière/.test(txt), `message : « ${txt} »`);
   });
 
   if(failures.length){ console.log(`\nÉCHEC : section 310 (réserve REIT) — ${failures.length} scénario(s) en échec :`); failures.forEach(f => console.log('  ' + f)); process.exit(1); }

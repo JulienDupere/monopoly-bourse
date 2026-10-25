@@ -14078,8 +14078,8 @@ async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBTy
   // Section 311 — bogue 21 : un échange cède une part comme une vente : refusé sur un terrain dont le donneur a vendu (ou
   // annoncé) le revenu en ABS. Avant : aucun contrôle, l'échange vidait l'ABS de sa substance.
   const absHostA = assetHostProperty(assetA), absHostB = assetHostProperty(assetB);
-  if(absHostA && isPropertyLockedByRevenueSwap(absHostA.id, companyAId)) return fail(`${companyA?companyA.name:'?'} a vendu (ou annoncé) le revenu de ${labelA} en ABS — impossible de l'échanger tant que l'accord court.`);
-  if(absHostB && isPropertyLockedByRevenueSwap(absHostB.id, companyBId)) return fail(`${companyB?companyB.name:'?'} a vendu (ou annoncé) le revenu de ${labelB} en ABS — impossible de l'échanger tant que l'accord court.`);
+  if(absHostA && isPropertyLockedByRevenueSwap(absHostA.id, companyAId)) return fail(revenueSwapLockMessage(absHostA.id, companyAId, "de l'échanger")); // Section 311 — retouche de la revue : message propre à l'annonce ou à l'accord conclu
+  if(absHostB && isPropertyLockedByRevenueSwap(absHostB.id, companyBId)) return fail(revenueSwapLockMessage(absHostB.id, companyBId, "de l'échanger"));
   const rentSwapLockSwap = (absHostA && rentSwapSaleLockMessage(absHostA.id, companyAId, 'd’échanger')) || (absHostB && rentSwapSaleLockMessage(absHostB.id, companyBId, 'd’échanger')); // Section 311 — décision : swap spécifique
   if(rentSwapLockSwap) return fail(rentSwapLockSwap);
   
@@ -14203,7 +14203,7 @@ async function sellMergedShare(mergeId, sellerId, buyerId, pct, price, opts){
   
   if(isPropertyLockedByRevenueSwap(props[0].id, sellerId)){
     const sellerCoName = companyById(sellerId)?.name || 'Cette entreprise';
-    return fail(`${sellerCoName} a vendu le revenu de ce lot (swap de revenu fixe/variable) — impossible de le vendre tant que l'accord est actif.`);
+    return fail(revenueSwapLockMessage(props[0].id, sellerId, 'de le vendre')); // Section 311 — retouche de la revue : message propre à l'annonce ou à l'accord conclu
   }
   const rentSwapLockLot = rentSwapSaleLockMessage(props[0].id, sellerId, 'de vendre'); // Section 311 — décision : swap spécifique
   if(rentSwapLockLot) return fail(rentSwapLockLot);
@@ -14630,7 +14630,7 @@ async function issueMortgage(propId, borrowerId, lenderId, opts){
   
   
   
-  if(isPropertyLockedByRevenueSwap(propId, borrowerId)) return fail(`Le revenu de ${p.name} a été vendu (swap de revenu fixe/variable) — impossible de l'hypothéquer tant que l'accord est actif.`);
+  if(isPropertyLockedByRevenueSwap(propId, borrowerId)) return fail(revenueSwapLockMessage(propId, borrowerId, "de l'hypothéquer")); // Section 311 — retouche de la revue : message propre à l'annonce ou à l'accord conclu
   if(!p.mortgages) p.mortgages = [];
   if(p.mortgages.some(m=>m.companyId===borrowerId)) return fail('Vous avez déjà hypothéqué votre part de ce terrain.');
   const borrower = companyById(borrowerId);
@@ -14681,7 +14681,7 @@ async function issueMortgageLot(mergeId, borrowerId, lenderId, opts){
   if(share<=0) return fail('Vous ne possédez pas de part de ce lot.');
   
   
-  if(isPropertyLockedByRevenueSwap(host.id, borrowerId)) return fail(`Le revenu de ce lot a été vendu (swap de revenu fixe/variable) — impossible de l'hypothéquer tant que l'accord est actif.`);
+  if(isPropertyLockedByRevenueSwap(host.id, borrowerId)) return fail(revenueSwapLockMessage(host.id, borrowerId, "de l'hypothéquer")); // Section 311 — retouche de la revue : message propre à l'annonce ou à l'accord conclu
   if(!host.mortgages) host.mortgages = [];
   if(host.mortgages.some(m=>m.companyId===borrowerId)) return fail('Vous avez déjà hypothéqué votre part de ce lot.');
   const borrower = companyById(borrowerId);
@@ -14932,12 +14932,12 @@ async function createRentSwap(propA, companyA, propB, companyB, years, capA, cap
     
     
     
-    if(isPropertyLockedByRevenueSwap(propA, companyA)) return fail(`${coAForCheck.name} a vendu le revenu de ce terrain (swap de revenu fixe/variable) — impossible d'y signer un nouveau swap de loyers tant que l'accord est actif.`);
+    if(isPropertyLockedByRevenueSwap(propA, companyA)) return fail(revenueSwapLockMessage(propA, companyA, "d'y signer un nouveau swap de loyers")); // Section 311 — retouche de la revue : message propre à l'annonce ou à l'accord conclu
   }
   if(!generalB){
     const propBObjForCheck = state.properties.find(x=>x.id===propB);
     if(!propBObjForCheck || propertyOwnedShare(propBObjForCheck, companyB)<=0) return fail(`${coBForCheck.name} ne possède plus ce terrain — swap annulé.`);
-    if(isPropertyLockedByRevenueSwap(propB, companyB)) return fail(`${coBForCheck.name} a vendu le revenu de ce terrain (swap de revenu fixe/variable) — impossible d'y signer un nouveau swap de loyers tant que l'accord est actif.`);
+    if(isPropertyLockedByRevenueSwap(propB, companyB)) return fail(revenueSwapLockMessage(propB, companyB, "d'y signer un nouveau swap de loyers")); // Section 311 — retouche de la revue : message propre à l'annonce ou à l'accord conclu
   }
   // Section 311 — bogue 22 : revérifié à la signature (un autre swap a pu être conclu depuis la proposition).
   const conflictAtSign = rentSwapConflictReason(companyA, generalA, propA) || rentSwapConflictReason(companyB, generalB, propB);
@@ -15002,12 +15002,12 @@ async function proposeRentSwap(propA, companyA, propB, companyB, years, capA, ca
     const propAObj = state.properties.find(x=>x.id===propA);
     if(!propAObj || propertyOwnedShare(propAObj, companyA)<=0) return fail(`${coA.name} ne possède aucune part de ce terrain — impossible de le proposer dans un swap.`);
     
-    if(isPropertyLockedByRevenueSwap(propA, companyA)) return fail(`${coA.name} a vendu le revenu de ce terrain (swap de revenu fixe/variable) — impossible d'y proposer un nouveau swap de loyers tant que l'accord est actif.`);
+    if(isPropertyLockedByRevenueSwap(propA, companyA)) return fail(revenueSwapLockMessage(propA, companyA, "d'y proposer un nouveau swap de loyers")); // Section 311 — retouche de la revue : message propre à l'annonce ou à l'accord conclu
   }
   if(!generalB){
     const propBObj = state.properties.find(x=>x.id===propB);
     if(!propBObj || propertyOwnedShare(propBObj, companyB)<=0) return fail(`${coB.name} ne possède aucune part de ce terrain — impossible de le proposer dans un swap.`);
-    if(isPropertyLockedByRevenueSwap(propB, companyB)) return fail(`${coB.name} a vendu le revenu de ce terrain (swap de revenu fixe/variable) — impossible d'y proposer un nouveau swap de loyers tant que l'accord est actif.`);
+    if(isPropertyLockedByRevenueSwap(propB, companyB)) return fail(revenueSwapLockMessage(propB, companyB, "d'y proposer un nouveau swap de loyers")); // Section 311 — retouche de la revue : message propre à l'annonce ou à l'accord conclu
   }
   const conflictAtProposal = rentSwapConflictReason(companyA, generalA, propA) || rentSwapConflictReason(companyB, generalB, propB); // Section 311 — bogue 22
   if(conflictAtProposal) return fail(conflictAtProposal);
@@ -15098,6 +15098,19 @@ function rentSwapSaleLockMessage(propId, companyId, actionLabel){
   const p = state.properties.find(x=>x.id===propId);
   const label = p ? (p.groupMergeId ? `Lot ${GROUPS[p.group].label}` : p.name) : '?';
   return `${co?co.name:'?'} a engagé ${label} dans un swap de loyers avec ${partner?partner.name:'?'} — impossible ${actionLabel||'de vendre'} sa part de ce terrain tant que le swap court (encore ${s.yearsRemaining} an(s)).`;
+}
+// Section 311 — retouche de la revue : message de refus d'une action bloquée par une ABS, qui distingue une simple
+// ANNONCE en attente (rien n'est vendu tant qu'elle n'est pas résolue) d'un accord conclu. actionText : « de le vendre »…
+function revenueSwapLockMessage(propId, companyId, actionText){
+  const co = companyById(companyId);
+  const p = state.properties.find(x=>x.id===propId);
+  const label = p ? (p.groupMergeId ? `le lot ${GROUPS[p.group].label}` : p.name) : 'ce terrain';
+  const ofLabel = p ? (p.groupMergeId ? `du lot ${GROUPS[p.group].label}` : `de ${p.name}`) : 'de ce terrain';
+  const announced = (state.revenueSwapListings||[]).some(l=>l.sellerId===companyId && l.propertyIds.some(pid=>samePropertyOrLot(pid, propId)));
+  const coName = co ? co.name : 'Cette entreprise';
+  return announced
+    ? `${coName} a annoncé une émission ABS sur ${label}, résolue au prochain lancer de dés — impossible ${actionText} tant que l'annonce est en attente (retirez-la d'abord pour changer d'avis).`
+    : `${coName} a vendu le revenu ${ofLabel} en ABS — impossible ${actionText} tant que l'accord court.`;
 }
 function isPropertyLockedByRevenueSwap(propId, companyId){
   // Section 311 — bogue 21 : le terrain est verrouillé dès l'ANNONCE (state.revenueSwapListings), pas seulement une fois
@@ -15442,7 +15455,8 @@ function resolveRevenueSwapListing(listing){
   
   const seniorNames = seniorHolders.map(h=>h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(p=>p.id===h.holderId)||{}).name).join(', ') || 'aucun';
   const juniorNames = juniorHoldersReal.map(h=>h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(p=>p.id===h.holderId)||{}).name).join(', ') || 'aucun';
-  log(`Émission ABS de ${seller.name} résolue (${labels}, ${Math.round(listing.cededPctOfShare*100)}% cédé, ${listing.years} an(s)): ${fmt(seniorRaised)} levé(s) en tranche SENIOR (porteurs: ${seniorNames} — plafonnée à ${fmt(seniorCapTotal)} au total, prime ${Math.round(listing.tranches.seniorPremiumPct*100)}%), ${fmt(juniorRaisedReal)} levé(s) en tranche JUNIOR auprès de tiers (porteurs: ${juniorNames})${juniorGap>1e-9?`, ${fmt(juniorGap)} de junior non souscrit retenu par ${seller.name} elle-même (rétention du risque)`:''} — ${seller.name} reçoit ${fmt(totalRaised)} au total et ne peut plus vendre, hypothéquer ni signer de nouveau swap de loyers sur ces terrains tant que l'accord est actif (elle reste libre d'y construire ou de les fusionner en lot). Non-recours: à l'expiration, chaque porteur garde ce qu'il a reçu, sans obligation de ${seller.name}.`,
+  // Section 311 — retouche de la revue : le journal ne dit plus « libre de les fusionner en lot » (regroupement refusé pendant une ABS).
+  log(`Émission ABS de ${seller.name} résolue (${labels}, ${Math.round(listing.cededPctOfShare*100)}% cédé, ${listing.years} an(s)): ${fmt(seniorRaised)} levé(s) en tranche SENIOR (porteurs: ${seniorNames} — plafonnée à ${fmt(seniorCapTotal)} au total, prime ${Math.round(listing.tranches.seniorPremiumPct*100)}%), ${fmt(juniorRaisedReal)} levé(s) en tranche JUNIOR auprès de tiers (porteurs: ${juniorNames})${juniorGap>1e-9?`, ${fmt(juniorGap)} de junior non souscrit retenu par ${seller.name} elle-même (rétention du risque)`:''} — ${seller.name} reçoit ${fmt(totalRaised)} au total et ne peut plus vendre, échanger, hypothéquer ni signer de nouveau swap de loyers sur ces terrains tant que l'accord est actif (elle reste libre d'y construire ; un lot ne se regroupe pas pendant une ABS). Non-recours: à l'expiration, chaque porteur garde ce qu'il a reçu, sans obligation de ${seller.name}.`,
     [{label:`${seller.name} (émission ABS, capital levé)`, amount:totalRaised}].concat(seniorHolders.concat(juniorHoldersReal).map(h=>({label:`${h.holderType==='company'?(companyById(h.holderId)||{}).name:(state.players.find(p=>p.id===h.holderId)||{}).name} (souscription ABS)`, amount:-h.amount}))));
 }
 
@@ -17943,7 +17957,7 @@ function modalSellShare(pid){
       
       
       if(isPropertyLockedByRevenueSwap(pid, sellerId)){
-        return {ok:false, error:`${companyById(sellerId)?.name||'Cette entreprise'} a vendu le revenu de ${prop.name} (swap de revenu fixe/variable) — impossible de le vendre tant que l'accord est actif.`};
+        return {ok:false, error:revenueSwapLockMessage(pid, sellerId, 'de le vendre')}; // Section 311 — retouche de la revue : message propre à l'annonce ou à l'accord conclu
       }
       const rentSwapLock = rentSwapSaleLockMessage(pid, sellerId, 'de vendre'); // Section 311 — décision : swap spécifique
       if(rentSwapLock) return {ok:false, error:rentSwapLock};
@@ -21326,8 +21340,8 @@ function modalProposeRevenueSwap(){
   openModal(`
     <h3>Émission ABS — titriser le revenu de terrains</h3>
     <!-- Section 282 (voir RESUME_ET_REGLES.md): 2 paragraphes fusionnés en un, aucune information retirée. -->
-    <!-- Section 311 — bogue 18 : seuls les lots de couleur regroupés, aéroports et services sont titrisables. -->
-    <div class="small" style="margin-bottom:10px;">Sélectionnez vos lots de couleur regroupés, aéroports ou services (un terrain de couleur seul ne peut pas être titrisé), la part de loyer cédée (limite: votre capacité d'emprunt), la durée et le montant souhaité — la répartition et la prime des tranches senior/junior se calculent automatiquement. Résolue au prochain lancer de dés (annulée sans souscripteur senior); pendant la durée du contrat, ces terrains restent invendables et non hypothécables, sans nouveau swap de loyers (construction/lots toujours permis).</div>
+    <!-- Section 311 — bogue 18 : seuls les lots de couleur regroupés, aéroports et services sont titrisables ; retouche de la revue : verrou dès l'annonce, plus de « lots toujours permis ». -->
+    <div class="small" style="margin-bottom:10px;">Sélectionnez vos lots de couleur regroupés, aéroports ou services (un terrain de couleur seul ne peut pas être titrisé), la part de loyer cédée (limite: votre capacité d'emprunt), la durée et le montant souhaité — la répartition et la prime des tranches senior/junior se calculent automatiquement. Résolue au prochain lancer de dés (annulée sans souscripteur senior); pendant la durée du contrat, ces terrains restent invendables, non échangeables et non hypothécables, sans nouveau swap de loyers, dès l'annonce (construction toujours permise).</div>
     <div id="rswapRows">${rows}</div>
     <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:8px;">
       <div>

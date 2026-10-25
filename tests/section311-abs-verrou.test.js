@@ -57,6 +57,8 @@ async function resolveAndVisit(eng, visits = 5){
     ok(x && !x.ok && /ABS/.test(x.error), `échange d’une part du lot refusé : « ${x && x.error} »`);
     const w = await run(`proposeRentSwap(BF2.id, A.id, AE.id, B.id, 2, null, null, false, false, 0, 0, {silent:true})`);
     ok(w && !w.ok, `swap de loyers sur le lot refusé : « ${w && w.error} »`);
+    // Retouche de la revue : pendant une simple annonce, le message ne dit pas que le revenu « a été vendu ».
+    ok([m, s, x, w].every(r => /a annoncé une émission ABS/.test(r.error) && !/a été vendu|a vendu/.test(r.error)), 'messages propres à l’annonce (hypothèque, vente, échange, swap)');
     const r2 = await run(`postRevenueSwapListing(A.id, [BF1.id], 0.6, 1, 2, {silent:true})`);
     ok(r2 && !r2.ok && /en attente/.test(r2.error), `2e annonce sur le même lot refusée : « ${r2 && r2.error} »`);
     ok(run(`revenueSwapSellableItems(A.id).every(it=>it.id!==BF1.id && it.id!==BF2.id)`), 'le lot annoncé n’est plus proposé à la titrisation');
@@ -100,6 +102,10 @@ async function resolveAndVisit(eng, visits = 5){
     await run(`issueMortgageLot('lot-bf', A.id, 'BANK', {silent:true})`);
     const v = await resolveAndVisit(eng);
     console.log(`  après correctif : conclue ${v.concluded} ; C paie ${f(v.cPaid)}, reçoit ${f(v.cReceived)}`);
+    const m2 = await run(`issueMortgageLot('lot-bf', A.id, 'BANK', {silent:true})`);
+    ok(!m2.ok && /a vendu le revenu du lot Bleu foncé en ABS/.test(m2.error) && /tant que l'accord court/.test(m2.error), `accord conclu : message « vendu » (${m2.error})`);
+    const logRes = run(`state.log.map(l=>l.text).find(t=>/Émission ABS de .* résolue/.test(t)) || ''`);
+    ok(logRes && !/fusionner/.test(logRes) && /construire/.test(logRes), 'journal de résolution : plus de « libre de les fusionner en lot »');
     ok(v.concluded && near(v.cPaid, 3) && v.cReceived > 0, 'l’hypothèque a été refusée : l’ABS est conclue et C est payé');
   }
   console.log('4 — contre-épreuve : verrou limité aux ABS conclues et résolution sans revérification');

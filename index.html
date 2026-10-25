@@ -14071,6 +14071,10 @@ async function mergeGroup(group){
   
   
   
+  // Section 311 — bogue 18 : une ABS émise (ou annoncée) sur un terrain seul, avant la règle « lot déjà regroupé », ne
+  // survivrait pas au regroupement (parts redistribuées, une seule ABS retrouvée par lot : la seconde n'était plus payée).
+  // Parties en cours : le regroupement attend l'échéance (ou le retrait de l'annonce) de ces ABS.
+  if(state.revenueSwaps.concat(state.revenueSwapListings).some(s=>(s.propertyIds||[]).some(pid=>props.some(p=>p.id===pid)))) return {ok:false, error:`Regroupement impossible : une émission ABS court (ou est annoncée) sur un terrain du lot ${GROUPS[group].label} — attendez son échéance.`};
   const values = props.map(p=>p.basePrice);
   const contributions = {};
   props.forEach((p,i)=>{ p.owners.forEach(o=>{ contributions[o.companyId] = (contributions[o.companyId]||0) + values[i]*(o.share/100); }); });
@@ -15012,6 +15016,7 @@ function revenueSwapSellableItems(companyId){
       seenMerge.add(p.groupMergeId);
     }
     const host = p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p;
+    if(absPropertyNotEligibleReason(p)) return false; // Section 311 — bogue 18 : terrain de couleur non regroupé
     if((host.mortgages||[]).some(m=>m.companyId===companyId)) return false;
     if(isPropertyLockedByRevenueSwap(p.id, companyId)) return false;
     return true;
@@ -15025,6 +15030,12 @@ function revenueSwapSellableItems(companyId){
 
 function absMaxCedablePct(){
   return Math.max(0, 1 - (state.settings.loanOfferWithholdingPctMax!==undefined ? state.settings.loanOfferWithholdingPctMax : 1));
+}
+// Section 311 — bogue 18 (décision de Julien) : une titrisation n'est permise que sur un lot de couleur DÉJÀ regroupé ;
+// les aéroports et services font exception et restent permis terrain par terrain. Vérifié à l'annonce et à la résolution.
+function absPropertyNotEligibleReason(p){
+  if(p && p.type==='color' && !p.groupMergeId) return `${p.name} n'est pas regroupé en lot : une émission ABS n'est permise que sur un lot de couleur déjà regroupé (les aéroports et services restent permis).`;
+  return null;
 }
 
 function computeAbsPricing(sellerId, propertyIds, cededPctOfShare, years){
@@ -15103,6 +15114,8 @@ async function postRevenueSwapListing(companyId, propertyIds, cededPctOfShare, a
   for(const pid of uniquePropertyIds){
     const p = state.properties.find(x=>x.id===pid);
     if(!p) return fail('Terrain introuvable — annonce annulée.');
+    const notEligible = absPropertyNotEligibleReason(p); // Section 311 — bogue 18
+    if(notEligible) return fail(notEligible);
     const host = p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p;
     const label = p.groupMergeId ? `Lot ${GROUPS[p.group].label}` : p.name;
     if(propertyOwnedShare(host, companyId)<=0) return fail(`${co.name} ne possède aucune part de ${label} — impossible de l'inclure dans cette annonce.`);
@@ -15215,6 +15228,13 @@ function resolveRevenueSwapListing(listing){
     const host = p ? (p.groupMergeId ? lotMortgageHost(p.groupMergeId) : p) : null;
     if(!p || propertyOwnedShare(host, seller.id)<=0){
       log(`${seller.name} ne possède plus tous les terrains de son émission ABS (${labels}) — émission annulée, aucun argent n'a changé de main.`);
+      return;
+    }
+    // Section 311 — bogue 18 : la règle « lot de couleur déjà regroupé » est revérifiée à la résolution (annonce d'une
+    // ancienne version encore en attente).
+    const notEligible = absPropertyNotEligibleReason(p);
+    if(notEligible){
+      log(`Émission ABS de ${seller.name} (${labels}) annulée — ${notEligible} Aucun argent n'a changé de main.`);
       return;
     }
   }
@@ -21105,7 +21125,7 @@ function modalProposeRevenueSwap(){
   if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
   if(!tradingWindowOpen()){ alert('Une émission ABS ne peut être publiée qu’à l’ouverture du marché (début de semestre).'); return; }
   const items = revenueSwapSellableItems(myCo.id);
-  if(items.length===0){ alert('Aucun terrain éligible: tous vos terrains sont déjà hypothéqués ou déjà sous une émission ABS active.'); return; }
+  if(items.length===0){ alert('Aucun terrain éligible: seuls les lots de couleur déjà regroupés, les aéroports et les services peuvent être titrisés, s’ils ne sont ni hypothéqués ni déjà sous une émission ABS (active ou annoncée).'); return; } // Section 311 — bogue 18
   const maxCedablePct = absMaxCedablePct();
   if(!(maxCedablePct>0)){ alert('Aucune part cessible actuellement (le réglage de retenue de prêt maximal est à 0%).'); return; }
   const rows = items.map((it,idx)=>{
@@ -21120,7 +21140,8 @@ function modalProposeRevenueSwap(){
   openModal(`
     <h3>Émission ABS — titriser le revenu de terrains</h3>
     <!-- Section 282 (voir RESUME_ET_REGLES.md): 2 paragraphes fusionnés en un, aucune information retirée. -->
-    <div class="small" style="margin-bottom:10px;">Sélectionnez vos terrains ou lots, la part de loyer cédée (limite: votre capacité d'emprunt), la durée et le montant souhaité — la répartition et la prime des tranches senior/junior se calculent automatiquement. Résolue au prochain lancer de dés (annulée sans souscripteur senior); pendant la durée du contrat, ces terrains restent invendables et non hypothécables, sans nouveau swap de loyers (construction/lots toujours permis).</div>
+    <!-- Section 311 — bogue 18 : seuls les lots de couleur regroupés, aéroports et services sont titrisables. -->
+    <div class="small" style="margin-bottom:10px;">Sélectionnez vos lots de couleur regroupés, aéroports ou services (un terrain de couleur seul ne peut pas être titrisé), la part de loyer cédée (limite: votre capacité d'emprunt), la durée et le montant souhaité — la répartition et la prime des tranches senior/junior se calculent automatiquement. Résolue au prochain lancer de dés (annulée sans souscripteur senior); pendant la durée du contrat, ces terrains restent invendables et non hypothécables, sans nouveau swap de loyers (construction/lots toujours permis).</div>
     <div id="rswapRows">${rows}</div>
     <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:8px;">
       <div>

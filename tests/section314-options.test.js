@@ -6,6 +6,10 @@
 //              Un joueur ne peut avoir, sur une entreprise, plus de floor(15 % × parts émises ÷ 100) contrats ÉCRITS
 //              (calls et puts, positions simples et jambes écrites des stratégies), vérifié dans openOptionPosition
 //              et openOptionStrategy, donc dans l'applyFn.
+//   Réponse de Julien (2026-10-25), verbatim : « Non si c'est covered call pas de limite pour covered call, seulement
+//              naked ». Seuls les contrats écrits NUS comptent (playerNakedWrittenContracts) : calls au-delà des parts
+//              détenues (contrats entiers, partagés entre les calls), puts écrits, jambes non protégées par une jambe
+//              achetée. Scénarios G et H (gros porteur, 400 covered calls acceptés ; nues plafonnées), contre-épreuve I.
 //   Bogue 75 : « Fermer la stratégie » marché fermé ou partie terminée annonçait au journal une fausse clôture
 //              (0 contrat). Déjà corrigé par la section 307 (closeOptionStrategy refuse avant tout, tout ou rien) :
 //              test de verrou, contre-épreuve avec la version d'avant la section 307.
@@ -23,9 +27,11 @@ async function scenario(title, fn){
 
 // Ancien code (contre-épreuves).
 const ANCIEN_FUSION = src => src.split('pos.expiryRoll===expiryRoll && !pos.strategyId').join('pos.expiryRoll===expiryRoll');
-const SANS_PLAFOND_ECRIT = src => src
-  .replace('if(alreadyWritten + shares > capWritten + 1e-9){', 'if(false){')
-  .replace('if(alreadyWritten + writtenLegCount*contracts > capWritten + 1e-9){', 'if(false){');
+const SANS_PLAFOND_ECRIT = src => src.split('if(nakedAfter > capWritten + 1e-9 && nakedAfter > nakedBefore + 1e-9){').join('if(false){');
+// Plafond de la section 314 avant la réponse de Julien : TOUS les contrats écrits comptent (couverts et jambes protégées).
+const TOUTES_ECRITES = src => src
+  .replace('  let shareCoverLeft = Math.floor(Math.max(0, stake ? stake.shares : 0)/OPTION_CONTRACT_MULTIPLIER + 1e-9);', '  let shareCoverLeft = 0;')
+  .replace('      qty -= Math.min(qty, longQty);', '      qty -= 0;');
 const ANCIEN_FERMER = src => src.replace(/function closeOptionStrategy\(player, strategyId\)\{[\s\S]*?\n\}\n/,
   `function closeOptionStrategy(player, strategyId){
   const legs = (player.optionPositions||[]).filter(p=>p.strategyId===strategyId && p.shares>1e-9);
@@ -87,8 +93,10 @@ async function plafond(eng){
   ok(!r2.ok && /Plafond d'options écrites/.test(r2.error), `plafond : straddle vendu de 21 contrats (2 jambes écrites → 302/300) refusé`);
   ok(eng.json(`openOptionStrategy(B, C, 'straddle', 'sell', 0, 0, 12, 20)`).ok, 'plafond : straddle vendu de 20 contrats (300/300) accepté');
   ok(eng.run(`playerWrittenOptionContracts(C, B.id)`) === 300, 'plafond : 300 contrats écrits au total (simples + jambes de stratégie)');
+  // Réponse de Julien (2026-10-25) : la jambe écrite d'un bull spread est protégée par la jambe achetée — pas nue.
   const r3 = eng.json(`openOptionStrategy(B, C, 'bullSpread', 'buy', P*0.9, P*1.1, 12, 1)`);
-  ok(!r3.ok && /Plafond d'options écrites/.test(r3.error), 'plafond : un bull spread (1 jambe écrite) est refusé une fois le plafond atteint');
+  ok(r3.ok && eng.run(`playerNakedWrittenContracts(C, B.id)`) === 300, 'plafond : un bull spread reste possible une fois le plafond atteint (jambe écrite protégée, toujours 300 nus)');
+  eng.run(`(function(){ const sid = C.optionPositions[C.optionPositions.length-1].strategyId; C.optionPositions = C.optionPositions.filter(p=>p.strategyId!==sid); })()`); // retiré pour la suite
   // Les achats restent libres (plafond propre aux calls achetés), comme sur une autre entreprise.
   ok(eng.json(`openOptionPosition(B, C, 'put', 'long', P*0.9, 12, 5)`).ok, 'plafond : acheter des puts reste possible (le plafond vise les options écrites)');
   ok(eng.json(`openOptionPosition(state.companies[0], C, 'put', 'short', state.companies[0].stockPrice*0.9, 12, 10)`).ok, 'plafond : par entreprise — écrire sur Co Alice reste possible');
@@ -99,6 +107,36 @@ async function plafond(eng){
   // Une position fermée libère le plafond.
   eng.run(`globalThis.PUTS = C.optionPositions.find(p=>!p.strategyId && p.type==='put' && p.side==='short');`);
   ok(eng.json(`closeOptionPosition(C, PUTS.id, 50)`).ok && eng.json(`openOptionPosition(B, C, 'call', 'short', P*1.1, 12, 50)`).ok, 'plafond : racheter 50 puts écrits libère 50 contrats');
+}
+
+// --- Réponse de Julien (2026-10-25) : plafond des options écrites NUES seulement -----------------------------------
+// Carl détient 60 000 parts de Co Bob (600 contrats de couverture) ; plafond 300 contrats nus.
+async function nues(eng){
+  eng.run(`B.shareholders.push({playerId:C.id, shares:60000});`);
+  const t0 = eng.cashTotal();
+  const r1 = eng.json(`openOptionPosition(B, C, 'call', 'short', P*1.1, 12, 400)`);
+  ok(r1.ok && eng.run(`playerNakedWrittenContracts(C, B.id)`) === 0, `nues : 400 covered calls d’un porteur de 60 000 parts acceptés, 0 contrat nu${r1.ok ? '' : ' — ' + r1.error}`);
+  ok(eng.json(`openOptionPosition(B, C, 'call', 'short', P*1.2, 12, 200)`).ok && eng.run(`playerNakedWrittenContracts(C, B.id)`) === 0, 'nues : 200 calls de plus (autre strike) : 600 contrats couverts par les 600 blocs de 100 parts, toujours 0 nu');
+  const r2 = eng.json(`openOptionPosition(B, C, 'call', 'short', P*1.1, 12, 301)`);
+  ok(!r2.ok && /NU\(S\)/.test(r2.error) && /covered call n'a aucune limite/.test(r2.error), `nues : 301 calls au-delà des parts (301 nus) refusés — ${r2.error}`);
+  ok(eng.json(`openOptionPosition(B, C, 'call', 'short', P*1.1, 12, 300)`).ok && eng.run(`playerNakedWrittenContracts(C, B.id)`) === 300, 'nues : 300 calls nus acceptés (300/300) ; un même bloc ne couvre jamais deux calls');
+  ok(eng.run(`playerWrittenOptionContracts(C, B.id)`) === 900, 'nues : 900 contrats écrits au total, dont 600 couverts');
+  const r3 = eng.json(`openOptionPosition(B, C, 'put', 'short', P*0.9, 12, 1)`);
+  ok(!r3.ok && /Plafond d'options écrites/.test(r3.error), 'nues : un put écrit compte comme nu (encaisse non réservée) — refusé au plafond');
+  const r4 = eng.json(`openOptionStrategy(B, C, 'straddle', 'sell', 0, 0, 12, 1)`);
+  ok(!r4.ok && /Plafond d'options écrites/.test(r4.error), 'nues : straddle vendu refusé (jambe call sans parts restantes + jambe put : 302 nus)');
+  ok(eng.json(`openOptionStrategy(B, C, 'bullSpread', 'buy', P*0.9, P*1.1, 12, 10)`).ok, 'nues : bull spread acheté accepté au plafond (jambe écrite protégée par la jambe achetée)');
+  ok(eng.json(`openOptionStrategy(B, C, 'bearSpread', 'sell', P*0.9, P*1.1, 12, 10)`).ok, 'nues : bear spread vendu accepté au plafond (put écrit haut protégé par le put acheté bas)');
+  ok(eng.run(`playerNakedWrittenContracts(C, B.id)`) === 300 && near(eng.cashTotal(), t0), 'nues : toujours 300 contrats nus ; monnaie conservée (primes entre Carl et la banque)');
+  // Racheter 100 calls nus libère 100 contrats nus.
+  eng.run(`globalThis.NAKED = C.optionPositions.find(p=>!p.strategyId && p.type==='call' && p.side==='short' && Math.abs(p.strike-P*1.1)<1e-12); // 400 + 300 fusionnés (même strike) : 700`);
+  ok(eng.json(`closeOptionPosition(C, NAKED.id, 100)`).ok && eng.json(`openOptionPosition(B, C, 'put', 'short', P*0.9, 12, 100)`).ok, 'nues : racheter 100 des 700 calls à 110 % (800 écrits, 600 couverts, 200 nus) permet d’écrire 100 puts (300 nus)');
+}
+// Straddle vendu par un porteur : la jambe call est couverte, seule la jambe put compte.
+async function straddlePorteur(eng){
+  eng.run(`B.shareholders.push({playerId:C.id, shares:60000});`);
+  const r = eng.json(`openOptionStrategy(B, C, 'straddle', 'sell', 0, 0, 12, 300)`);
+  ok(r.ok && eng.run(`playerNakedWrittenContracts(C, B.id)`) === 300, `nues : straddle vendu de 300 contrats par le porteur : 300 calls couverts, 300 puts nus (300/300) accepté${r.ok ? '' : ' — ' + r.error}`);
 }
 
 // --- Bogue 75 -------------------------------------------------------------------------------------------------
@@ -128,6 +166,16 @@ async function bug75(eng){
     let failed = null;
     try{ await plafond(await setup(SANS_PLAFOND_ECRIT)); }catch(e){ failed = e.message; }
     ok(failed && /plafond :/.test(failed), `contre-épreuve : sans plafond, le test échoue (${failed})`);
+  });
+  await scenario('G. Réponse de Julien — plafond des options écrites nues seulement (gros porteur)', async () => { await nues(await setup()); });
+  await scenario('H. Réponse de Julien — straddle vendu par un porteur : seule la jambe put est nue', async () => { await straddlePorteur(await setup()); });
+  await scenario('I. Réponse de Julien — contre-épreuve (toutes les options écrites comptent, comme avant)', async () => {
+    let failed = null;
+    try{ await nues(await setup(TOUTES_ECRITES)); }catch(e){ failed = e.message; }
+    ok(failed && /400 covered calls/.test(failed), `contre-épreuve : avec l’ancien décompte, les 400 covered calls sont refusés (${failed})`);
+    failed = null;
+    try{ await straddlePorteur(await setup(TOUTES_ECRITES)); }catch(e){ failed = e.message; }
+    ok(failed && /straddle vendu de 300/.test(failed), `contre-épreuve : avec l’ancien décompte, le straddle du porteur (600 écrits) est refusé (${failed})`);
   });
   await scenario('E. Bogue 75 — « Fermer la stratégie » marché fermé ou partie terminée : refus, aucun journal', async () => { await bug75(await setup()); });
   await scenario('F. Bogue 75 — contre-épreuve (closeOptionStrategy d’avant la section 307)', async () => {

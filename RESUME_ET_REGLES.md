@@ -1737,6 +1737,38 @@ ouverts plafond neutralisé), `tests/audit-bug4.test.js` (1 000 puts écrits : p
 
 **Intégration** (vague 3) : le modèle des bons (point 1) cohabite avec la statistique d'intérêts plafonnée de la section 317 (bogue 86 : `capBondInterestStat` dans `withdrawBonds`, `shortBonds`, `fillPendingBid` et `raiseCashForForcedSettlement` ; aucune monnaie ne bouge). **Raccord fait à l'intégration** : quand l'achat d'un bid payé par les bons (point 4) est refusé, `fillPendingBid` rendait les bons mais laissait la statistique plafonnée au solde momentané ; elle est désormais restaurée avec eux (commentaire « Section 310-317 — intégration »). *Avant* : bons 1, intérêts reçus 0,6, bid de 0,8 refusé → bons 1 mais intérêts affichés 0,2. *Après* : 0,6. `fillPendingBid` note aussi les bons vendus pour « Résultats du tour » (bogue 87) et `closeShortPosition` journalise le montant réellement payé (bogue 91), sans conflit. Le banc multi-appareils sans compensation des intérêts reste vert avec tous les lots (320 cas à 40 graines). Sondes de la revue sur la branche intégrée : masse inchangée après chacun des 12 lancers (ancien débit : −2,26 M$ cumulés), 0 bid sur 1 000 laissant une encaisse négative, montants non finis ou démesurés refusés. Test : `section310-integration` I3 (contre-épreuve : statistique non restaurée).
 
+**Réponses de Julien (2026-10-25)** — sur le plafond commun du point 7, verbatim : « Non si c'est covered call pas de
+limite pour covered call, seulement naked », confirmé par « oui » (plafond sur les options nues seulement). Les réponses de Julien qui
+confirment l'existant (4, 5, 7, 8 et 10) ne demandent aucun code.
+Mécanique retenue (`playerNakedWrittenContracts`, commentaires « Section 314 — réponse de Julien (2026-10-25) ») : le
+plafond de 15 % (floor(15 % × parts émises ÷ 100) contrats par joueur et par entreprise) ne compte plus que les
+contrats écrits NUS ; une ouverture n'est refusée que si elle porte le nombre de contrats nus au-delà du plafond.
+Classification (à valider par Julien), sur la notion de couverture de la marge :
+- **call écrit** (option simple, ou jambe call d'une stratégie, straddle vendu compris) : couvert à hauteur des parts
+  détenues, en contrats entiers de 100 parts, **partagées** entre tous les calls écrits du joueur sur l'entreprise (un
+  même bloc ne couvre jamais deux calls ; la marge, elle, compte encore position par position) ; le reste est nu ;
+- **jambe écrite d'un spread** (bull ou bear, acheté ou vendu) : couverte à hauteur des contrats de la jambe achetée
+  de même type et même échéance de la stratégie — la perte est bornée par la jambe achetée (la marge n'exige que
+  l'écart des strikes, 0 pour un spread acheté), ce n'est pas une écriture nue ;
+- **put écrit** : toujours nu pour le plafond (choix prudent) — l'encaisse qui « garantit » un cash-secured put n'est
+  pas réservée par le jeu (plusieurs puts s'appuient sur la même encaisse, qui reste dépensable). Alternative :
+  traiter le put garanti comme couvert (encaisse + bons positifs partagés entre les puts, comme les parts pour les
+  calls) ; dans les parties réelles, l'encaisse couvre presque toujours les puts, le plafond ne viserait alors presque
+  plus que les calls nus.
+Fiches du catalogue : Covered call « Aucun plafond » ; Bull spread et Bear spread « Jambe écrite protégée par la jambe
+achetée : hors du plafond » ; le plafond reste affiché dans Écriture nue, Cash-secured put (put compté comme nu) et
+ATM straddle vendu (jambe put et jambe call au-delà des parts détenues). Message de refus : « maximum 300 contrat(s)
+écrit(s) NU(S) par joueur … un covered call n'a aucune limite. Vous avez déjà … contrat(s) nu(s) ; après cette
+opération : … ».
+Scénario (Co Bob, 200 000 parts, plafond 300 ; Carl détient 60 000 parts) : avant, 400 covered calls refusés ;
+après, 400 acceptés, puis 200 de plus (600 couverts), puis 301 calls nus refusés et 300 acceptés (900 écrits, 300
+nus) ; au plafond, un put écrit et un straddle vendu sont refusés, un bull spread acheté et un bear spread vendu
+acceptés. Straddle vendu de 300 contrats par le porteur : 300 calls couverts + 300 puts nus = 300, accepté (avant :
+600 écrits, refusé). Sans parts (Carl sans actions) : inchangé (200 puts + 101 calls refusés), sauf le bull spread au
+plafond, désormais accepté. Monnaie conservée.
+Tests : `tests/section314-options.test.js` C adapté, G (gros porteur), H (straddle du porteur), I (contre-épreuve :
+toutes les options écrites comptent, les 400 covered calls et le straddle du porteur sont refusés) ; 49 vérifications.
+
 ## 315. Moteur de cubes, dividendes, types d'entreprise et états financiers : le sac type Dividendes ne réagit qu'au dividende récurrent, ratio de distribution sans la part de la banque, plus de partie figée quand toutes les entreprises sont enquêtées — 2026-10-25
 
 Contexte : lot 8 de la série de corrections de l'audit du 2026-10-19 (bogues 25, 26, 27, 41, 43, 66, 68, 69, 80, 81,

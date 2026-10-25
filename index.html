@@ -6276,7 +6276,7 @@ const PRODUCTS_MATRIX = [
       `1 contrat couvert = 100 parts détenues`,
       `Parts comptées via l'actionnariat réel`,
       `Vos parts de CEO ne comptent pas`,
-      `Plafond : 15 % des parts de l'entreprise par joueur, toutes options écrites confondues — couvertes comprises`, // Section 314 — décision : plafond des options écrites
+      `Aucun plafond : un call couvert par des parts détenues ne compte pas dans le plafond des options écrites nues`, // Section 314 — réponse de Julien (2026-10-25) : plafond des options écrites NUES seulement
     ]},
   {f:'option', nm:`Cash-secured put`, sub:`Être payé pour attendre un point d'entrée`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Encaisse ou bons immobilisés`, duree:`1 à 3 semestres`,
@@ -6293,7 +6293,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Couverture = (encaisse + bons positifs) ÷ (strike × 100)`,
       `Règlement physique : vous recevez les parts`,
-      `Plafond : 15 % des parts de l'entreprise par joueur, toutes options écrites confondues — couvertes comprises`, // Section 314 — décision : plafond des options écrites
+      `Plafond : 15 % des parts de l'entreprise par joueur — l'encaisse n'étant pas réservée, un put écrit compte comme nu`, // Section 314 — réponse de Julien (2026-10-25) : plafond des options écrites NUES seulement
     ]},
   {f:'option', nm:`Écriture nue`, sub:`La prime intégrale, et tout le risque avec`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`30 % du notionnel en valeur nette`, duree:`1 à 3 semestres`,
@@ -6309,7 +6309,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Marge 30 % du notionnel courant`,
       `Portion nue = contrats écrits − contrats couverts`,
-      `Plafond : 15 % des parts de l'entreprise par joueur, toutes options écrites confondues (jambes de stratégie comprises)`, // Section 314 — décision : plafond des options écrites
+      `Plafond : 15 % des parts de l'entreprise par joueur, en contrats écrits nus (calls au-delà des parts détenues, puts, jambes non protégées)`, // Section 314 — réponse de Julien (2026-10-25) : plafond des options écrites NUES seulement
     ]},
   {f:'option', nm:`Bull spread`, sub:`Deux calls : on paie moins, on gagne moins`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Débit net (ou crédit net à la vente)`, duree:`1 à 3 semestres`,
@@ -6327,7 +6327,7 @@ const PRODUCTS_MATRIX = [
       `Achat = long call bas + short call haut`,
       `Deux jambes, même nombre de contrats`,
       `Jamais fusionné avec une position simple existante`,
-      `La jambe écrite compte dans le plafond des options écrites : 15 % des parts de l'entreprise par joueur`, // Section 314 — décision : plafond des options écrites
+      `Jambe écrite protégée par la jambe achetée : hors du plafond des options écrites nues`, // Section 314 — réponse de Julien (2026-10-25) : plafond des options écrites NUES seulement
     ]},
   {f:'option', nm:`Bear spread`, sub:`Le pari baissier à perte bornée`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Débit net (ou crédit net à la vente)`, duree:`1 à 3 semestres`,
@@ -6344,7 +6344,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Achat = long put haut + short put bas`,
       `Un flux net nul à l'ouverture est refusé`,
-      `La jambe écrite compte dans le plafond des options écrites : 15 % des parts de l'entreprise par joueur`, // Section 314 — décision : plafond des options écrites
+      `Jambe écrite protégée par la jambe achetée : hors du plafond des options écrites nues`, // Section 314 — réponse de Julien (2026-10-25) : plafond des options écrites NUES seulement
     ]},
   {f:'option', nm:`ATM straddle`, sub:`Parier sur l'amplitude, pas sur la direction`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`La banque`, cout:`Deux primes (payées ou encaissées)`, duree:`1 à 3 semestres`,
@@ -6360,7 +6360,7 @@ const PRODUCTS_MATRIX = [
     ], facts:[
       `Long call ATM + long put ATM (ou l'inverse écrit)`,
       `Strike figé à l'ouverture, jamais réajusté`,
-      `Version vendue : les deux jambes écrites comptent dans le plafond des options écrites (15 % des parts par joueur)`, // Section 314 — décision : plafond des options écrites
+      `Version vendue : la jambe put, et la jambe call au-delà des parts détenues, comptent dans le plafond des options écrites nues (15 % des parts par joueur)`, // Section 314 — réponse de Julien (2026-10-25) : plafond des options écrites NUES seulement
     ]},
   
   {f:'assur', nm:`Assurance de loyer`, sub:`Payer une prime pour ne pas payer un loyer`, poche:['entreprise'], fen:'libre', dette:false, cubes:false,
@@ -11612,6 +11612,8 @@ function optionLongCallCapContracts(company){
 // les calls achetés) ». Même calcul que le plafond des calls achetés : floor(15 % × parts émises ÷ 100) contrats par
 // joueur et par entreprise. Compte TOUTES les options écrites du joueur sur l'entreprise : calls et puts, positions
 // simples et jambes écrites des stratégies (choix prudent : un seul plafond commun, couvertes comprises).
+// Section 314 — réponse de Julien (2026-10-25) : seules les positions écrites NUES comptent désormais dans le contrôle
+// (playerNakedWrittenContracts) ; playerWrittenOptionContracts reste le total brut (affichage, tests).
 const OPTION_WRITTEN_CAP_PCT = 0.15;
 function playerWrittenOptionContracts(player, companyId){
   return (player.optionPositions||[]).filter(p=>p.companyId===companyId && p.side==='short' && p.shares>1e-9).reduce((sum,p)=>sum+p.shares, 0);
@@ -11619,9 +11621,41 @@ function playerWrittenOptionContracts(player, companyId){
 function optionWrittenCapContracts(company){
   return Math.floor(OPTION_WRITTEN_CAP_PCT * company.totalShares / OPTION_CONTRACT_MULTIPLIER + 1e-9);
 }
-function optionWrittenCapErrorMessage(company, capContracts, already, adding){
+// Section 314 — réponse de Julien (2026-10-25), verbatim : « Non si c'est covered call pas de limite pour covered call,
+// seulement naked ». Le plafond ne compte plus que les contrats écrits NUS du joueur sur l'entreprise (avant : tous les
+// contrats écrits). Classification, sur la notion de couverture de la marge (optionCoveredShares, optionSpreadCoverage) :
+// - jambe écrite d'une stratégie protégée par la jambe achetée de même type et même échéance (bull ou bear spread,
+//   achetés ou vendus) : couverte, à hauteur des contrats de la jambe achetée (perte bornée, la marge n'exige que
+//   l'écart des strikes, 0 pour un spread acheté) ;
+// - call écrit (option simple ou jambe, straddle vendu compris) : couvert à hauteur des parts détenues, en contrats
+//   ENTIERS de 100 parts, partagées entre tous les calls écrits (un même bloc ne couvre jamais deux calls ; la marge,
+//   elle, compte position par position) ;
+// - put écrit : toujours nu pour le plafond (choix prudent, à valider par Julien) : l'encaisse qui « garantit » un
+//   cash-secured put n'est pas réservée par le jeu (plusieurs puts s'appuient sur la même encaisse, qui reste dépensable).
+// extraPositions : positions en cours d'ouverture (mêmes champs que optionPositions), comptées avec les existantes.
+function playerNakedWrittenContracts(player, companyId, extraPositions){
+  const all = (player.optionPositions||[]).concat(extraPositions||[]).filter(p=>p.companyId===companyId && p.shares>1e-9);
+  const co = companyById(companyId);
+  const stake = co ? (co.shareholders||[]).find(x=>x.playerId===player.id) : null;
+  let shareCoverLeft = Math.floor(Math.max(0, stake ? stake.shares : 0)/OPTION_CONTRACT_MULTIPLIER + 1e-9);
+  let naked = 0;
+  all.filter(p=>p.side==='short').forEach(pos=>{
+    let qty = pos.shares;
+    if(pos.strategyId){
+      const longQty = all.filter(l=>l!==pos && l.strategyId===pos.strategyId && l.side==='long' && l.type===pos.type && l.expiryRoll===pos.expiryRoll).reduce((sum,l)=>sum+l.shares, 0);
+      qty -= Math.min(qty, longQty);
+    }
+    if(pos.type==='call' && qty>1e-9){
+      const c = Math.min(qty, shareCoverLeft);
+      qty -= c; shareCoverLeft -= c;
+    }
+    naked += qty;
+  });
+  return naked;
+}
+function optionWrittenCapErrorMessage(company, capContracts, already, after){
   const room = Math.max(0, capContracts - already);
-  return `Plafond d'options écrites atteint sur ${company.name} — maximum ${capContracts} contrat(s) écrit(s) par joueur, calls et puts confondus, jambes de stratégie comprises (${OPTION_WRITTEN_CAP_PCT*100}% de ${fmtShares(company.totalShares)} parts ÷ ${OPTION_CONTRACT_MULTIPLIER} parts/contrat). Vous en avez déjà ${already} ; cette opération en ajouterait ${adding}. Contrats écrits encore possibles : ${room}.`;
+  return `Plafond d'options écrites atteint sur ${company.name} — maximum ${capContracts} contrat(s) écrit(s) NU(S) par joueur (${OPTION_WRITTEN_CAP_PCT*100}% de ${fmtShares(company.totalShares)} parts ÷ ${OPTION_CONTRACT_MULTIPLIER} parts/contrat). Comptent comme nus : les calls écrits au-delà de vos parts détenues (100 parts par contrat), les puts écrits et les jambes écrites non protégées par une jambe achetée ; un covered call n'a aucune limite. Vous avez déjà ${+already.toFixed(4)} contrat(s) nu(s) ; après cette opération : ${+after.toFixed(4)}. Contrats nus encore possibles : ${+room.toFixed(4)}.`;
 }
 function optionLongCallCapErrorMessage(company, capContracts, already){
   return `Plafond de calls longs atteint sur ${company.name} — maximum ${capContracts} contrat(s) CALL long(s) par joueur (${OPTION_LONG_CALL_CAP_PCT*100}% de ${fmtShares(company.totalShares)} parts ÷ ${OPTION_CONTRACT_MULTIPLIER} parts/contrat), vous en détenez déjà ${already}. Cette limite protège contre une dilution disproportionnée de l'entreprise : à l'exercice physique d'un call, la banque livre les parts sans aucun plafond de son côté (contrairement à une émission d'actions normale, plafonnée à 10%).`;
@@ -13316,10 +13350,12 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
     }
   }
   if(side==='short'){ // Section 314 — décision : plafond de 15 % des options écrites (revérifié dans l'applyFn qui appelle cette fonction)
+    // Section 314 — réponse de Julien (2026-10-25) : plafond des options écrites NUES seulement : refus seulement si l'opération fait dépasser le plafond au nombre de contrats nus.
     const capWritten = optionWrittenCapContracts(company);
-    const alreadyWritten = playerWrittenOptionContracts(player, company.id);
-    if(alreadyWritten + shares > capWritten + 1e-9){
-      return {ok:false, error: optionWrittenCapErrorMessage(company, capWritten, alreadyWritten, shares)};
+    const nakedBefore = playerNakedWrittenContracts(player, company.id);
+    const nakedAfter = playerNakedWrittenContracts(player, company.id, [{companyId:company.id, type, side, strike, expiryRoll, shares}]);
+    if(nakedAfter > capWritten + 1e-9 && nakedAfter > nakedBefore + 1e-9){
+      return {ok:false, error: optionWrittenCapErrorMessage(company, capWritten, nakedBefore, nakedAfter)};
     }
   }
   const notional = optionNotional(shares, premium);
@@ -13506,12 +13542,14 @@ function openOptionStrategy(company, player, kind, direction, strikeLow, strikeH
   }
   // Section 314 — décision : plafond de 15 % des options écrites, jambes écrites des stratégies comprises (un straddle
   // vendu de N contrats écrit 2 × N contrats).
+  // Section 314 — réponse de Julien (2026-10-25) : plafond des options écrites NUES seulement : une jambe protégée par la jambe achetée (spread) et un call couvert par des parts ne comptent pas.
   const writtenLegCount = legs.filter(l=>l.side==='short').length;
   if(writtenLegCount>0){
     const capWritten = optionWrittenCapContracts(company);
-    const alreadyWritten = playerWrittenOptionContracts(player, company.id);
-    if(alreadyWritten + writtenLegCount*contracts > capWritten + 1e-9){
-      return {ok:false, error: optionWrittenCapErrorMessage(company, capWritten, alreadyWritten, writtenLegCount*contracts)};
+    const nakedBefore = playerNakedWrittenContracts(player, company.id);
+    const nakedAfter = playerNakedWrittenContracts(player, company.id, legs.map(l=>({companyId:company.id, type:l.type, side:l.side, strike:l.strike, expiryRoll, shares:contracts, strategyId:'__plafond__'})));
+    if(nakedAfter > capWritten + 1e-9 && nakedAfter > nakedBefore + 1e-9){
+      return {ok:false, error: optionWrittenCapErrorMessage(company, capWritten, nakedBefore, nakedAfter)};
     }
   }
   

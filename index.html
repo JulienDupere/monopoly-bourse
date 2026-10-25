@@ -4126,7 +4126,7 @@ function renderPortefeuilleFinancials(){
   <div style="overflow-x:auto;">
   <table ${tableStyle}>
     ${headerRow}
-    <tr><td>Capitalisation boursière <span class="small">(excl. part de la banque)</span></td>${ratioRows.map(r=>`<td>${moneyRatioCell(r.marketCap)}</td>`).join('')}</tr>
+    <tr><td>Capitalisation boursière <span class="small">(toutes les parts émises, part de la banque comprise)</span></td>${ratioRows.map(r=>`<td>${moneyRatioCell(r.marketCap)}</td>`).join('')}</tr>
     <tr><td>Ratio C/B (P/E)</td>${ratioRows.map(r=>`<td>${multCell(r.pe)}</td>`).join('')}</tr>
     <tr><td>Prix/Ventes (Price/Sales)</td>${ratioRows.map(r=>`<td>${multCell(r.ps)}</td>`).join('')}</tr>
     <tr><td>Prix/Équité (Price/Equity)</td>${ratioRows.map(r=>`<td>${multCell(r.pEquity)}</td>`).join('')}</tr>
@@ -4361,7 +4361,7 @@ function renderEntrepriseFinancials(company){
   <div style="overflow-x:auto;">
   <table ${tableStyle}>
     ${headerRow}
-    <tr><td>Capitalisation boursière <span class="small">(excl. part de la banque)</span></td>${ratioRows.map(r=>`<td>${moneyRatioCell(r.marketCap)}</td>`).join('')}</tr>
+    <tr><td>Capitalisation boursière <span class="small">(toutes les parts émises, part de la banque comprise)</span></td>${ratioRows.map(r=>`<td>${moneyRatioCell(r.marketCap)}</td>`).join('')}</tr>
     <tr><td>Ratio C/B (P/E)</td>${ratioRows.map(r=>`<td>${multCell(r.pe)}</td>`).join('')}</tr>
     <tr><td>Prix/Ventes (Price/Sales)</td>${ratioRows.map(r=>`<td>${multCell(r.ps)}</td>`).join('')}</tr>
     <tr><td>Prix/Équité (Price/Equity)</td>${ratioRows.map(r=>`<td>${multCell(r.pEquity)}</td>`).join('')}</tr>
@@ -4440,7 +4440,7 @@ function renderEntreprise(){
         const exp = netIncomeExpectation.expected;
         const expColor = exp<0 ? 'var(--brick)' : '#047857';
         const expSigned = (exp>=0?'+':'') + fmt(exp);
-        return `<span class="money" style="font-size:16px;font-weight:700;color:${expColor};">${expSigned}</span> <span class="small">(moyenne des ${netIncomeExpectation.semestersUsed} dernier(s) semestre(s) clos)</span>`;
+        return `<span class="money" style="font-size:16px;font-weight:700;color:${expColor};">${expSigned}</span> <span class="small">(${netIncomeExpectation.bootstrap ? (netIncomeExpectation.semestersUsed===0 ? 'attente de départ : aucun semestre clos encore' : 'attente fixe de départ du 2e semestre, sans lien avec vos résultats') : (netIncomeExpectation.semestersUsed===1 ? 'résultat net du dernier semestre clos' : 'moyenne des '+netIncomeExpectation.semestersUsed+' derniers semestres clos')})</span>`; // Section 317 — bogue 90 : l'attente fixe de départ n'est plus présentée comme une moyenne de résultats réels
       })()
     : `<span class="small">Pas encore assez d'historique pour former une attente.</span>`;
 
@@ -10679,7 +10679,7 @@ function companyPriceAtPeriodClose(company, period){
 function companyRatiosForPeriod(company, statementEntry, marketSeries){
   const s = statementEntry;
   const price = companyPriceAtPeriodClose(company, s.period);
-  const marketCap = price!=null ? price*company.sharesIssued : null;
+  const marketCap = price!=null ? price*company.sharesIssued : null; // Section 317 — bogue 89 : volontairement toutes les parts émises (banque comprise), cohérent avec le résultat et les capitaux propres de toute l'entreprise dans P/E, P/S, P/B ; seul le libellé de l'affichage était faux
   const uptoRoll = s.period.isCurrent ? state.gameClock.rollCount : (s.period.semesterIndex+1)*3-1;
   const {beta, volatility} = companyBetaVolatility(company, uptoRoll, marketSeries);
   const volatilityPercentile = companyVolatilityPercentile(company, volatility, uptoRoll, marketSeries);

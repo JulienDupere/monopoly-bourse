@@ -24,7 +24,7 @@ async function scenario(title, fn){
 async function contre(title, transform, fn){
   console.log(title);
   let failed = false;
-  try{ await fn(transform); }catch(e){ failed = true; console.log('  (échec attendu) ' + String(e.message).slice(0, 160)); }
+  try{ await fn(transform); }catch(e){ if(/motif introuvable/.test(String(e && e.message))) throw e; failed = true; console.log('  (échec attendu) ' + String(e.message).slice(0, 160)); }
   try{ check(failed, 'contre-épreuve : l’ancien code fait échouer ce scénario'); n++; }
   catch(e){ failures.push(title.slice(0, 4) + ' — ' + e.message); }
 }
@@ -32,7 +32,11 @@ async function contre(title, transform, fn){
 // Anciens codes (contre-épreuves).
 const ANCIEN_25 = s => s.replace("if(co.type==='dividende' && co.dividendBenchmarkPerShare>0 && !recurrentDividendPaidIds.has(co.id)){", "if(co.type==='dividende' && co.dividendBenchmarkPerShare>0 && !(dividendPaidInSemester(co.id, semesterBefore)>0)){");
 const ANCIEN_RATIO = s => s.replace('const paidForRatio = dividendNetPaidInSemester(co.id, semesterBefore);', 'const paidForRatio = dividendPaidInSemester(co.id, semesterBefore);');
-const ANCIEN_27 = s => s.replace('if(co.preferredDividendArrears>0){\n          log(`${co.name}: dividende récurrent automatique NON versé', 'if(false){\n          log(`${co.name}: dividende récurrent automatique NON versé');
+const ANCIEN_27 = s => s.replace('if(co.preferredDividendArrears>0 && preferredArrearsBeforeYearEnd.has(co.id)){', 'if(false){');
+// Retouches de la revue : drapeau « suspendu » posé même case cochée et jamais remis à zéro ; arriérage jugé après processYearEnd.
+const ANCIEN_DRAPEAU = s => s.replace('if(!co.dividendAutoPay) co.dividendRecurrentNeedsReset = true;', 'co.dividendRecurrentNeedsReset = true;')
+  .replace('co.dividendRecurrentNeedsReset = false; // Section 315 — retouche de la revue : versement repris', '// Section 315 — retouche de la revue : versement repris');
+const ANCIEN_FRONTIERE = s => s.replace('if(co.preferredDividendArrears>0 && preferredArrearsBeforeYearEnd.has(co.id)){', 'if(co.preferredDividendArrears>0){');
 
 async function partie(transform){
   const doc = creerDocument();
@@ -132,14 +136,42 @@ async function partie(transform){
     ok(E.json('state.log.slice(0, 40)').some(l => /dividende récurrent automatique NON versé ce semestre — arriérage/.test(JSON.stringify(l))), 'journal : « dividende récurrent automatique NON versé ce semestre — arriérage… »');
     ok(JSON.stringify(E.json('A.typeReserve')) === '{"green":0,"red":20,"white":0}', 'dividende récurrent non versé : sac type à 20 rouges (bogue 25)');
     ok(near(E.eng.cashTotal(), c0), 'monnaie conservée');
-    // L'arriérage réglé, l'auto-versement reprend au semestre suivant.
-    E.run(`A.preferredDividendArrears = 0; A.dividendRecurrentNeedsReset = false; state.gameClock.rollCount = 8;`);
+    ok(E.run('A.dividendRecurrentNeedsReset') === false, 'case toujours cochée : le dividende récurrent n’est PAS marqué « suspendu » (il reprendra au même niveau)');
+    // L'arriérage réglé (sans toucher au drapeau), l'auto-versement reprend au semestre suivant.
+    E.run(`A.preferredDividendArrears = 0; state.gameClock.rollCount = 8;`);
     const bob1 = E.run('state.players[1].cash');
     E.cloture();
     ok(near(E.run('state.players[1].cash') - bob1, 0.075), `arriérage réglé : Bob reçoit de nouveau 0,075 — reçu ${f4(E.run('state.players[1].cash') - bob1)}`);
+    ok(E.run('A.dividendRecurrentNeedsReset') === false && near(E.run('A.dividendBenchmarkPerShare'), 0.0000015), 'versement repris : pas « suspendu », référence intacte (0,0000015/part)');
+    // Partie d'avant la retouche : drapeau resté collé, case cochée → il retombe au premier versement.
+    E.run(`A.dividendRecurrentNeedsReset = true; state.gameClock.rollCount = 11;`);
+    E.cloture();
+    ok(E.run('A.dividendRecurrentNeedsReset') === false, 'drapeau « suspendu » collé (ancienne version) : il retombe dès que le dividende récurrent est versé');
   };
   await scenario('27 — arriérage de privilégié de 0,32 : l’auto-versement est bloqué', () => s27());
   await contre('27c — contre-épreuve (auto-versement malgré l’arriérage)', ANCIEN_27, s27);
+  await contre('27d — contre-épreuve (drapeau « suspendu » collé)', ANCIEN_DRAPEAU, s27);
+  await contre('27f — contre-épreuve (drapeau jamais remis à zéro au versement)', s => s.replace('co.dividendRecurrentNeedsReset = false; // Section 315 — retouche de la revue : versement repris', '// Section 315 — retouche de la revue : versement repris'), s27);
+
+  // Arriérage NÉ à la fin d'année (processYearEnd, juste avant l'auto-versement du même lancer).
+  const sFrontiere = async (transform) => {
+    const E = await partie(transform);
+    E.run(`state.gameClock.rollCount = 5; A.dividendAutoPay = true; A.preferredDividendArrears = 0; A.typeReserve = {green:10, red:0, white:10}; __net[A.id] = 1;
+      A.preferredDividendDueThisYear = {amount:0.1, year:0, items:[]};
+      const bank = A.shareholders.find(s=>s.playerId==='BANK'); bank.shares -= 50000; A.shareholders.push({playerId: state.players[1].id, shares: 50000, avgCost: 0.0001});`);
+    const bob0 = E.run('state.players[1].cash'), c0 = E.eng.cashTotal();
+    E.cloture();                                 // lancer 5 → 6 : fin d'année, le privilégié impayé devient un arriérage de 0,1
+    ok(near(E.run('A.preferredDividendArrears'), 0.1), 'fin d’année : privilégié impayé → arriérage de 0,1');
+    ok(near(E.run('state.players[1].cash') - bob0, 0.075), `dividende récurrent du semestre qui se ferme au même instant : versé (Bob 0,075) — reçu ${f4(E.run('state.players[1].cash') - bob0)} (avant la retouche : 0)`);
+    ok(JSON.stringify(E.json('A.typeReserve')) === '{"green":10,"red":0,"white":10}', 'sac type intact');
+    ok(near(E.eng.cashTotal(), c0), 'monnaie conservée');
+    const bob1 = E.run('state.players[1].cash');
+    E.run('state.gameClock.rollCount = 8;');
+    E.cloture();                                 // semestre suivant : l'arriérage, désormais connu, bloque
+    ok(near(E.run('state.players[1].cash'), bob1), 'semestre suivant, arriérage toujours dû : auto-versement bloqué');
+  };
+  await scenario('27e — arriérage né à la fin d’année : ne bloque pas le récurrent du semestre qui se ferme au même instant', () => sFrontiere());
+  await contre('27ec — contre-épreuve (arriérage jugé après processYearEnd)', ANCIEN_FRONTIERE, sFrontiere);
 
   if(failures.length){ console.log('\nÉCHECS :\n' + failures.join('\n')); process.exit(1); }
   console.log(`\nOK : section 315 (dividendes) — ${n} vérifications`);

@@ -20,7 +20,7 @@ async function scenario(title, fn){
 async function contre(title, transform, fn){
   console.log(title);
   let failed = false;
-  try{ await fn(transform); }catch(e){ failed = true; console.log('  (échec attendu) ' + String(e.message).slice(0, 160)); }
+  try{ await fn(transform); }catch(e){ if(/motif introuvable/.test(String(e && e.message))) throw e; failed = true; console.log('  (échec attendu) ' + String(e.message).slice(0, 160)); }
   try{ check(failed, 'contre-épreuve : l’ancien code fait échouer ce scénario'); n++; }
   catch(e){ failures.push(title.slice(0, 4) + ' — ' + e.message); }
 }

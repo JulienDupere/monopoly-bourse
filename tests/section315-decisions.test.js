@@ -19,7 +19,7 @@ async function scenario(title, fn){
 async function contre(title, transform, fn){
   console.log(title);
   let failed = false;
-  try{ await fn(transform); }catch(e){ failed = true; console.log('  (échec attendu) ' + String(e.message).slice(0, 160)); }
+  try{ await fn(transform); }catch(e){ if(/motif introuvable/.test(String(e && e.message))) throw e; failed = true; console.log('  (échec attendu) ' + String(e.message).slice(0, 160)); }
   try{ check(failed, 'contre-épreuve : l’ancien code fait échouer ce scénario'); n++; }
   catch(e){ failures.push(title.slice(0, 4) + ' — ' + e.message); }
 }
@@ -86,6 +86,8 @@ const ecrire = (eng, rows) => eng.run(`state.finLedger = state.finLedger.filter(
     const ex = eng.json('state.ceoAnnouncementExecutions[state.ceoAnnouncementExecutions.length-1]');
     ok(ex.ok === true && near(ex.amount, 2.97) && near(ex.announcedAmount, 3), 'exécution enregistrée : 2,97 exécuté pour 3 annoncé');
     ok(/RAMENÉE au plafond/.test(JSON.stringify(eng.json('state.log.slice(0, 5)'))), 'journal : « RAMENÉE au plafond légal de vente CEO »');
+    const hist = eng.json('recentExecutionEntriesForPlayer(state.players[0], 10)').map(e => e.text).join(' | ');
+    ok(/Vente de 2[.,]97.*ramenée au plafond \(annoncée 3[.,]00/.test(hist), `historique du joueur : « … ramenée au plafond (annoncée 3,00 M$) » — obtenu « ${hist.slice(0, 160)} »`);
     ok(near(eng.cashTotal(), m0), 'monnaie conservée');
     // Plafond déjà atteint cette année : une 2e vente est annulée (rien à vendre), comme avant.
     eng.run(`globalThis.__ann2 = {id:'ann2', companyId:A.id, ceoId:A.ceoId, direction:'sell', amount:0.5, announcedAtRoll:1, executeAtRoll:7}; state.ceoAnnouncements.push(__ann2); executeCeoAnnouncement(__ann2);`);
@@ -94,6 +96,7 @@ const ecrire = (eng, rows) => eng.run(`state.finLedger = state.finLedger.filter(
   };
   await scenario('C1 — vente CEO pile au plafond, cours −1 % à l’échéance : ramenée au plafond', () => sC());
   await contre('C1c — contre-épreuve (vente annulée en entier)', ANCIEN_C, sC);
+  await contre('C1d — contre-épreuve (historique muet sur la réduction)', s => s.replace("${(e.announcedAmount!==undefined && Math.abs(e.announcedAmount-e.amount)>1e-9) ? `, ramenée au plafond (annoncée ${fmt(e.announcedAmount)})` : ''}", ''), sC);
 
   await scenario('C2 — vente CEO sous le plafond : exécutée telle quelle (inchangé)', async () => {
     const eng = await partie();
@@ -102,6 +105,7 @@ const ecrire = (eng, rows) => eng.run(`state.finLedger = state.finLedger.filter(
       state.ceoAnnouncements.push(__ann); executeCeoAnnouncement(__ann);`);
     const ex = eng.json('state.ceoAnnouncementExecutions[state.ceoAnnouncementExecutions.length-1]');
     ok(ex.ok === true && near(ex.amount, 1) && near(ex.qty, 10000), 'vente de 1 (10 000 parts) exécutée en entier');
+    ok(!/ramenée/.test(eng.json('recentExecutionEntriesForPlayer(state.players[0], 10)').map(e => e.text).join(' ')), 'historique : aucune mention « ramenée » pour une vente exécutée telle quelle');
   });
 
   if(failures.length){ console.log('\nÉCHECS :\n' + failures.join('\n')); process.exit(1); }

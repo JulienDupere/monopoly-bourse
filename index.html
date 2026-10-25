@@ -7241,7 +7241,7 @@ function recentExecutionEntriesForPlayer(player, limit){
     entries.push({roll: e.roll||0, ok: e.ok!==false,
       text: e.ok===false
         ? `Transaction CEO annoncée (${dirLabel.toLowerCase()} de ${fmt(e.amount)} — ${co?co.name:'?'}) arrivée à échéance mais ÉCHOUÉE : ${e.error||'raison inconnue'}.`
-        : `Transaction CEO complétée — ${dirLabel} de ${fmt(e.amount)} de parts de ${co?co.name:'?'} (${fmtShares(e.qty||0)} part(s) à ${fmtPrice(e.price||0)}/part).`});
+        : `Transaction CEO complétée — ${dirLabel} de ${fmt(e.amount)} de parts de ${co?co.name:'?'}${(e.announcedAmount!==undefined && Math.abs(e.announcedAmount-e.amount)>1e-9) ? `, ramenée au plafond (annoncée ${fmt(e.announcedAmount)})` : ''} (${fmtShares(e.qty||0)} part(s) à ${fmtPrice(e.price||0)}/part).`}); // Section 315 — retouche de la revue : vente réduite au plafond signalée
   });
   (state.optionSettlements||[]).forEach(e=>{
     if(e.playerId!==player.id) return;
@@ -9377,6 +9377,10 @@ function advanceGameClock(){
   // appartiennent à l'année qui se termine et sont réglés avant la photo du bilan de clôture : leurs écritures vont au
   // semestre clos (dernier lancer de l'année, comme le lot commercial). Avant : au nouveau semestre, si bien que le
   // bilan de clôture les incluait mais pas l'état des résultats ni les flux du semestre.
+  // Section 315 — retouche de la revue : l'arriérage qui bloque l'auto-versement (bogue 27) est jugé tel qu'il était
+  // AVANT les règlements de fin d'année ; un arriérage né à cette fin d'année ne bloque pas le dividende récurrent du
+  // semestre qui se ferme au même instant (le CEO ne pouvait pas le voir venir), seulement les suivants.
+  const preferredArrearsBeforeYearEnd = new Set(activeCompanies().filter(c=>c.preferredDividendArrears>0).map(c=>c.id));
   if(after>before){
     finLedgerDefaultRollOverride = state.gameClock.rollCount-1;
     try{ processYearEnd(after); } finally{ finLedgerDefaultRollOverride = null; }
@@ -9520,7 +9524,7 @@ function advanceGameClock(){
       if(co.type==='dividende' && co.dividendAutoPay && co.dividendBenchmarkPerShare>0){
         // Section 315 — bogue 27 : un arriérage de dividende privilégié bloque aussi l'auto-versement (comme l'annonce
         // manuelle) ; trace au journal. Le dividende récurrent n'étant pas versé, le sac type passe à 20 rouges (bogue 25).
-        if(co.preferredDividendArrears>0){
+        if(co.preferredDividendArrears>0 && preferredArrearsBeforeYearEnd.has(co.id)){ // Section 315 — retouche de la revue : arriérage antérieur à la fin d'année
           log(`${co.name}: dividende récurrent automatique NON versé ce semestre — arriérage de dividende préférentiel de ${fmt(co.preferredDividendArrears)} à régler d'abord (bouton « Payer l'arriérage » dans Mon Entreprise). Sans dividende récurrent, le sac type passe à 20 cubes rouges.`);
           return;
         }
@@ -9572,6 +9576,7 @@ function advanceGameClock(){
           log(`${co.name} verse automatiquement son dividende de ${fmt(autoAmount)} (auto-versement activé, benchmark ${fmtPrice(co.dividendBenchmarkPerShare)}/part) — ${fmt(paidTotal)} distribué${unclaimed>1e-9?`, ${fmt(unclaimed)} non versé (part de la banque, retourné en trésorerie)`:''}${bankPaid>1e-9?`, dont ${fmt(bankPaid)} payé par la banque (position négative sur ${co.name})`:''}.`, entries); // Section 307 — mention du paiement de la banque
           co.dividendAutoPaySemesterIdx = semesterAfter;
           recurrentDividendPaidIds.add(co.id); // Section 315 — bogue 25
+          co.dividendRecurrentNeedsReset = false; // Section 315 — retouche de la revue : versement repris = plus « suspendu »
         }
       }
     });
@@ -9927,7 +9932,9 @@ function advanceGameClock(){
       // même si un dividende manuel a été versé. Avant : un dividende manuel de 1 $ évitait le choc.
       if(co.type==='dividende' && co.dividendBenchmarkPerShare>0 && !recurrentDividendPaidIds.has(co.id)){
         wipeTypeReserveToRed(co);
-        co.dividendRecurrentNeedsReset = true;
+        // Section 315 — retouche de la revue : « suspendu » seulement si la case est décochée ; un versement bloqué par
+        // un arriérage reprend tout seul une fois l'arriérage réglé, sans retomber au niveau de fondation.
+        if(!co.dividendAutoPay) co.dividendRecurrentNeedsReset = true;
       }
       // Section 306 — sac type des compagnies Dividendes : ratio de distribution (dividendes versés ÷ bénéfice net du
       // semestre) > 1 → 5 cubes rougis, blancs d'abord puis verts. Un semestre sans bénéfice (≤ 0) avec un versement

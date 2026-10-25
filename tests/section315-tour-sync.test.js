@@ -128,11 +128,11 @@ async function scenario(title, fn){
 const ANCIEN_43 = s => s.replace('const nobodyCanRoll = mustBeReady.length===0 && activeCompanies().some(c=>c.inJail);', 'const nobodyCanRoll = false;')
   .replace('const allJailed = noCompanyCanRoll();', 'const allJailed = false;');
 
-async function course(engineOpts){
+async function course(engineOpts, tours = [2, 3]){
   const T = await setup(engineOpts);
   foreignEdit(T, s => {
     const a = s.companies.find(c => c.name === 'Co Alice'), b = s.companies.find(c => c.name === 'Co Bob');
-    a.inJail = true; a.jailTurnsLeft = 2; a.position = 10; b.inJail = true; b.jailTurnsLeft = 3; b.position = 10;
+    a.inJail = true; a.jailTurnsLeft = tours[0]; a.position = 10; b.inJail = true; b.jailTurnsLeft = tours[1]; b.position = 10;
     s.gameClock.rollCount = 1;
   });
   await T.server.settle();
@@ -160,6 +160,23 @@ async function course(engineOpts){
     let failed = false;
     try{ check(after.gameClock.rollCount === 3, 'ancien code : 2 lancers'); }catch(e){ failed = true; console.log('  (échec attendu) ' + e.message + ' — rollCount ' + after.gameClock.rollCount); }
     ok(failed, 'contre-épreuve : l’ancien code fait échouer ce scénario');
+  });
+  // Retouche de la revue : ce sont les revérifications de la section 308 dans l'action du lancer (numéro de lancer attendu
+  // ET entreprises prêtes) qui empêchent un tour en trop. Neutraliser le seul numéro de lancer ne suffit pas à le montrer :
+  // tant que toutes sont enquêtées, un lancer « en double » ne se distingue pas d'un lancer enchaîné (les comptes à
+  // rebours font foi), et dès qu'Alpha est libre la revérification « toutes prêtes » refuse le rejeu (2 lancers).
+  const SANS_NUMERO = s => s.replace('function turnActionRefusal(expectedRoll){', 'function turnActionRefusal(expectedRoll){ return null;');
+  await scenario('43sd — numéro de lancer seul neutralisé : toujours 2 lancers (la revérification « toutes prêtes » protège)', async () => {
+    const { T, after } = await course({ transform: SANS_NUMERO });
+    console.log('    transactions :', T.server.stats.tx.map(t => t.client + ':' + t.result).join(', '));
+    ok(after.gameClock.rollCount === 3, `2 lancers (obtenu ${after.gameClock.rollCount - 1})`);
+  });
+  await scenario('43se — contre-épreuve (numéro de lancer ET revérification « toutes prêtes » neutralisés : tour en trop)', async () => {
+    const { T, after } = await course({ transform: s => SANS_NUMERO(s).replace('if(opts.requireAllReady){', 'if(false){') });
+    console.log('    transactions :', T.server.stats.tx.map(t => t.client + ':' + t.result).join(', '));
+    let failed = false;
+    try{ check(after.gameClock.rollCount === 3, 'sans revérification : 2 lancers'); }catch(e){ failed = true; console.log(`  (échec attendu) ${e.message} — ${after.gameClock.rollCount - 1} lancers au lieu de 2 (le rejeu de Beta passe alors qu'Alpha, libérée, n'a pas validé son tour)`); }
+    ok(failed, 'contre-épreuve : sans les revérifications de la section 308, le rejeu du 2e appareil joue un tour en trop');
   });
   if(failures.length){ console.log('\nÉCHECS :\n' + failures.join('\n')); process.exit(1); }
   console.log(`\nOK : section 315 (bogue 43, deux appareils) — ${n} vérifications`);

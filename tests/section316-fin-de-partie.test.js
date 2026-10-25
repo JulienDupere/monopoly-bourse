@@ -1,4 +1,4 @@
-// Test — Section 316 : fin de partie (bogues 55, 56, 76 de l'audit du 2026-10-19, défaut des hypothèques
+// Test — Section 316 : fin de partie (bogues 55, 56, 76, 92 de l'audit du 2026-10-19, défaut des hypothèques
 // bancaires signalé par une revue), côté moteur. Décisions de Julien : tests/section316-decisions.test.js.
 //
 // Garde unique (généralisation de l'angle mort 5 de l'audit : ~30 points d'entrée sans garde gameEndedReason) :
@@ -9,6 +9,7 @@
 // 56 : annonce de dividende après la fin (moteur : la même garde ; fenêtre : tests/section316-ecrans.test.js).
 // 76 : fonder une entreprise / financer son IPO après la fin.
 // Revue : issueMortgage / issueMortgageLot (chemin bancaire) sans garde gameEndedReason.
+// 92 : appel de marge au lancer qui termine la partie : faux message « la fermeture forcée a échoué ».
 //
 // Chaque correctif a sa contre-épreuve (loadEngine({transform}) : l'ancien code réintroduit fait échouer le test).
 // Lancer depuis la racine du dépôt :  node tests/section316-fin-de-partie.test.js
@@ -28,6 +29,7 @@ const ESC = s => JSON.stringify(s);
 // --- Contre-épreuves -------------------------------------------------------------------------------------------------
 const SANS_GARDE_UNIQUE = src => src.replace("      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(); // Section 316", '');
 const SANS_GARDE_HYPOTHEQUE = src => src.split("  if(state.gameEndedReason) return fail(gameEndedActionMessage()); // Section 316 — revue : chemin bancaire").join('');
+const MARGE_A_LA_FIN = src => src.replace("  if(state.gameEndedReason){ noteMarginShortfallsAtGameEnd(); return; } // Section 316 — bogue 92", '');
 
 // Partie à trois : Alice (créatrice, Co Alice), Bob (Co Bob), Carl (aucune entreprise). Bob possède Bleu foncé 2
 // (case 39, loyer 0,5) ; Co Alice et Co Bob sont en case 10 (un lancer de 2 à 12 n'atteint ni GO, ni une taxe, ni
@@ -198,6 +200,34 @@ const masse = T => T.eng.cashTotal() + T.run('(state.dividendAnnouncements||[]).
         ok(near(T.run('B().cash'), b0), 'H : Co Bob ne reçoit rien');
       } else {
         ok(r.ok && T.run('B().cash') > b0, 'H : contre-épreuve — sans la garde, la banque prête après la fin');
+      }
+    }
+  });
+
+  // ------------------------------------------------------------------------------------------------- Bogue 92
+  await scenario('92 — appel de marge au lancer qui termine la partie : plus de faux « la fermeture forcée a échoué »', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const T = await partie(Object.assign({ roll: 5 }, variante === 'ancien' ? { transform: MARGE_A_LA_FIN } : {}));
+      // Carl a vendu à découvert 50 parts de Co Bob et n'a plus que −20 M$ : sous la marge de maintien.
+      await T.run(`attemptActionWithRetry(async ()=>{ const c = state.players[2]; c.shortPositions = {[B().id]: {shares:50, avgOpenPrice:B().stockPrice, openedRoll:0}};
+        state.bank.cash += c.cash + 20; c.cash = -20; state.hiddenGameLengthTargetYear = 0; return {ok:true}; })`);
+      T.run('drawStockCubes = function(){ return []; };');
+      const sous = T.json(`({req: requiredMaintenanceMargin(state.players[2]), net: marginableNetWorth(state.players[2])})`);
+      const m0 = masse(T);
+      await T.run(`rollDiceAndMove(A().id)`);
+      const S = enregistre(T);
+      const textes = S.log.map(l => l.text || '');
+      const faux = textes.filter(t => /la fermeture forcée a échoué/.test(t));
+      const info = textes.filter(t => /sous la marge de maintien au lancer final/.test(t));
+      console.log(`    [${variante}] marge exigée ${f4(sous.req)}, valeur nette admissible ${f4(sous.net)} ; fin ${ESC(S.gameEndedReason && S.gameEndedReason.reason)} ; faux messages ${faux.length} ; info ${info.length}`);
+      ok(sous.net < sous.req && S.gameEndedReason, 'mise en place : Carl est sous la marge au lancer qui termine la partie');
+      if(variante === 'corrigé'){
+        ok(faux.length === 0, '92 : aucun « la fermeture forcée a échoué » au journal');
+        ok(info.length === 1 && /juste valeur marchande/.test(info[0]), `92 : une ligne d’information claire (« ${info[0] ? info[0].slice(0, 90) : ''}… »)`);
+        ok(near(S.players[2].shortPositions[T.run('B().id')].shares, 50), '92 : la position reste ouverte, valorisée au classement final');
+        ok(near(masse(T), m0), '92 : monnaie conservée');
+      } else {
+        ok(faux.length >= 1, '92 : contre-épreuve — l’ancien code écrit « la fermeture forcée a échoué »');
       }
     }
   });

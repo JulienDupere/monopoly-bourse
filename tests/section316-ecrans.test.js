@@ -1,6 +1,8 @@
-// Test — Section 316 : écrans de fin de partie et consultation (bogues 55, 56 et 76 de l'audit du 2026-10-19),
+// Test — Section 316 : écrans de fin de partie et consultation (bogues 55, 56, 76 et 100 de l'audit du 2026-10-19),
 // avec les VRAIS gestionnaires de clics d'index.html (mini-DOM du banc, tests/helpers/fake-dom.js), mode local.
 //
+// E1 (bogue 100) : après « consulter quand même » puis « quitter la partie », la partie suivante terminée sur le même
+//     appareil n'affichait jamais son écran de classement final.
 // E2 (bogue 76) : un joueur sans entreprise ne voyait, en consultation, que l'écran de fondation (et pouvait fonder).
 // E3 (bogue 56) : la fenêtre « Annoncer un dividende » fonctionnait après la fin : l'argent était immobilisé à jamais.
 // E4 (bogue 55) : l'onglet « Devenir l'assureur » proposait encore la reprise des contrats de la banque.
@@ -24,6 +26,7 @@ const ESC = s => JSON.stringify(s);
 
 // --- Contre-épreuves -------------------------------------------------------------------------------------------------
 const SANS_GARDE_UNIQUE = src => src.replace("      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(); // Section 316", '');
+const CONSULTATION_PERSISTANTE = src => src.replace(/\r?\n  __gameEndedReviewMode = false; \/\/ Section 316 — bogue 100[^\r\n]*/g, '');
 const PORTE_DE_FONDATION = src => src.replace('  if(me && !me.companyId && !state.gameEndedReason){ renderCompanySetupGate(me); return; }', '  if(me && !me.companyId){ renderCompanySetupGate(me); return; }');
 const BOUTON_REPRISE = src => src.replace("    const canTakeOver = myCoId!==p.insurance.insuredCompanyId && !state.gameEndedReason;", "    const canTakeOver = myCoId!==p.insurance.insuredCompanyId;");
 
@@ -87,6 +90,37 @@ async function terminer(A){
 const serveur = T => JSON.parse(T.shared.get('game:' + T.code));
 
 (async () => {
+  // ------------------------------------------------------------------------------------------------- Bogue 100
+  await scenario('E1. Consulter, quitter, puis une nouvelle partie se termine : son écran final s’affiche (bogue 100)', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      const shared = new Map();
+      const A = appareil(shared, variante === 'ancien' ? { transform: CONSULTATION_PERSISTANTE } : {});
+      const T1 = await partie({ shared, appareil: A });
+      await terminer(A);
+      const final1 = A.ecranFinal();
+      await A.cliquer('#gameEndedReview');
+      const consult = !A.ecranFinal() && /consultation seulement/.test(A.app());
+      await A.run('performQuitGame()'); await A.calme();
+      const T2 = await partie({ shared, appareil: A });
+      await terminer(A);
+      const final2 = A.ecranFinal();
+      console.log(`    [${variante}] partie 1 (${T1.code}) : écran final ${final1}, consultation ${consult} ; partie 2 (${T2.code}) terminée : écran final ${final2}`);
+      ok(final1 && consult, 'E1 : partie 1 terminée : écran final, puis consultation des onglets');
+      if(variante === 'corrigé') ok(final2, 'E1 : la partie 2 terminée affiche son classement final');
+      else ok(!final2, 'E1 : contre-épreuve — l’ancien code garde le mode consultation : pas d’écran final pour la partie 2');
+    }
+    // Rejoindre une autre partie terminée (loadGame) remet aussi l'écran final en premier.
+    const shared = new Map();
+    const A = appareil(shared);
+    const T1 = await partie({ shared, appareil: A });
+    await terminer(A);
+    const T2 = await partie({ shared, appareil: A });
+    await terminer(A);
+    await A.cliquer('#gameEndedReview');
+    await A.run(`loadGame(${ESC(T1.code)})`); A.run(`myPlayerId = ${ESC(T1.ids[0])}; render()`); await A.calme();
+    ok(A.ecranFinal(), `E1 : rejoindre la partie terminée ${T1.code} après avoir consulté ${T2.code} : écran final d’abord`);
+  });
+
   // ------------------------------------------------------------------------------------------------- Bogue 76
   await scenario('E2. Joueur sans entreprise : il consulte les onglets et ne peut plus fonder (bogue 76)', async () => {
     for(const variante of ['corrigé', 'ancien']){

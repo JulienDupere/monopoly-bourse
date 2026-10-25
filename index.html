@@ -2078,6 +2078,7 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
   await storageSet('game:'+code, JSON.stringify(s), true);
   gameCode = code; state = s;
   resetActionQueue(); // Section 308
+  __gameEndedReviewMode = false; // Section 316 — bogue 100
   await storageSet('mychar:'+code, players[0].id, false);
   await storageSet('lastcode', code, false);
   myPlayerId = players[0].id;
@@ -2100,6 +2101,7 @@ async function loadGame(code){
   migrateState(state);
   gameCode = code;
   resetActionQueue(); // Section 308 — une partie (re)chargée repart avec une file d'actions vide.
+  __gameEndedReviewMode = false; // Section 316 — bogue 100 : une partie chargée terminée montre d'abord son classement final
   lastDiceResult = null; 
   lastDiceResults = null;
   const mp = await storageGet('mychar:'+code, false);
@@ -7849,6 +7851,7 @@ function renderTicker(items){
 async function performQuitGame(){
   stopSync();
   isSpectator = false;
+  __gameEndedReviewMode = false; // Section 316 — bogue 100 : la consultation d'une partie terminée ne survit pas à la sortie
   await storageSet('lastcode', '', false);
   await storageSet('lastspectator', '', false);
   gameCode=null; state=null; myPlayerId=null; render();
@@ -12440,7 +12443,21 @@ function requiredMaintenanceMargin(player){
   });
   return requiredMargin;
 }
+// Section 316 — bogue 92 : au lancer qui termine la partie, aucune fermeture forcée n'est possible (tout trading est
+// refusé après la fin) : l'ancien code tentait quand même et écrivait « la fermeture forcée a échoué ». Les positions
+// restent ouvertes et sont valorisées à leur juste valeur marchande au classement final (même résultat qu'un rachat
+// au cours) ; une ligne d'information remplace le faux message.
+function noteMarginShortfallsAtGameEnd(){
+  state.players.forEach(p=>{
+    const hasShort = p.shortPositions && Object.keys(p.shortPositions).some(coId=>p.shortPositions[coId].shares>1e-9);
+    const hasWritten = (p.optionPositions||[]).some(pos=>pos.side==='short' && pos.shares>1e-9);
+    if(!hasShort && !hasWritten) return;
+    if(marginableNetWorth(p)>=requiredMaintenanceMargin(p)) return;
+    log(`ℹ️ ${p.name} est sous la marge de maintien au lancer final : la partie étant terminée, aucune fermeture forcée n'a lieu — ses positions à découvert et options écrites sont valorisées à leur juste valeur marchande au classement final.`);
+  });
+}
 function enforceMarginCalls(){
+  if(state.gameEndedReason){ noteMarginShortfallsAtGameEnd(); return; } // Section 316 — bogue 92
   state.players.forEach(p=>{
     let guard = 0;
     while(guard<100){

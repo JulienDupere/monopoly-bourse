@@ -9893,6 +9893,7 @@ function advanceGameClock(){
   
   
   expirePendingLoanRequests();
+  expireAssetSaleOffers(); // Section 309 — retouche de la revue : les offres de vente expirent au lancer suivant
   
   
   
@@ -14051,6 +14052,7 @@ async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBTy
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const assetA = {type:assetAType, id:assetAId};
   const assetB = {type:assetBType, id:assetBId};
+  if(myPlayerId!==state.creatorId) return fail('Seul le créateur de la partie peut arbitrer un échange de parts.'); // Section 309 — retouche de la revue : vérifié dans le moteur
   if(companyAId===companyBId) return fail('Choisissez deux entreprises différentes.'); // Section 309
   // Section 309 — bogues 16 et 35 : mêmes refus que la vente normale, revérifiés sur l'état frais.
   const refusalA = shareSwapGiveRefusal(assetA, companyAId);
@@ -14084,7 +14086,10 @@ function groupMergeEligible(group){
 // plus forts restes (Hamilton) avec un plancher de 1 % : chacun reçoit max(1, partie entière), le reste manquant va aux
 // plus fortes décimales ; s'il y a un excédent (dû aux planchers), il est repris un point à la fois aux parts > 1 % les
 // moins lésées (plus petites décimales). Sans part inférieure à 1 %, le résultat est identique à l'ancien arrondi.
-// Aucun argent ne bouge ; l'écart de chaque copropriétaire avec sa part exacte reste inférieur à 1 point.
+// Aucun argent ne bouge. Écart avec la part exacte (retouche de la revue) : une part relevée à 1 % gagne moins d'un
+// point ; l'excédent créé par ces planchers (au plus k points, k = nombre de parts exactes inférieures à 1 %) est repris
+// aux autres sans paiement, si bien qu'un copropriétaire peut céder jusqu'à k + 1 points (strictement moins). Exemple
+// (scénario Rose de l'audit, 3 petites parts) : Bob passe de 98,95 % exacts à 97 %, soit 1,95 point cédé.
 function mergeRoundShares(raw, total){
   const out = raw.map(v=>Math.max(1, Math.floor(v)));
   let diff = Math.round(total - out.reduce((a,b)=>a+b,0));
@@ -14276,8 +14281,11 @@ async function buyMergedShareFromBank(mergeId, buyerId, pct, price, opts){
   if(props.length===0) return fail(null);
   const buyer = companyById(buyerId);
   if(!buyer) return fail('Entreprise introuvable.');
+  // Section 309 — retouche de la revue : action de l'Administration, réservée au créateur (revérifié ici) ; prix fini et
+  // strictement positif.
+  if(myPlayerId!==state.creatorId) return fail('Seul le créateur de la partie peut enregistrer le rachat d’une part de lot à la banque.');
   if(!(pct>0) || pct>purchasableBankShareLot(mergeId)+1e-9) return fail('Pourcentage invalide — dépasse la part actuellement rachetable à la banque pour ce lot.');
-  if(!(price>0)) return fail('Le prix convenu doit être positif.');
+  if(!(Number.isFinite(price) && price>0)) return fail('Le prix convenu doit être positif.');
   buyer.cash -= price;
   logFin(buyer.id, 'land_purchase', -price);
   addRealEstateCapex(realEstateKeyFor(props[0]), buyer.id, price);
@@ -14499,8 +14507,20 @@ async function sellHousesToCompany(sellerId, buyerId, qty, pricePerHouse, opts){
 // (défaut [] dans migrateState) : {id, kind:'houses'|'share', sellerId, buyerId, qty+pricePerHouse | assetType+assetId+
 // pct+price, byPlayerId, roll, createdAt}. Rien ne bouge (ni argent, ni maisons, ni parts) avant l'acceptation par le
 // CEO de l'entreprise acheteuse, qui revérifie tout sur l'état frais (réserve, part détenue, hypothèque, ABS, lot
-// regroupé, plafond de copropriétaires, encaisse, partie terminée). Une offre devenue impossible reste affichée
-// (refus clair à l'acceptation) jusqu'à son refus par l'acheteur ou son retrait par le vendeur.
+// regroupé, encaisse, partie terminée). Une offre devenue impossible reste affichée (refus clair à l'acceptation)
+// jusqu'à son refus par l'acheteur, son retrait par le vendeur ou son expiration. Retouche de la revue : une offre
+// expire au lancer de dés suivant son dépôt (expireAssetSaleOffers, même moment du cycle que les demandes d'emprunt,
+// trace au journal) ; son lancer de dépôt est affiché ; un prix non fini ou non positif est refusé au dépôt.
+function expireAssetSaleOffers(){
+  const expired = (state.assetSaleOffers||[]).filter(o=>state.gameClock.rollCount>o.roll);
+  if(!expired.length) return;
+  expired.forEach(o=>{
+    const seller = companyById(o.sellerId), buyer = companyById(o.buyerId);
+    log(`L'offre de ${seller?seller.name:'?'} à ${buyer?buyer.name:'?'} (${assetSaleOfferWhat(o)} pour ${fmt(assetSaleOfferTotal(o))}, déposée au lancer ${o.roll}) expire sans avoir été acceptée avant le lancer de dés suivant — rien n'a été payé ni transféré.`);
+  });
+  const ids = new Set(expired.map(o=>o.id));
+  state.assetSaleOffers = state.assetSaleOffers.filter(o=>!ids.has(o.id));
+}
 function assetSaleOfferWhat(o){
   if(o.kind==='houses') return `${o.qty} maison(s) de sa réserve (${fmt(o.pricePerHouse)}/maison)`;
   return `${o.pct}% de ${shareAssetLabel({type:o.assetType, id:o.assetId}) || 'un terrain qui n’existe plus'}`;
@@ -14522,6 +14542,8 @@ async function proposeAssetSale(f, opts){
   if(myPlayerId!==seller.ceoId) return fail(`Seul le CEO de ${seller.name} peut proposer la vente de ses actifs.`);
   const buyer = companyById(f.buyerId);
   if(!buyer || f.buyerId===f.sellerId) return fail('Choisissez une AUTRE entreprise acheteuse.');
+  const askedPrice = f.kind==='houses' ? f.pricePerHouse : f.price; // Section 309 — retouche de la revue
+  if(!(Number.isFinite(askedPrice) && askedPrice>0)) return fail('Le prix demandé doit être un nombre strictement positif.');
   const offer = f.kind==='houses'
     ? {kind:'houses', qty:f.qty, pricePerHouse:f.pricePerHouse}
     : {kind:'share', assetType:f.assetType, assetId:f.assetId, pct:f.pct, price:f.price};
@@ -14539,7 +14561,7 @@ function assetSaleOfferConditions(offerId){
   if(!o) return {unavailable:'Cette offre n’existe plus (retirée par le vendeur, déjà acceptée ou refusée).'};
   const seller = companyById(o.sellerId), buyer = companyById(o.buyerId);
   if(!seller || !buyer) return {unavailable:'Entreprise introuvable.'};
-  return {offerId:o.id, kind:o.kind, sellerName:seller.name, buyerName:buyer.name, what:assetSaleOfferWhat(o), total:assetSaleOfferTotal(o)};
+  return {offerId:o.id, kind:o.kind, sellerName:seller.name, buyerName:buyer.name, what:assetSaleOfferWhat(o), total:assetSaleOfferTotal(o), roll:o.roll};
 }
 async function acceptAssetSaleOffer(offerId, expected){
   const res = await attemptActionWithRetry(async ()=>{
@@ -14548,6 +14570,7 @@ async function acceptAssetSaleOffer(offerId, expected){
     if(!o) return {ok:false, error:'Cette offre n’existe plus (retirée par le vendeur, déjà acceptée ou refusée).'};
     const buyer = companyById(o.buyerId);
     if(!buyer || myPlayerId!==buyer.ceoId) return {ok:false, error:`Seul le CEO de ${buyer?buyer.name:'l’entreprise acheteuse'} peut accepter cette offre.`};
+    if(state.gameClock.rollCount!==o.roll) return {ok:false, error:`Cette offre, déposée au lancer ${o.roll}, a expiré au lancer de dés suivant — rien n'a été payé ni transféré.`}; // Section 309 — retouche de la revue
     if(expected && !sameConditions(expected, assetSaleOfferConditions(offerId))) return staleConditionsResult();
     const r = await executeAssetSaleOffer(o, {silent:true});
     if(!r.ok) return {ok:false, error:`Offre non exécutée — ${r.error||'conditions non remplies.'} Rien n'a été payé ni transféré ; l'offre reste en attente (refusez-la, ou le vendeur peut la retirer).`};
@@ -14561,7 +14584,7 @@ function modalAcceptAssetSaleOffer(offerId){
   return confirmWithFreshConditions({
     title: 'Accepter une offre de vente',
     compute: ()=>assetSaleOfferConditions(offerId),
-    describe: c=>`<div class="small" style="margin-bottom:10px;">${esc(c.sellerName)} vend à ${esc(c.buyerName)} : <b>${esc(c.what)}</b>, pour <b>${fmt(c.total)}</b>. En acceptant, ${esc(c.buyerName)} paie ce montant tout de suite${c.kind==='houses'?' et reçoit les maisons dans sa réserve':' et reçoit la part'}. Tout est revérifié au moment de l'acceptation (encaisse, détention du vendeur, hypothèque, ABS, plafond de copropriétaires).</div>`,
+    describe: c=>`<div class="small" style="margin-bottom:10px;">${esc(c.sellerName)} vend à ${esc(c.buyerName)} : <b>${esc(c.what)}</b>, pour <b>${fmt(c.total)}</b>. En acceptant, ${esc(c.buyerName)} paie ce montant tout de suite${c.kind==='houses'?' et reçoit les maisons dans sa réserve':' et reçoit la part'}. Tout est revérifié au moment de l'acceptation (encaisse, détention du vendeur, hypothèque, ABS). Offre déposée au lancer ${c.roll} : elle expire au lancer de dés suivant.</div>`,
     okLabel: c=>`Accepter et payer ${fmt(c.total)}`,
     run: c=>acceptAssetSaleOffer(offerId, c),
     onDone: res=>{ if(res.entries && res.entries.length) showTransactionPopup(res.label, res.entries); },
@@ -14606,7 +14629,7 @@ function assetSaleOffersHtml(company){
   ${incoming.map(o=>{
     const seller = companyById(o.sellerId);
     return `<div class="deed-actions" style="margin-bottom:6px;">
-      <span class="ownerchip">${o.kind==='houses'?'🏠':'🏷️'} ${esc(seller?seller.name:'?')} vous propose ${esc(assetSaleOfferWhat(o))} pour ${fmt(assetSaleOfferTotal(o))}</span>
+      <span class="ownerchip">${o.kind==='houses'?'🏠':'🏷️'} ${esc(seller?seller.name:'?')} vous propose ${esc(assetSaleOfferWhat(o))} pour ${fmt(assetSaleOfferTotal(o))} (déposée au lancer ${o.roll}, expire au lancer suivant)</span>
       <button class="btn btn-primary btn-sm" data-accept-asset-offer="${o.id}">Accepter</button>
       <button class="btn btn-brick btn-sm" data-refuse-asset-offer="${o.id}">Refuser</button>
     </div>`;
@@ -14614,7 +14637,7 @@ function assetSaleOffersHtml(company){
   ${outgoing.map(o=>{
     const buyer = companyById(o.buyerId);
     return `<div class="deed-actions" style="margin-bottom:6px;">
-      <span class="small">${o.kind==='houses'?'🏠':'🏷️'} Offre à ${esc(buyer?buyer.name:'?')} : ${esc(assetSaleOfferWhat(o))} pour ${fmt(assetSaleOfferTotal(o))} — en attente de sa réponse.</span>
+      <span class="small">${o.kind==='houses'?'🏠':'🏷️'} Offre à ${esc(buyer?buyer.name:'?')} : ${esc(assetSaleOfferWhat(o))} pour ${fmt(assetSaleOfferTotal(o))} — en attente de sa réponse (déposée au lancer ${o.roll}, expire au lancer suivant).</span>
       <button class="btn btn-ghost btn-sm" data-cancel-asset-offer="${o.id}">Retirer</button>
     </div>`;
   }).join('')}
@@ -17830,9 +17853,10 @@ function modalBuyShares(pid){
       
       const prop = state.properties.find(x=>x.id===pid);
       if(!prop) return {ok:false, error:'Terrain introuvable.'};
-      
-      
-      if(!(price>0)) return {ok:false, error:'Le prix convenu doit être positif.'};
+      // Section 309 — retouche de la revue : achat à la banque de l'Administration, réservé au créateur (revérifié dans
+      // l'applyFn) ; prix fini et strictement positif.
+      if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut enregistrer un achat de terrain à la banque.'};
+      if(!(Number.isFinite(price) && price>0)) return {ok:false, error:'Le prix convenu doit être positif.'};
       if(formEntries.length===0) return {ok:false, error:'Sélectionnez au moins une entreprise avec un pourcentage supérieur à 0.'};
       const seen = new Set();
       for(const e of formEntries){
@@ -18003,11 +18027,18 @@ function modalSellShareForm(asset){
       <button class="btn btn-primary" id="mOk">Continuer</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  // Section 309 — retouche de la revue : le prix proposé suit le pourcentage tant que le joueur ne l'a pas modifié
+  // lui-même (sinon une offre de 10 % pouvait partir au prix de 40 %).
+  let priceTouched = false;
+  const priceEl = document.getElementById('mPrice');
+  if(priceEl) priceEl.addEventListener('input', ()=>{ priceTouched = true; });
   const refreshBankInfo = ()=>{
     const info = document.getElementById('mBankPriceInfo');
     const buyerSel = document.getElementById('mBuyer');
     if(!info || !buyerSel) return;
     const pct = parseInt(document.getElementById('mPct').value)||0;
+    const pEl = document.getElementById('mPrice');
+    if(pEl && !priceTouched) pEl.value = bankBuybackPrice(asset, pct).toFixed(2);
     info.textContent = buyerSel.value==='BANK' ? `Banque : elle paie ${fmt(bankBuybackPrice(asset, pct))} pour ${pct}% (valeur de rachat ; le prix saisi ci-dessous ne s'applique qu'à une entreprise).` : '';
   };
   ['mBuyer','mPct'].forEach(id=>{ const el = document.getElementById(id); if(el){ el.addEventListener('change', refreshBankInfo); el.addEventListener('input', refreshBankInfo); } });
@@ -18843,7 +18874,12 @@ function modalHouseCompensation(pid, sourceId, initialAmount, changedNotice){
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const amount = amountInput ? (parseFloat(amountInput.value)||0) : 0;
     const expectedTransfers = houseCompensationTransfers(shown, sourceId, amount).map(t=>({companyId:t.companyId, amount:t.amount}));
-    const res = await runModalActionWithRetry(()=>buildHouse(pid, sourceId, amount, {silent:true, expectedTransfers}));
+    // Section 309 — retouche de la revue : versements périmés → un seul message, le bandeau de la fenêtre redessinée
+    // (le refus est renvoyé sans texte d'erreur, donc sans alerte).
+    const res = await runModalActionWithRetry(async ()=>{
+      const r = await buildHouse(pid, sourceId, amount, {silent:true, expectedTransfers});
+      return (r && r.code==='stale-conditions') ? {ok:false, code:r.code} : r;
+    });
     if(res && res.code==='stale-conditions'){ modalHouseCompensation(pid, sourceId, amount, true); return; }
     if(res && res.ok && res.entries && res.entries.length) showTransactionPopup(res.label, res.entries);
   });

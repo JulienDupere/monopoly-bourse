@@ -8,6 +8,9 @@
 //      unique). Jamais d'annonce en suspens après la fin ; monnaie conservée ; appareils convergents.
 // M2 : Bob a ouvert la fenêtre « Annoncer un dividende » avant la fin ; la fin arrive sur son appareil pendant que la
 //      fenêtre est ouverte ; il confirme : refus « La partie est terminée », rien n'est enregistré.
+// M3 (retouche de la revue) : quand l'annonce est refusée APRÈS un conflit (la fin arrive avec la valeur du serveur),
+//      l'appareil de Bob montre l'écran final et le statut d'action passe à l'échec (avant : écran figé sur l'état
+//      d'avant la fin, statut bloqué sur « ⏳ »).
 // Contre-épreuve (sans la garde unique) : l'annonce acceptée après la fin reste immobilisée pour toujours.
 //
 // Lancer depuis la racine du dépôt :  node tests/section316-sync.test.js
@@ -26,7 +29,9 @@ async function scenario(title, fn){
 const ESC = s => JSON.stringify(s);
 const f4 = x => (typeof x === 'number' ? x.toFixed(4) : String(x));
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
-const SANS_GARDE_UNIQUE = src => src.replace("      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(); // Section 316", '');
+// Retouche de la revue : refus de la garde sans notSaved ni statut d'échec (ancien gameEndedActionResult).
+const REFUS_SANS_REDESSIN = src => src.replace("  if(label) setMyActionStatus(label, 'failed');\n  return {ok:false, error:gameEndedActionMessage(), code:'game-ended', notSaved:true};", "  return {ok:false, error:gameEndedActionMessage(), code:'game-ended'};");
+const SANS_GARDE_UNIQUE = src => src.replace("      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(label); // Section 316", '');
 // Masse monétaire : encaisses + dividendes annoncés immobilisés.
 const masse = s => (s.bank.cash || 0) + s.companies.reduce((t, c) => t + (c.cash || 0), 0) + s.players.reduce((t, p) => t + (p.cash || 0), 0)
   + (s.dividendAnnouncements || []).reduce((t, a) => t + a.amount, 0);
@@ -120,6 +125,24 @@ async function course(graine, transform){
     }
     console.log(`    annonces en suspens pour toujours : ${suspens} graine(s) sur 10`);
     ok(suspens > 0, 'M1b : contre-épreuve — l’ancien code accepte l’annonce après la fin (argent immobilisé)');
+  });
+
+  await scenario('M3. Refus après conflit : l’écran de Bob passe à la fin, le statut n’est plus « ⏳ » (retouche de la revue)', async () => {
+    for(const variante of ['corrigé', 'ancien']){
+      let refus = 0, ecranFinal = 0, enAttente = 0;
+      for(let g = 1; g <= 20; g++){
+        const C = await course(316 + g, variante === 'ancien' ? REFUS_SANS_REDESSIN : undefined);
+        if(C.rB && !C.rB.ok){
+          refus++;
+          if(C.B.doc.trouver('gameEndedReview')) ecranFinal++;
+          if(C.B.run('myLastActionStatus && myLastActionStatus.status') === 'pending') enAttente++;
+        }
+      }
+      console.log(`    [${variante}] refus ${refus} ; écran final affiché ${ecranFinal} ; statut resté « ⏳ » ${enAttente}`);
+      ok(refus > 0, `M3 [${variante}] : des refus après conflit sont exercés`);
+      if(variante === 'corrigé') ok(ecranFinal === refus && enAttente === 0, 'M3 : à chaque refus, l’écran final s’affiche et le statut passe à l’échec');
+      else ok(ecranFinal < refus && enAttente > 0, 'M3 : contre-épreuve — sans notSaved ni statut, l’écran reste figé et le statut bloqué sur « ⏳ »');
+    }
   });
 
   await scenario('M2. Fenêtre « Annoncer un dividende » ouverte avant la fin, confirmée après : refusée', async () => {

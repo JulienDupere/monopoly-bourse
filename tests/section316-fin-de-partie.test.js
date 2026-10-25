@@ -27,7 +27,7 @@ const f4 = x => (typeof x === 'number' ? x.toFixed(4) : String(x));
 const ESC = s => JSON.stringify(s);
 
 // --- Contre-épreuves -------------------------------------------------------------------------------------------------
-const SANS_GARDE_UNIQUE = src => src.replace("      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(); // Section 316", '');
+const SANS_GARDE_UNIQUE = src => src.replace("      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(label); // Section 316", '');
 const SANS_GARDE_HYPOTHEQUE = src => src.split("  if(state.gameEndedReason) return fail(gameEndedActionMessage()); // Section 316 — revue : chemin bancaire").join('');
 const MARGE_A_LA_FIN = src => src.replace("  if(state.gameEndedReason){ noteMarginShortfallsAtGameEnd(); return; } // Section 316 — bogue 92", '');
 

@@ -2425,7 +2425,13 @@ function gameEndedActionMessage(){
   const lbl = gameEndedReasonLabel(state && state.gameEndedReason);
   return `La partie est terminée${lbl ? ` (${lbl})` : ''} — plus aucune action n’est possible : les onglets se consultent seulement.`;
 }
-function gameEndedActionResult(){ return {ok:false, error:gameEndedActionMessage(), code:'game-ended'}; }
+// Section 316 — retouche de la revue : refus survenu après un conflit (la fin, enregistrée par un autre appareil, vient
+// d'arriver avec la valeur du serveur) : notSaved fait redessiner l'écran sur cet état (finishAction), donc l'écran
+// final ou le bandeau apparaît ; le statut « ⏳ » posé par l'essai précédent passe à l'échec.
+function gameEndedActionResult(label){
+  if(label) setMyActionStatus(label, 'failed');
+  return {ok:false, error:gameEndedActionMessage(), code:'game-ended', notSaved:true};
+}
 async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label, allowAfterGameEnd}, gen){
   let res = null;
   let needsReapply = true;
@@ -2439,7 +2445,7 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label, allow
       if(attempt===1 && isKnownOffline()) return offlineActionResult(); // Section 308 — retouche de la revue : action en file, connexion coupée entre-temps
       if(attempt===1) adoptReceivedStateBeforeAction(); // Section 308 — C2 : revérifiée sur l'état à jour
       if(baseLocals) restoreActionLocals(baseLocals);
-      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(); // Section 316
+      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(label); // Section 316
       baseRaw = JSON.stringify(state);
       baseLocals = snapshotActionLocals();
       actionApplyDepth++;

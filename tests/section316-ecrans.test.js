@@ -25,7 +25,7 @@ const f4 = x => (typeof x === 'number' ? x.toFixed(4) : String(x));
 const ESC = s => JSON.stringify(s);
 
 // --- Contre-épreuves -------------------------------------------------------------------------------------------------
-const SANS_GARDE_UNIQUE = src => src.replace("      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(); // Section 316", '');
+const SANS_GARDE_UNIQUE = src => src.replace("      if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(label); // Section 316", '');
 const CONSULTATION_PERSISTANTE = src => src.replace(/\r?\n  __gameEndedReviewMode = false; \/\/ Section 316 — bogue 100[^\r\n]*/g, '');
 const PORTE_DE_FONDATION = src => src.replace('  if(me && !me.companyId && !state.gameEndedReason){ renderCompanySetupGate(me); return; }', '  if(me && !me.companyId){ renderCompanySetupGate(me); return; }');
 const BOUTON_REPRISE = src => src.replace("    const canTakeOver = myCoId!==p.insurance.insuredCompanyId && !state.gameEndedReason;", "    const canTakeOver = myCoId!==p.insurance.insuredCompanyId;");

@@ -3,6 +3,10 @@
 //              remboursé : la retenue de 50 % des loyers dépendait de l'option. Décision : le prêt de dernier recours
 //              reste offert (il ne relève pas de l'option « Prêts », qui concerne le marché des obligations entre
 //              joueurs et entreprises) et il est TOUJOURS remboursé par sa retenue, sur les quatre chemins du loyer.
+//   Bogue 47 : le prêt saisi par l'administrateur (arbitrage) n'appliquait pas les bornes affichées par le formulaire
+//              (5 à 40 %, 1 à 2,5×) : 0 % = prêt jamais remboursé, % négatif = plafond de retenue contourné, multiple
+//              négatif = capital perdu. Le moteur (issueLoan) applique désormais les bornes des réglages de la partie et
+//              refuse toute valeur nulle, négative ou non numérique.
 // Chaque correctif a sa contre-épreuve (ancien code réintroduit par loadEngine({transform}) : le test échoue).
 // Lancer depuis la racine du dépôt :  node tests/section312-prets.test.js
 const { loadEngine, check, near } = require('./helpers/engine');
@@ -24,9 +28,9 @@ const ANCIEN_23 = src => {
 };
 
 // Partie à deux, option « Prêts » DÉCOCHÉE. Alpha (A) possède seule Bleu foncé 2 avec 2 maisons (loyer 6 M$) ; Beta (B) y tombe.
-async function setup(transform){
+async function setup(transform, names = ['Alice', 'Bob']){
   const eng = loadEngine(transform ? { transform } : {});
-  const ids = await eng.newGame(['Alice', 'Bob'], ['garp', 'garp']);
+  const ids = await eng.newGame(names, ['garp', 'garp']);
   eng.run(`globalThis.A = state.companies[0]; globalThis.B = state.companies[1];
     state.settings.features.loan = false; state.rentCompensations = []; state.revenueSwaps = [];
     state.neutralPawns.push({id:'pion-test', name:'Pion test', position:0, inJail:false, jailTurnsLeft:0});
@@ -81,6 +85,36 @@ async function bug23(eng, variantLabel){
   ok(near(repaid, 2.5 * RENT), `23 : au total ${f4(repaid)} M$ remboursés sur 20 (5 retenues de la moitié d’un loyer de ${RENT} M$)`);
 }
 
+// Ancien code du bogue 47 : aucune borne sur le % ni sur le multiple dans issueLoan.
+const ANCIEN_47 = src => src.replace('function loanTermsError(withholdingPct, multiple){', 'function loanTermsError(withholdingPct, multiple){ return null;');
+
+async function bug47(eng){
+  // Chloé (3e joueuse, sans entreprise) prête à Alpha ; réglages par défaut : 5 à 40 %, 1 à 2,5×.
+  const CH = eng.run('state.players[2].id');
+  const essai = async (pct, mult, principal = 3) => {
+    const before = eng.json('({loans: state.loans.length, ch: state.players[2].cash, A: A.cash})'), m0 = eng.cashTotal();
+    const r = await eng.run(`(async()=>{ const o = {silent:true}; const ok = await issueLoan(${JSON.stringify(CH)}, A.id, ${principal}, ${pct}, ${mult}, false, o); return JSON.stringify({ok, err:o.lastError||null}); })()`);
+    const res = JSON.parse(r);
+    const after = eng.json('({loans: state.loans.length, ch: state.players[2].cash, A: A.cash})');
+    return { res, unchanged: after.loans === before.loans && near(after.ch, before.ch) && near(after.A, before.A), conserved: near(eng.cashTotal(), m0) };
+  };
+  const refus = [[0, 2, '0 %'], [-0.4, 2, '−40 %'], [0.04, 2, '4 % (< 5 %)'], [0.41, 2, '41 % (> 40 %)'], [NaN, 2, '% non numérique'],
+    [0.2, 0, 'multiple 0'], [0.2, -1, 'multiple −1'], [0.2, 0.9, 'multiple 0,9 (< 1)'], [0.2, 2.6, 'multiple 2,6 (> 2,5)'], [0.2, NaN, 'multiple non numérique']];
+  for(const [pct, mult, label] of refus){
+    const e = await essai(pct, mult);
+    ok(e.res.ok === false && e.unchanged && e.conserved && /entre/.test(e.res.err || ''), `47 : prêt d'arbitrage à ${label} refusé par le moteur, rien ne bouge (« ${(e.res.err || '').slice(0, 70)}… »)`);
+  }
+  const good = await essai(0.4, 2.5);
+  const loan = eng.json('state.loans[state.loans.length-1]');
+  ok(good.res.ok === true && good.conserved && near(loan.withholdingPct, 0.4) && near(loan.totalDue, 7.5), '47 : bornes incluses acceptées : 3 M$ à 40 % et 2,5× → 7,5 M$ à rembourser ; monnaie conservée');
+  const low = await essai(0.05, 1, 0);
+  ok(low.res.ok === false, '47 : capital nul toujours refusé');
+  // Réglages personnalisés de la partie : les bornes suivent (10 à 20 %, 1,5 à 2×).
+  eng.run('state.loans = state.loans.filter(l=>l.lenderId!==state.players[2].id); state.settings.loanOfferWithholdingPctMin = 0.1; state.settings.loanOfferWithholdingPctMax = 0.2; state.settings.loanOfferMultipleMin = 1.5; state.settings.loanOfferMultipleMax = 2;');
+  ok((await essai(0.3, 1.8)).res.ok === false && (await essai(0.15, 2.2)).res.ok === false && (await essai(0.15, 1.8)).res.ok === true,
+    '47 : réglages 10–20 % et 1,5–2× : 30 % refusé, 2,2× refusé, 15 % à 1,8× accepté');
+}
+
 (async () => {
   await scenario('A. Bogue 23 — le prêt de dernier recours est remboursé même sans l’option « Prêts »', async () => {
     const { eng } = await setup();
@@ -91,6 +125,16 @@ async function bug23(eng, variantLabel){
     let failed = null;
     try{ await bug23(eng, 'ancien'); }catch(e){ failed = e.message; }
     ok(failed && /23 :/.test(failed), `contre-épreuve : l'ancien code échoue (${failed})`);
+  });
+  await scenario('C. Bogue 47 — prêt d’arbitrage : bornes appliquées par le moteur', async () => {
+    const { eng } = await setup(undefined, ['Alice', 'Bob', 'Chloé']);
+    await bug47(eng);
+  });
+  await scenario('D. Bogue 47 — contre-épreuve (aucune borne)', async () => {
+    const { eng } = await setup(ANCIEN_47, ['Alice', 'Bob', 'Chloé']);
+    let failed = null;
+    try{ await bug47(eng); }catch(e){ failed = e.message; }
+    ok(failed && /47 :/.test(failed), `contre-épreuve : sans les bornes, le test échoue (${failed})`);
   });
   if(failures.length){ console.log(`\n${failures.length} scénario(s) en échec :\n` + failures.join('\n')); process.exit(1); }
   console.log(`\n${n} vérifications, 0 échec`);

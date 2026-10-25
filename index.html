@@ -15694,6 +15694,21 @@ async function acceptLoanOffer(offerId){
   render();
 }
 
+// Section 312 — bogue 47 : bornes du % de retenue et du multiple appliquées par le moteur, pour tout prêt ordinaire
+// (offre acceptée ou arbitrage de l'administrateur) : celles des réglages de la partie, affichées par les formulaires.
+// Avant, le formulaire d'arbitrage les affichait sans les appliquer : 0 % = prêt jamais remboursé, % négatif = plafond
+// cumulatif de retenue contourné, multiple négatif = capital perdu. Renvoie le message de refus, ou null.
+function loanTermsError(withholdingPct, multiple){
+  const pctMin = state.settings.loanOfferWithholdingPctMin||0, pctMax = state.settings.loanOfferWithholdingPctMax||1;
+  if(!(Number.isFinite(withholdingPct) && withholdingPct>0 && withholdingPct>=pctMin-1e-9 && withholdingPct<=pctMax+1e-9)){
+    return `Le % des loyers retenu doit être entre ${Math.round(pctMin*100)}% et ${Math.round(pctMax*100)}% (strictement positif) — rien n'a été fait.`;
+  }
+  const multMin = state.settings.loanOfferMultipleMin||1, multMax = state.settings.loanOfferMultipleMax||1;
+  if(!(Number.isFinite(multiple) && multiple>0 && multiple>=multMin-1e-9 && multiple<=multMax+1e-9)){
+    return `Le multiple de remboursement doit être entre ${multMin}× et ${multMax}× (strictement positif) — rien n'a été fait.`;
+  }
+  return null;
+}
 async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multiple, secured, opts){
   
   
@@ -15711,6 +15726,8 @@ async function issueLoan(lenderId, borrowerId, principal, withholdingPct, multip
   
   if(state.gameEndedReason) return fail('La partie est terminée — plus aucune action de prêt n’est possible.');
   if(!(principal>0)) return fail('Le montant du prêt doit être positif.');
+  const termsError = loanTermsError(withholdingPct, multiple); // Section 312 — bogue 47
+  if(termsError) return fail(termsError);
   const remainingCap = loanCapRemaining(borrowerId);
   if(state.settings.loanMaxPrincipal>0 && principal>remainingCap+1e-9){
     return fail(`Le montant du prêt dépasse la capacité d'emprunt encore disponible pour cette entreprise — déjà emprunté (actif): ${fmt(activeLoanPrincipalSum(borrowerId))}/${fmt(state.settings.loanMaxPrincipal)}, il reste ${fmt(remainingCap)} disponible.`);

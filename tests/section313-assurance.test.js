@@ -178,9 +178,12 @@ const KEY_P = { type:'prop', id:'p21' };
     await eng.run(`settlePropertyRent(S1, A.id, 12, {skipSave:true})`);
     s1 = snap(eng);
     ok(near(s0.bank - s1.bank, 0.48) && near(s0.A - s1.A, 0.72) && near(eng.cashTotal(), m0), `2e service acquis après la signature (loyer 1,2) : banque 0,48, A 0,72 — obtenu ${f4(s0.bank - s1.bank)} / ${f4(s0.A - s1.A)}`);
+    const ligne = eng.run('state.log[0].text');   // retouche de la revue : montant couvert pour le lancer réel
+    console.log(`    journal : ${ligne}`);
+    ok(/au-delà du montant couvert \(0\.48 pour ce lancer de 12\)/.test(ligne), 'journal du sinistre : montant couvert pour le lancer réel (0,48 pour ce lancer de 12)');
   });
 
-  await scenario('39e — contrat signé avant la mise à jour : aucun plafond (règle de sa signature) ; reprise plafonnée', async () => {
+  await scenario('39e — contrat signé avant la mise à jour : aucun plafond (règle de sa signature)', async () => {
     const eng = await partie();
     eng.run(`P.insurance = {insuredCompanyId:A.id, premium:0.12, insurerId:'BANK', deductible:0, contractId:'c1', claimMode:'recurring', signedAtRoll:0, quotedTerm:'year'}; migrateState(state);`);
     ok(eng.json('P.insurance').coveredAmount === null, 'migrateState : coveredAmount = null (non plafonné)');
@@ -189,21 +192,95 @@ const KEY_P = { type:'prop', id:'p21' };
     await eng.run(`settlePropertyRent(P, A.id, 9, {skipSave:true})`);
     const s1 = snap(eng);
     ok(near(s0.bank - s1.bank, 20) && near(s0.A - s1.A, 0), 'ancien contrat : l’assureur paie le loyer entier (20), comme promis à la signature');
-    // Reprise d'un contrat plafonné : le prix de reprise ne porte que sur le montant couvert.
-    eng.run(`P.insurance = null; P.houses = 0;`);
+  });
+
+  // Reprise d'un contrat plafonné par le vrai chemin (« Devenir l'assureur » : takeOverInsuranceItemLive, joué par Bob).
+  async function reprise(transform){
+    const eng = await partie({ transform });
     await signer(eng, [KEY_P], 'year', 0);
-    eng.run('P.houses = 5;');
-    const live = eng.json(`liveTakeoverPropQuote(P, A.id, 'recurring', 0, 'year', P.insurance.coveredAmount)`);
-    ok(near(live.exposure, 0.5), `prix de reprise calculé sur 0,5 couvert (et non 20) — exposition ${f4(live.exposure)}`);
+    eng.run(`P.houses = 5; myPlayerId = state.players.find(p=>p.id===B.ceoId).id;`);
+    const m0 = eng.cashTotal(), s0 = snap(eng);
+    await eng.run(`takeOverInsuranceItemLive(P.id)`);
+    const s1 = snap(eng);
+    await eng.run(`settlePropertyRent(P, A.id, 9, {skipSave:true})`);
+    const s2 = snap(eng);
+    return { eng, m0, s0, s1, s2, prixPlafonne: eng.run(`liveTakeoverPropQuote(P, A.id, 'recurring', 0, 'year', 0.5).ceil`), prixHotel: eng.run(`liveTakeoverPropQuote(P, A.id, 'recurring', 0, 'year', null).ceil`) };
+  }
+  await scenario('39e2 — reprise d’un contrat plafonné (vrai chemin) : prix sur 0,5 couvert, puis sinistre plafonné', async () => {
+    const r = await reprise();
+    console.log(`    prix de reprise payé par la banque ${f4(r.s0.bank - r.s1.bank)} (plafonné ${f4(r.prixPlafonne)}, sur l’hôtel ${f4(r.prixHotel)})`);
+    ok(r.eng.run('P.insurance.insurerId') === r.eng.run('B.id'), 'B devient l’assureur');
+    ok(near(r.s0.bank - r.s1.bank, r.prixPlafonne) && near(r.s1.B - r.s0.B, r.prixPlafonne), `la banque paie à B le prix calculé sur 0,5 couvert (${f4(r.prixPlafonne)}), et non sur l’hôtel (${f4(r.prixHotel)})`);
+    ok(near(r.s1.A - r.s2.A, 19.5) && near(r.s2.B - r.s1.B, 20 - 0.5) && near(r.eng.cashTotal(), r.m0), 'sinistre : B (assureur et propriétaire) reçoit 20 et indemnise 0,5 ; A paie 19,5 ; monnaie conservée');
+  });
+  await scenario('39e3 — contre-épreuve : reprise non plafonnée, la banque paie le prix de l’hôtel', async () => {
+    const r = await reprise(s => s.replace("const exposure = capInsuredExposure(Math.max(payableRent(p, insuredCompanyId) - deductible, 0), coveredAmount); // Section 313 — bogue 39", "const exposure = Math.max(payableRent(p, insuredCompanyId) - deductible, 0);"));
+    ok(r.s0.bank - r.s1.bank > 4, `contre-épreuve : la banque paie ${f4(r.s0.bank - r.s1.bank)} (prix sur l’hôtel) au lieu de 0,12`);
   });
 
   await scenario('39f — contre-épreuve : sans plafond, l’assureur paie l’hôtel entier', async () => {
-    const eng = await partie({ transform: s => s.replace("const insurerPortion = insuranceIndemnity(payable, deductible, insured, p.type==='service' ? diceTotal : null);", "const insurerPortion = payable - deductible;") });
+    const eng = await partie({ transform: s => s.replace("insurerExists(insured.insurerId) ? insuranceIndemnity(payable, deductible, insured, p.type==='service' ? diceTotal : null) : 0;", "payable - deductible;") });
     await signer(eng, [KEY_P], 'year', 0);
     eng.run('P.houses = 5;');
     const s0 = snap(eng);
     await eng.run(`settlePropertyRent(P, A.id, 9, {skipSave:true})`);
     ok(near(s0.bank - snap(eng).bank, 20), 'contre-épreuve : la banque paie 20 avec l’ancien code');
+  });
+
+  await scenario('39g — contre-épreuves : plafond du sous-standard et des taxes retirés', async () => {
+    let eng = await partie({ transform: s => s.replace("insurerExists(subInsured.insurerId) ? insuranceIndemnity(payable, deductible, subInsured, p.type==='service' ? diceTotal : null) : 0;", "payable - deductible;") });
+    eng.run('state.gameClock.rollCount = 1;');
+    await signer(eng, [KEY_P], 'sub', 0);
+    eng.run('P.houses = 5;');
+    let s0 = snap(eng);
+    await eng.run(`settlePropertyRent(P, A.id, 9, {skipSave:true})`);
+    ok(near(s0.bank - snap(eng).bank, 20), 'contre-épreuve sous-standard : la banque paie 20 (au lieu de 0,5)');
+    eng = await partie({ transform: s => s.replace("insurerExists(ins.insurerId) ? insuranceIndemnity(cost, deductible, ins, null) : 0;", "cost - deductible;") });
+    eng.run(`globalThis.__val = 8; const __cv = companyValue; companyValue = c => (c && c.id===A.id) ? globalThis.__val : __cv(c);`);
+    await signer(eng, [{ type:'tax', id:4 }], 'year', 0);
+    eng.run('globalThis.__val = 20;');
+    s0 = snap(eng);
+    await eng.run(`payTax(A.id, 4, {skipSave:true})`);
+    ok(near(s0.A - snap(eng).A, 0), 'contre-épreuve taxe : A ne paie rien, l’assureur paie l’impôt entier (2 au lieu de 0,8)');
+  });
+
+  // ---------------------------------------------------------------- Retouches de la revue
+  await scenario('R4 — assureur introuvable (entreprise disparue) : sinistre traité comme non assuré, monnaie conservée', async () => {
+    const eng = await partie();
+    eng.run(`P.insurance = {insuredCompanyId:A.id, premium:0.1, insurerId:'disparue', deductible:0, contractId:'k', claimMode:'recurring', signedAtRoll:0, quotedTerm:'year', coveredAmount:0.5};
+      state.taxInsurances = [{id:'t', contractId:'k2', taxPos:38, insuredCompanyId:A.id, premium:0.1, insurerId:'disparue', deductible:0, claimMode:'recurring', signedAtRoll:0, quotedTerm:'year', coveredAmount:0.4}];`);
+    let m0 = eng.cashTotal(), s0 = snap(eng);
+    await eng.run(`settlePropertyRent(P, A.id, 9, {skipSave:true})`);
+    let s1 = snap(eng);
+    ok(near(eng.cashTotal(), m0) && near(s0.A - s1.A, 0.5) && near(s1.B - s0.B, 0.5), `loyer : A paie 0,5, B reçoit 0,5, monnaie conservée (écart ${f4(eng.cashTotal() - m0)})`);
+    eng.run(`P.insurance = null; P.subInsurance = {insuredCompanyId:A.id, premium:0.1, insurerId:'disparue', deductible:0, signedAtRoll:0, coveredAmount:0.5};`);
+    m0 = eng.cashTotal(); s0 = snap(eng);
+    await eng.run(`settlePropertyRent(P, A.id, 9, {skipSave:true})`);
+    ok(near(eng.cashTotal(), m0) && near(s0.A - snap(eng).A, 0.5), 'sous-standard : A paie 0,5, monnaie conservée');
+    m0 = eng.cashTotal(); s0 = snap(eng);
+    await eng.run(`payTax(A.id, 38, {skipSave:true})`);
+    s1 = snap(eng);
+    ok(near(eng.cashTotal(), m0) && near(s0.A - s1.A, 1) && near(s1.bank - s0.bank, 1), `taxe : A paie 1, la banque perçoit 1, monnaie conservée (écart ${f4(eng.cashTotal() - m0)})`);
+    ok(eng.json('state.log.slice(0, 3)').some(e => /introuvable/.test(JSON.stringify(e))), 'le journal signale l’assureur introuvable');
+  });
+  await scenario('R4b — contre-épreuve : ancien code, l’indemnité n’est débitée de personne (+0,4 créé)', async () => {
+    const eng = await partie({ transform: s => s.replace("insurerExists(ins.insurerId) ? insuranceIndemnity(cost, deductible, ins, null) : 0;", "insuranceIndemnity(cost, deductible, ins, null);") });
+    eng.run(`state.taxInsurances = [{id:'t', contractId:'k2', taxPos:38, insuredCompanyId:A.id, premium:0.1, insurerId:'disparue', deductible:0, claimMode:'recurring', signedAtRoll:0, quotedTerm:'year', coveredAmount:0.4}];`);
+    const m0 = eng.cashTotal();
+    await eng.run(`payTax(A.id, 38, {skipSave:true})`);
+    ok(near(eng.cashTotal() - m0, 0.4), `contre-épreuve : ${f4(eng.cashTotal() - m0)} M$ créés`);
+  });
+
+  await scenario('R5 — franchise changée par la confirmation : journalisée ; contrats affichés avec une franchise bornée', async () => {
+    const eng = await partie();
+    eng.run('A.currentDeductible = 0.3;');
+    const n0 = eng.run('state.log.length');
+    await signer(eng, [KEY_P], 'year', 0.1);
+    const lignes = eng.json(`state.log.slice(0, state.log.length - ${n0}).map(e=>JSON.stringify(e))`);   // journal : plus récent en tête
+    ok(lignes.some(l => /Franchise de Co Alice pour ce tour fixée à 0\.10/.test(l)), 'ligne « Franchise … fixée à 0.10 » au journal');
+    eng.run(`state.taxInsurances = [{id:'t', contractId:'k2', taxPos:38, insuredCompanyId:A.id, premium:0.1, insurerId:'BANK', deductible:-5, claimMode:'recurring', signedAtRoll:0, quotedTerm:'year', coveredAmount:null}];`);
+    const ded = eng.json(`activeContracts().map(c=>c.deductible)`);
+    ok(ded.length === 2 && ded.every(d => d >= 0) && ded.includes(0) && ded.some(d => near(d, 0.1)), `activeContracts : franchises affichées ${JSON.stringify(ded)} (−5 → 0)`);
   });
 
   // ---------------------------------------------------------------- Bogue 40

@@ -200,6 +200,58 @@ const CLIC_DIRECT = "  if(!sameConditions(shown, fresh)){ openFresh(); return {o
     ok(!!T.A.doc.trouver('openInsureBundleBtn'), 'témoin : sous-standard activée, le bouton est là');
   });
 
+  // Retouche de la revue (bloquant) : une case cochée retirée entre l'ouverture et la confirmation faisait boucler
+  // « Les conditions ont changé » (seules les cases restantes étaient transmises à l'applyFn).
+  const BUY_NOUVEAU = /  const buy = c=>purchaseInsuranceBundle\(keys\.map\([^\n]*\n/;
+  const BUY_ANCIEN = "  const buy = c=>purchaseInsuranceBundle(c.items.map(i=>({item:{type:i.type, id:i.id, label:i.label}, insurerId:'BANK', premium:i.premium})), claimMode, term, {silent:true, deductible, expectedConditions:c});\n";
+  async function caseRetiree(sub, transform){
+    const { shared, A, ids, code } = await partie({ roll: sub ? 1 : 0, transform,
+      setup: `state.companies[0].position = ${sub ? 34 : 30}; const Q = state.properties.find(p=>p.pos===37); Q.owners = [{companyId:state.companies[1].id, share:100}]; Q.houses = 0; Q.mortgages = [];` });
+    A.run('modalInsureBundle()'); await A.calme();
+    const autre = sub ? ['prop', A.run('state.properties.find(p=>p.pos===37).id')] : ['tax', 38];
+    await A.cocher(`.bundle-check[data-idx="${ligne(A, sub ? 'sub' : 'year', 'prop', 'p21')}"]`);
+    await A.cocher(`.bundle-check[data-idx="${ligne(A, sub ? 'sub' : 'year', autre[0], autre[1])}"]`);
+    const prime = A.run(sub ? `subInsuranceQuote(state.properties.find(p=>p.pos===37), myCompany().id).ceil` : `taxInsuranceQuote(38, myCompany().id, 'recurring', rollsUntilYearEnd()).ceil`);
+    const B = appareil(shared);
+    await B.run(`loadGame(${ESC(code)})`); B.run(`myPlayerId = ${ESC(ids[1])}; closeModal();`); await B.calme();
+    if(sub) await B.run(`attemptActionWithRetry(async ()=>{ state.companies[0].position = 26; return {ok:true}; }, {label:'lancer simulé'})`);   // Bleu foncé 2 hors de portée
+    else await B.run(`attemptActionWithRetry(async ()=>{ const P = state.properties.find(p=>p.id==='p21'); P.insurance = {insuredCompanyId:state.companies[1].id, premium:0.1, insurerId:'BANK', deductible:0, contractId:'x', claimMode:'recurring', signedAtRoll:0, quotedTerm:'year', coveredAmount:0}; return {ok:true}; }, {label:'autre contrat'})`);
+    await A.sonder(); await A.calme();
+    const m0 = A.eng.cashTotal(), cash0 = A.run('myCompany().cash');
+    const signes = () => sub ? A.json(`state.properties.filter(p=>p.subInsurance && p.subInsurance.insuredCompanyId===myCompany().id).map(p=>p.id)`) : A.json(`state.taxInsurances.filter(t=>t.insuredCompanyId===myCompany().id).map(t=>t.taxPos)`);
+    await A.cliquer('#mOk');
+    const clic1 = { changed: /Les conditions ont changé/.test(A.fenetre()), retire: /Retiré/.test(A.fenetre()), signes: signes() };
+    await A.cliquer('#mOk');
+    const clic2 = { ouverte: !!A.doc.trouver('mOk'), changed: /Les conditions ont changé/.test(A.fenetre()), signes: signes() };
+    return { A, m0, cash0, prime, autre, clic1, clic2 };
+  }
+  await scenario('F6. Case cochée retirée entre-temps : le 2e clic signe les cases restantes (annuel et sous-standard)', async () => {
+    for(const sub of [false, true]){
+      const t = sub ? 'sous-standard (pion amené hors de portée)' : 'annuel (case assurée par une autre entreprise)';
+      const r = await caseRetiree(sub);
+      ok(r.clic1.changed && r.clic1.retire && r.clic1.signes.length === 0, `${t} : 1er clic, « Les conditions ont changé » avec la case retirée, rien signé`);
+      ok(!r.clic2.ouverte && r.clic2.signes.length === 1 && r.clic2.signes[0] === r.autre[1], `${t} : 2e clic, la case restante est signée et la fenêtre se ferme`);
+      ok(near(r.A.run('myCompany().cash'), r.cash0 - r.prime) && near(r.A.eng.cashTotal(), r.m0), `${t} : prime payée ${f4(r.prime)} (case restante seulement), monnaie conservée`);
+    }
+  });
+  await scenario('F6b. Contre-épreuve : seules les cases restantes transmises → reconfirmation sans fin', async () => {
+    for(const sub of [false, true]){
+      const r = await caseRetiree(sub, s => s.replace(BUY_NOUVEAU, BUY_ANCIEN));
+      ok(r.clic2.ouverte && r.clic2.changed && r.clic2.signes.length === 0, `contre-épreuve ${sub ? 'sous-standard' : 'annuel'} : 2e clic, encore « Les conditions ont changé », rien signé`);
+    }
+  });
+
+  await scenario('F7. Intitulés : service « pour un lancer de 7 » ; sous-standard rendue inutile signalée (bogue 52, ordre inverse)', async () => {
+    const { A } = await partie({ setup: `{ const S = state.properties.find(p=>p.name==='Service 1'); S.owners = [{companyId:state.companies[1].id, share:100}]; S.mortgages = [];
+      const P2 = state.properties.find(p=>p.id==='p21'); P2.subInsurance = {insuredCompanyId:state.companies[0].id, premium:0.1, insurerId:'BANK', deductible:0, signedAtRoll:0, coveredAmount:0.5}; }` });
+    A.run('state.companies[0].position = 2; modalInsureBundle()'); await A.calme();
+    ok(/Service 1 : [^<]*à risque pour un lancer de 7/.test(A.fenetre()), 'fenêtre : « à risque pour un lancer de 7 » sur la ligne du service');
+    A.run('closeModal(); state.companies[0].position = 30; modalInsureBundle()'); await A.calme();
+    ok(/Bleu foncé 2[^]*sous-standard sur cette case ne servira plus/.test(A.fenetre()), 'contrat annuel : avertissement « votre assurance sous-standard sur cette case ne servira plus »');
+    const html = A.run(`insuranceBundleDescribe(insuranceBundleConditions(myCompany().id, [{type:'prop', id:state.properties.find(p=>p.name==='Service 1').id}], 'recurring', 'year', 0))`);
+    ok(/pour un lancer de 7/.test(html), 'fenêtre de confirmation : colonne « Couvert au plus » précisée pour un lancer de 7');
+  });
+
   console.log(failures.length ? `\nÉCHECS (${failures.length}) :\n- ` + failures.join('\n- ') : '');
   console.log(`${failures.length ? 'ÉCHEC' : 'OK'} : section 313 (fenêtre d’assurance) — ${n} vérifications, ${failures.length} scénario(s) en échec`);
   process.exit(failures.length ? 1 : 0);

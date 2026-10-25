@@ -277,6 +277,8 @@ async function scenarioNetworkThenRetry(engineOpts){
       const alerts = []; eng.sandbox.alert = m => alerts.push(String(m));
       await eng.newGame(['Alice', 'Bob'], ['garp', 'garp']);
       eng.run(`globalThis.coA = state.companies[0].id; globalThis.coB = state.companies[1].id;`);
+      // Section 311 : seul le CEO de l'entreprise destinataire (Bob) peut accepter une offre : l'appareil est celui de Bob.
+      eng.run(`myPlayerId = state.companies[1].ceoId;`);
       const propIds = eng.json(`state.properties.filter(p=>p.owners.length===0).slice(0,2).map(p=>p.id)`);
       await eng.run(`attemptActionWithRetry(async ()=>{
         state.companies[1].cash = 0.1;

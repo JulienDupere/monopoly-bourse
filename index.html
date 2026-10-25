@@ -15013,6 +15013,16 @@ async function proposeRentSwap(propA, companyA, propB, companyB, years, capA, ca
   return {ok:true};
 }
 
+// Section 311 — point ajouté (signalé par le lot 5) : accepter ou refuser une offre de swap de loyers ou d'accord de
+// compensation ne vérifiait pas QUI répondait : n'importe quel joueur pouvait refuser (effacer) l'offre, voire la signer
+// au nom de l'entreprise destinataire. Désormais seul le CEO de l'entreprise destinataire répond (contrôle dans
+// l'applyFn, état frais) ; l'auteur garde « Retirer » (cancelRentSwapOffer / cancelRentCompensationOffer).
+function rentOfferResponderRefusal(offer){
+  const myCo = myCompany();
+  if(myCo && myCo.id===offer.toCompanyId) return null;
+  const to = companyById(offer.toCompanyId);
+  return {ok:false, error:`Seul le CEO de ${to?to.name:'l’entreprise destinataire'} peut accepter ou refuser cette proposition (son auteur peut la retirer).`};
+}
 async function acceptRentSwapOffer(id){
   
   
@@ -15020,6 +15030,8 @@ async function acceptRentSwapOffer(id){
   const res = await attemptActionWithRetry(async ()=>{
     const offer = state.rentSwapOffers.find(o=>o.id===id);
     if(!offer) return {ok:false};
+    const notResponder = rentOfferResponderRefusal(offer); // Section 311 — seul le CEO destinataire répond
+    if(notResponder) return notResponder;
     state.rentSwapOffers = state.rentSwapOffers.filter(o=>o.id!==id);
     return createRentSwap(offer.propA, offer.fromCompanyId, offer.propB, offer.toCompanyId, offer.years, offer.capA, offer.capB, offer.generalA, offer.generalB, offer.budgetCapA, offer.budgetCapB, {silent:true});
   }, {label:'Acceptation d\'un swap de loyers'});
@@ -15031,6 +15043,8 @@ async function refuseRentSwapOffer(id){
   const res = await attemptActionWithRetry(async ()=>{
     const offer = state.rentSwapOffers.find(o=>o.id===id);
     if(!offer) return {ok:false};
+    const notResponder = rentOfferResponderRefusal(offer); // Section 311 — seul le CEO destinataire répond
+    if(notResponder) return notResponder;
     const coA = companyById(offer.fromCompanyId), coB = companyById(offer.toCompanyId);
     state.rentSwapOffers = state.rentSwapOffers.filter(o=>o.id!==id);
     log(`${coB?coB.name:'?'} refuse la proposition de swap de loyers de ${coA?coA.name:'?'}.`);
@@ -15634,6 +15648,8 @@ async function acceptRentCompensationOffer(id){
   const res = await attemptActionWithRetry(async ()=>{
     const offer = state.rentCompensationOffers.find(o=>o.id===id);
     if(!offer) return {ok:false};
+    const notResponder = rentOfferResponderRefusal(offer); // Section 311 — seul le CEO destinataire répond
+    if(notResponder) return notResponder;
     state.rentCompensationOffers = state.rentCompensationOffers.filter(o=>o.id!==id);
     return createRentCompensation(offer.fromCompanyId, offer.toCompanyId, offer.interestRate*100, {silent:true});
   }, {label:'Acceptation d\'un accord de compensation de loyer'});
@@ -15646,6 +15662,8 @@ async function refuseRentCompensationOffer(id){
   const res = await attemptActionWithRetry(async ()=>{
     const offer = state.rentCompensationOffers.find(o=>o.id===id);
     if(!offer) return {ok:false};
+    const notResponder = rentOfferResponderRefusal(offer); // Section 311 — seul le CEO destinataire répond
+    if(notResponder) return notResponder;
     const coA = companyById(offer.fromCompanyId), coB = companyById(offer.toCompanyId);
     state.rentCompensationOffers = state.rentCompensationOffers.filter(o=>o.id!==id);
     log(`${coB?coB.name:'?'} refuse la proposition d'accord de compensation de loyer de ${coA?coA.name:'?'}.`);

@@ -1613,6 +1613,31 @@ complice ; contre-épreuves avec la valorisation du lot 3 ou d'avant la section 
 E, F réécrits (contre-épreuves qui réintroduisent la limite du lot 3). Changements visibles (cahiers 5 et 7) : la mise
 du lot commercial n'est plus bornée par l'encaisse ; la carte du REIT montre la valeur d'achat de chaque détenteur.
 
+**Décision de Julien (2026-10-25)** sur la boucle du complice signalée par la revue des réponses (Co Alice vend 1 % du
+REIT à Co Bob pour 10, le lui rachète 10, en boucle : valeur d'achat 2 → 332,37 en 40 allers-retours, sans argent
+dépensé), verbatim : « Oui : REIT acheté de gré à gré évalué au plus à la part du dernier prix d'enchère (option b), et refus des opérations qui portent les options nues au-delà du plafond. Applique, fais tester, puis montre-moi avant de pousser. »
+Mécanique retenue (commentaires « Section 310 — décision de Julien (2026-10-25) ») : à l'acceptation d'une offre de
+revente (`executeEtfSale`), l'acheteur ajoute à sa valeur d'achat le plus petit du prix payé et de sa part du dernier
+prix d'enchère (pct × `lastAuctionPrice` / 100, `etfOtcBookValue`). L'argent versé reste le prix convenu (monnaie
+inchangée) : seul le bilan change. Les achats à l'enchère restent comptés au prix réellement payé ; le vendeur sort
+toujours son coût au prorata (gain ou perte réalisé). La fenêtre d'acceptation (`assetSaleOfferConditions`, champ
+`etfBookValue`, revérifié par `confirmWithFreshConditions`) et le journal annoncent la valeur retenue quand elle est
+inférieure au prix. Sans enchère passée (`lastAuctionPrice` à 0, anciennes parties seulement), une part achetée de gré
+à gré vaut 0 au bilan (lecture littérale de la décision). Aucun nouveau champ d'état.
+Scénarios : boucle du complice (dernier prix d'enchère 2) : avant, Co Alice 22 → 31,98 après 1 aller-retour, 352,37
+après 40 ; après, 22 → 22 (REIT 2), Co Bob 10 → 10, monnaie conservée. Achat honnête (dernier prix d'enchère 10) :
+30 % pour 3 → porté 3 ; 20 % pour 1,5 → porté 1,5 (Co Alice réalise −0,5) ; 10 % pour 2 → porté 1 seulement, Co Bob
+perd 1 de valeur (avant : porté 2). Rachat cher à l'enchère (Co Alice 60 %, mise 20, paie 8 à Co Bob) : porté 8 (prix
+payé), puis revente de 50 % à Co Carl pour 3 : perte réalisée 1,6, Co Carl porte 3. Complice du point ci-dessus (99 %
+revendus 19,8 puis remise de 20) : Co Bob porte ses 99 % à 1,98 et non 19,8 (valeur 20 → 2,18 ; total des deux
+complices 42 inchangé à la revente) ; le rachat passe par une ENCHÈRE, comptée au prix payé : Co Alice reste à 39,82 et
+Co Bob revient à 20 (**point ouvert** : la voie de l'enchère, voulue par la décision, permet encore de porter le lot au
+prix d'une mise convenue avec un complice, une fois par année et dans la limite de l'encaisse).
+Tests : `tests/section310-reit-gre-a-gre.test.js` (A boucle, B achat honnête et au-dessus de la part d'enchère, C rachat
+à l'enchère puis revente avec perte, D sans enchère passée ; contre-épreuves A et B avec l'ancien coût = prix payé ;
+19 vérifications) ; `section310-reit-mises` G mis à jour (44 vérifications). Changement visible (cahier 5) : une part de
+REIT achetée à une autre entreprise est portée au bilan au plus à sa part du dernier prix d'enchère.
+
 **Retouche de la revue (2026-10-25), lot commercial** : `submitTerrainLotBid` refuse un prix non fini (Infinity, que
 `parseFloat("1e309")` produit, devenait `null` dans l'état sauvegardé et des encaisses NaN au règlement) et une mise
 au-delà de 1 000 000 M$ (`TERRAIN_LOT_BID_ABSURD_MAX`, plafond lisible comme celui du bogue 11, sans lien avec
@@ -1774,6 +1799,38 @@ acceptés. Straddle vendu de 300 contrats par le porteur : 300 calls couverts + 
 plafond, désormais accepté. Monnaie conservée.
 Tests : `tests/section314-options.test.js` C adapté, G (gros porteur), H (straddle du porteur), I (contre-épreuve :
 toutes les options écrites comptent, les 400 covered calls et le straddle du porteur sont refusés) ; 49 vérifications.
+
+**Décision de Julien (2026-10-25)** sur les deux contournements du plafond signalés par la revue des réponses (revendre
+les parts après des covered calls ; clôturer seule la jambe achetée d'un spread), verbatim : « Oui : REIT acheté de gré à gré évalué au plus à la part du dernier prix d'enchère (option b), et refus des opérations qui portent les options nues au-delà du plafond. Applique, fais tester, puis montre-moi avant de pousser. »
+Mécanique retenue (commentaires « Section 314 — décision de Julien (2026-10-25) ») : `nakedWrittenCapBreach` simule
+l'opération avant toute mutation (`writtenOptionCoverage` accepte un `override` : parts détenues après l'opération,
+contrats restants d'une position) et la refuse si le joueur aurait plus de contrats écrits nus que le plafond ET plus
+qu'avant : une position héritée au-delà du plafond ne bloque que ce qui l'augmente. Voies VOLONTAIRES gardées :
+`executeShareTrade` en vente, qui ne sert qu'à la vente directe (`tradeCompanyShares`), à l'ask exécuté
+(`fillPendingAsk` : l'ordre reste en attente, refus expliqué une fois au journal) et à l'annonce CEO
+(`executeCeoAnnouncement` : consignée comme non exécutée) ; `closeOptionPosition` appelée sans drapeau (clôture depuis
+l'interface). Message : contrats nus que l'opération créerait, plafond, contrats nus actuels, et le maximum possible
+(parts vendables ; contrats de la jambe clôturables, ou conseil de clôturer la stratégie entière). Jamais bloqués,
+vérifié voie par voie : appel de marge (`enforceMarginCalls` ne fait que racheter des options écrites et des
+découverts, `closeOptionPosition` avec `_bypassTradingWindow`), règlement à l'échéance (`settleExpiredOptions` →
+`settleOptionExercise`, qui livre les parts sans passer par `executeShareTrade`), clôture d'une stratégie entière
+(`closeOptionStrategy`, `_cashPrechecked` : toutes les jambes sortent, les contrats nus ne peuvent que baisser). Aucune
+autre voie ne réduit les parts détenues d'un joueur (seules `executeShareTrade` et `settleOptionExercise` diminuent
+une ligne de `shareholders`).
+Scénarios (Co Bob, 200 000 parts, plafond 300) : Carl achète 60 000 parts, écrit 600 covered calls puis revend les
+60 000 parts : avant, vente acceptée (600 calls nus) ; après, refusée (« … à 600 contrat(s), au-delà du plafond de 300
+… au plus 30 000 part(s) »), 30 000 parts acceptées (300 nus), 100 de plus refusées (301). Même chose par un ask : non
+exécuté, ordre gardé. Bear spread acheté ×1000 puis clôture de la seule jambe achetée : avant, acceptée (1 000 puts
+nus) ; après, refusée, 300 contrats de la jambe permis, stratégie entière toujours permise. 800 puts nus hérités :
+racheter 50 puts et vendre des parts qui ne couvrent aucun call restent permis ; écrire un put de plus est refusé.
+Appel de marge avec 800 puts nus hérités : 4 clôtures forcées, aucun échec ; puts achetés exercés à l'échéance qui
+livrent les 60 000 parts : les 600 calls deviennent nus, sans blocage. Monnaie conservée partout.
+Tests : `tests/section314-options-nues-garde.test.js` A à G (contre-épreuves SANS_GARDE, et GARDE_NAIVE — refus dès
+que l'on reste au-delà du plafond, voies forcées comprises — pour l'appel de marge et les positions héritées ;
+39 vérifications) ; `section314-options` I : motif de contre-épreuve suivi (54 vérifications). Changements visibles
+(cahiers 1 et 3) : vendre ses parts, laisser un ask s'exécuter ou clôturer la jambe achetée d'un spread est refusé si
+cela découvre des options écrites au-delà du plafond. **Suite après les deux décisions : 70 fichiers, 2 891
+vérifications et 53 cas multi-appareils, 0 échec ; 320 cas multi-appareils avec `SYNC_SEEDS=40`.**
 
 **Retouche de la revue (2026-10-25), marge des calls écrits** : `requiredMaintenanceMargin` répartit désormais la
 couverture des calls avec le même algorithme que le plafond (`writtenOptionCoverage`, partagé avec

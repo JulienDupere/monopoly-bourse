@@ -11778,7 +11778,10 @@ function croissanceMarginPercentile(coId, netMarginById){
 function croissanceMarginAxis(percentile, tier){
   if(percentile===null) return null;
   if(tier==='tres_eleve'){
-    if(percentile>=67) return 'bon';
+    // Section 315 — réponse de Julien (2026-10-25), « ok » au seuil exact des deux tiers : « bonne » dès que
+    // l'entreprise dépasse au moins 2/3 des autres (beaten × 3 ≥ 2 × others, soit percentile ≥ 200/3). Avant : ≥ 67,
+    // si bien qu'à 4 entreprises la 2e (2 sur 3 = 66,67) n'était que « neutre ».
+    if(percentile>=200/3-1e-9) return 'bon';
     if(percentile>=50) return 'neutre';
     return 'mauvais';
   }

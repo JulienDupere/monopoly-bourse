@@ -2,6 +2,8 @@
 //  26. La sortie publique du CEO ne fait que diviser les rouges par deux : elle n'en AJOUTE jamais.
 //  66. GARP à équité négative : le sac type passe à 20 rouges (avant : mise à jour sautée, sac resté vert).
 //  41. Profil Croissance : le percentile de marge ne compte plus l'entreprise elle-même (cas pair, 2 entreprises).
+//      Réponse de Julien (2026-10-25), « ok » : seuil exact des deux tiers en profil Très élevé (4 entreprises : la 2e
+//      redevient « bonne ») ; contre-épreuve 41d avec l'ancien seuil ≥ 67.
 //  68. Tranche du sac type : proportions exactes, aucune part négative (probabilités de tirage justes).
 // Chaque correctif a sa contre-épreuve (loadEngine({transform}) : l'ancien code réintroduit fait échouer le test).
 // Lancer depuis la racine du dépôt :  node tests/section315-cubes.test.js
@@ -25,6 +27,7 @@ async function contre(title, transform, fn){
 }
 const ANCIEN_26 = s => s.replace('r.red = Math.min(r.red, Math.max(Math.ceil(r.red*STOCK_CEO_STATEMENT_RED_CUT), r.green));', 'r.red = Math.max(Math.ceil(r.red*STOCK_CEO_STATEMENT_RED_CUT), r.green);');
 const ANCIEN_66 = s => s.replace("} else if(co.type==='garp' && bookPerShare0!==null){", "} else if(false){");
+const ANCIEN_67 = s => s.replace("if(percentile>=200/3-1e-9) return 'bon';", "if(percentile>=67) return 'bon';"); // seuil d'avant la réponse de Julien (2026-10-25)
 const ANCIEN_41 = s => s.replace('return (beaten/others.length)*100;', 'return (ids.filter(id=>netMarginById[id]<=val).length/ids.length)*100;');
 const ANCIEN_68 = s => s.replace('pWhite = toBorrowType * tp.white/typeTotalAvailable;', 'pGreen = Math.round(pGreen); pRed = Math.round(pRed); pWhite = toBorrowType - pGreen - pRed;');
 
@@ -81,6 +84,14 @@ async function s41(eng){
   const four = { a: 0.4, b: 0.3, c: -0.1, d: -0.3 };
   ok(near(pct('c', four), 100/3) && axis(pct('c', four), 'eleve') === 'mauvais', `4 entreprises (+40, +30, −10, −30 %) : la 3e (−10 %) obtient ${pct('c', four).toFixed(1)} → « mauvais » (avant : 50 → « bon »)`);
   ok(axis(pct('b', four), 'eleve') === 'bon' && axis(pct('d', four), 'eleve') === 'mauvais', '4 entreprises : les 2 premières « bonnes », les 2 dernières « mauvaises »');
+  // Réponse de Julien (2026-10-25) : seuil exact des deux tiers en profil Très élevé (avant : percentile ≥ 67).
+  const fourTres = Object.keys(four).map(k => axis(pct(k, four), 'tres_eleve'));
+  ok(fourTres.join(',') === 'bon,bon,mauvais,mauvais', `4 entreprises, Très élevé : la 2e (bat 2 des 3 autres, ${pct('b', four).toFixed(2)}) redevient « bonne » — obtenu ${fourTres.join(', ')} (avant : bon, neutre, mauvais, mauvais)`);
+  const threeTres = ['a', 'b', 'c'].map(k => axis(pct(k, { a: 0.4, b: 0.3, c: -0.1 }), 'tres_eleve'));
+  ok(threeTres.join(',') === 'bon,neutre,mauvais', `3 entreprises, Très élevé : la médiane (50) reste « neutre » — obtenu ${threeTres.join(', ')}`);
+  const seven = { a: 0.6, b: 0.5, c: 0.4, d: 0.3, e: 0.2, f: 0.1, g: 0 };
+  const sevenTres = Object.keys(seven).map(k => axis(pct(k, seven), 'tres_eleve'));
+  ok(sevenTres.join(',') === 'bon,bon,bon,neutre,mauvais,mauvais,mauvais', `7 entreprises, Très élevé : la 3e (bat 4 des 6 autres = 2/3) est « bonne », la 4e (50) « neutre » — obtenu ${sevenTres.join(', ')}`);
   const six = { a: 0.5, b: 0.4, c: 0.3, d: 0.1, e: -0.1, f: -0.2 };
   const sixAxes = Object.keys(six).map(k => axis(pct(k, six), 'eleve'));
   ok(sixAxes.join(',') === 'bon,bon,bon,mauvais,mauvais,mauvais', `6 entreprises : 3 « bonnes », 3 « mauvaises » — obtenu ${sixAxes.join(', ')} (avant : la 4e « bonne »)`);
@@ -139,6 +150,7 @@ async function s68(eng){
   await contre('66c — contre-épreuve (mise à jour sautée)', ANCIEN_66, s66);
   await scenario('41 — percentile de marge Croissance sans l’entreprise elle-même', async () => s41(loadEngine()));
   await contre('41c — contre-épreuve (elle-même incluse)', ANCIEN_41, async (eng) => { eng.__transform = ANCIEN_41; await s41(eng); });
+  await contre('41d — contre-épreuve (seuil Très élevé ≥ 67 au lieu des deux tiers exacts)', ANCIEN_67, s41);
   await scenario('68 — tranche du sac type : probabilités exactes', async () => s68(loadEngine()));
   await contre('68c — contre-épreuve (arrondis séparés, blancs = reste)', ANCIEN_68, s68);
 

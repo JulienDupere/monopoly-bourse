@@ -1909,6 +1909,18 @@ ratio est substitué sur `dividendNetPaidInSemester`. **44 fichiers, 2 080 véri
 
 **Intégration** (vague 3) : un conflit avec la section 317 (bogue 83) sur la part non versée d'un dividende annoncé : l'écriture reste au semestre clos (`logFin(co.id, 'dividend_forfeited_return', unclaimed, state.gameClock.rollCount-1)`, point 4) avec le libellé du bogue 83 ; la ligne « Banque (paiement reçu du vendeur à découvert …) » existe dans les deux chemins (versement annoncé et auto-versement). Avec la section 316, une fin par durée maximale laisse l'annonce échue en place et le versement du changement de semestre la paie avant la photo du bilan : la sonde de la revue (fin à une frontière d'année, dividende annoncé dû et auto-versement) donne Δencaisse −0,39 = flux −0,39, écart 0 (ce lot seul laissait un écart), et une partie réelle de 8 graines (lancers pour tous) 216 contrôles bilan = flux, 0 écart. Test croisé `section310-integration` I1 : Co Alice (Dividendes, récurrent 0,3 M$ par semestre) annonce 1 M$ payable au lancer 6, Carl est à découvert sur 20 000 parts, la partie se termine au lancer 5 → 6 ; les deux versements ont lieu, Banque +0,10 (annonce) et +0,03 (récurrent) en face de Carl, semestre 1 : Δencaisse −0,39 = flux −0,39, rien au semestre suivant, monnaie conservée. Contre-épreuves : part non versée inscrite au nouveau semestre (flux −1,09 et +0,70 au semestre 2), ligne Banque retirée de l'un ou l'autre chemin. Point ouvert (sans code) : quand toutes les entreprises sont enquêtées (point 9), le tour passe sans « Tour Terminé », donc sans les contrôles d'encaisse négative du semestre (entreprise, et CEO depuis la section 314) ; c'était déjà le cas pour l'encaisse des entreprises, à confirmer par Julien.
 
+**Réponses de Julien (2026-10-25)** — sur l'option du point 8 (seuil exact des deux tiers en profil Très élevé),
+verbatim : « ok », confirmé par « Oui » (seuil 2/3). Les choix déjà en place sont confirmés (aucun code).
+Mécanique retenue (`croissanceMarginAxis`, commentaire « Section 315 — réponse de Julien (2026-10-25) ») : en profil
+Très élevé, la marge est « bonne » dès que l'entreprise dépasse au moins les deux tiers des AUTRES entreprises
+(beaten × 3 ≥ 2 × others, soit percentile ≥ 200/3) ; « neutre » de 50 inclus à 2/3 exclus ; « mauvaise » sous 50.
+Avant : percentile ≥ 67, si bien que 66,67 (2 autres sur 3) restait « neutre ». Profil Élevé inchangé (≥ 50).
+Scénario (marges +40, +30, −10, −30 %, profil Très élevé) : avant, bon / neutre / mauvais / mauvais ; après, la 2e
+redevient « bonne » : bon / bon / mauvais / mauvais. 3 entreprises : bon / neutre / mauvais (inchangé) ; 7
+entreprises : la 3e (4 sur 6) est « bonne », la 4e (50) « neutre ».
+Tests : `tests/section315-cubes.test.js` (scénario 41 : 3 vérifications ajoutées ; contre-épreuve 41d avec l'ancien
+seuil ≥ 67) ; 33 vérifications.
+
 ## 316. Fin de partie et session : plus aucune action après la fin, dividende du lancer final versé, contrats annuels réglés à une fin en cours d'année — 2026-10-25
 
 Contexte : vague 3 de la série de corrections de l'audit du 2026-10-19 (lot 9). Demandes de Julien, verbatim :

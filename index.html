@@ -1293,6 +1293,7 @@ function migrateState(s){
   
   if(!s.rentSwapOffers) s.rentSwapOffers = [];
   if(!s.rentCompensationOffers) s.rentCompensationOffers = [];
+  if(!Array.isArray(s.assetSaleOffers)) s.assetSaleOffers = []; // Section 309 — offres de vente de maisons / de parts à accepter
   
   
   
@@ -1994,6 +1995,7 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
     
     terrainLot: {bids:[], active:null, lastResult:null},
     rentSwaps: [], rentCompensations: [], rentSwapOffers: [], rentCompensationOffers: [], loans: [], loanRequests: [], loanOffers: [], taxInsurances: [],
+    assetSaleOffers: [], // Section 309 — offres de vente de maisons / de parts à accepter par le CEO acheteur
     
     
     revenueSwapListings: [], revenueSwaps: [],
@@ -5589,6 +5591,7 @@ function renderEntreprise(){
   ${entActionsMenuHtml}${reviewLastTurnButtonHtml('ent')}
   ${negativeCashBannerHtml}
   ${offersHtml}
+  ${assetSaleOffersHtml(company)/* Section 309 — offres de vente de maisons / de parts */}
 
   ${entrepriseAccordion('identite', `${esc(company.name)} <span class="small">(${esc(typeLabel)})</span>`, `
   <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
@@ -14004,6 +14007,7 @@ function transferAssetShare(asset, fromCompanyId, toCompanyId, pct){
   const props = assetProperties(asset).filter(Boolean);
   if(props.length===0) return false;
   const host = props[0];
+  if(asset.type==='prop' && host.groupMergeId) return false; // Section 309 — bogue 35 : jamais un terrain seul d'un lot regroupé (parts désynchronisées)
   const fromOwn = host.owners.find(o=>o.companyId===fromCompanyId);
   if(!fromOwn || pct<=0 || pct>fromOwn.share) return false;
   let newOwners = host.owners.map(o=>({...o}));
@@ -14016,6 +14020,20 @@ function transferAssetShare(asset, fromCompanyId, toCompanyId, pct){
   if(tOwn) tOwn.share += pct; else newOwners.push({companyId:toCompanyId, share:pct});
   props.forEach(p=>{ p.owners = newOwners.map(o=>({...o})); });
   return true;
+}
+// Section 309 — bogues 16 et 35 : une part donnée dans un échange subit les mêmes refus que la vente normale (part
+// hypothéquée par celui qui la donne, revenu cédé par ABS / swap de revenu) et un terrain devenu membre d'un lot
+// regroupé ne s'échange plus seul. Renvoie le message de refus, ou null.
+function shareSwapGiveRefusal(asset, giverId){
+  const mergedRefusal = shareAssetMergedRefusal(asset);
+  if(mergedRefusal) return mergedRefusal;
+  const host = assetHostProperty(asset);
+  const giver = companyById(giverId);
+  const giverName = giver ? giver.name : 'Cette entreprise';
+  const label = shareAssetLabel(asset);
+  if((host.mortgages||[]).some(m=>m.companyId===giverId)) return `${giverName} a hypothéqué sa part de ${label} — remboursez l'hypothèque avant de pouvoir l'échanger.`;
+  if(isPropertyLockedByRevenueSwap(host.id, giverId)) return `${giverName} a cédé le revenu de ${label} (ABS / swap de revenu fixe/variable) — impossible de l'échanger tant que l'accord est actif.`;
+  return null;
 }
 async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBType, assetBId, companyBId, pctB, opts){
   
@@ -14033,6 +14051,12 @@ async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBTy
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const assetA = {type:assetAType, id:assetAId};
   const assetB = {type:assetBType, id:assetBId};
+  if(companyAId===companyBId) return fail('Choisissez deux entreprises différentes.'); // Section 309
+  // Section 309 — bogues 16 et 35 : mêmes refus que la vente normale, revérifiés sur l'état frais.
+  const refusalA = shareSwapGiveRefusal(assetA, companyAId);
+  if(refusalA) return fail(refusalA);
+  const refusalB = shareSwapGiveRefusal(assetB, companyBId);
+  if(refusalB) return fail(refusalB);
   const shareA = assetOwnedShare(assetA, companyAId);
   const shareB = assetOwnedShare(assetB, companyBId);
   if(pctA<=0 || pctA>shareA) return fail('Pourcentage invalide pour le premier actif.');
@@ -14042,7 +14066,6 @@ async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBTy
   const labelA = tradableAssets().find(a=>a.type===assetAType && a.id===assetAId)?.label || '?';
   const labelB = tradableAssets().find(a=>a.type===assetBType && a.id===assetBId)?.label || '?';
   
-  
   if(!transferAssetShare(assetA, companyAId, companyBId, pctA)) return fail('Échange impossible sur '+labelA+'.');
   if(!transferAssetShare(assetB, companyBId, companyAId, pctB)) return fail('Échange impossible sur '+labelB+'.');
   log(`${companyA.name} échange ${pctA}% de ${labelA} contre ${pctB}% de ${labelB} détenu par ${companyB.name}.`);
@@ -14050,13 +14073,33 @@ async function executeShareSwap(assetAType, assetAId, companyAId, pctA, assetBTy
   return {ok:true};
 }
 
-
 function groupMergeEligible(group){
   const props = state.properties.filter(p=>p.group===group);
   if(props.length===0) return false;
   
   
   return props.every(p=> !p.groupMergeId && (!p.mortgages||p.mortgages.length===0) && purchasableBankShare(p)===0);
+}
+// Section 309 — bogue 63 : arrondi des parts du lot à l'entier, somme = total exact (cap), personne à 0 %. Méthode des
+// plus forts restes (Hamilton) avec un plancher de 1 % : chacun reçoit max(1, partie entière), le reste manquant va aux
+// plus fortes décimales ; s'il y a un excédent (dû aux planchers), il est repris un point à la fois aux parts > 1 % les
+// moins lésées (plus petites décimales). Sans part inférieure à 1 %, le résultat est identique à l'ancien arrondi.
+// Aucun argent ne bouge ; l'écart de chaque copropriétaire avec sa part exacte reste inférieur à 1 point.
+function mergeRoundShares(raw, total){
+  const out = raw.map(v=>Math.max(1, Math.floor(v)));
+  let diff = Math.round(total - out.reduce((a,b)=>a+b,0));
+  while(diff>0){
+    let best = -1;
+    for(let i=0;i<raw.length;i++){ if(best<0 || (raw[i]-out[i])>(raw[best]-out[best])) best = i; }
+    out[best] += 1; diff -= 1;
+  }
+  while(diff<0){
+    let best = -1;
+    for(let i=0;i<raw.length;i++){ if(out[i]>1 && (best<0 || (raw[i]-out[i])<(raw[best]-out[best]))) best = i; }
+    if(best<0) break;
+    out[best] -= 1; diff += 1;
+  }
+  return out;
 }
 async function mergeGroup(group){
   const res = await attemptActionWithRetry(async ()=>{
@@ -14074,8 +14117,10 @@ async function mergeGroup(group){
   const values = props.map(p=>p.basePrice);
   const contributions = {};
   props.forEach((p,i)=>{ p.owners.forEach(o=>{ contributions[o.companyId] = (contributions[o.companyId]||0) + values[i]*(o.share/100); }); });
-  const entries = Object.entries(contributions);
+  const entries = Object.entries(contributions).filter(([,v])=>v>0); // Section 309 — bogue 63 : un copropriétaire à 0 % n'est pas repris
   if(entries.length===0) return {ok:false, error:'Aucun propriétaire trouvé.'};
+  // Section 309 — décision de Julien : le regroupement reste permis même s'il en résulte plus de copropriétaires que
+  // le plafond (« C'est ok, si après le regroupement il y a plus que 3 propriétaires ») ; chacun garde au moins 1 %.
   const mergeId = uid();
   
   
@@ -14093,12 +14138,7 @@ async function mergeGroup(group){
   
   const sumContrib = entries.reduce((s,[,v])=>s+v, 0);
   const rawShares = entries.map(([,val])=> sumContrib>0 ? (val/sumContrib*cap) : (cap/entries.length));
-  const floorShares = rawShares.map(s=>Math.floor(s));
-  const assignedFloor = floorShares.reduce((a,b)=>a+b,0);
-  const remainder = Math.round(cap - assignedFloor);
-  const order = entries.map((_,idx)=>idx).sort((a,b)=> (rawShares[b]-floorShares[b]) - (rawShares[a]-floorShares[a]));
-  const finalShares = floorShares.slice();
-  for(let i=0;i<remainder && i<order.length;i++){ finalShares[order[i]] += 1; }
+  const finalShares = mergeRoundShares(rawShares, cap); // Section 309 — bogue 63 : plus forts restes avec plancher de 1 %
   const newOwners = entries.map(([cid],idx)=>({companyId:cid, share:finalShares[idx]}));
   
   
@@ -14130,73 +14170,80 @@ async function mergeGroup(group){
   render();
 }
 async function sellMergedShare(mergeId, sellerId, buyerId, pct, price, opts){
-  
-  
-  
-  
-  
-  
-  
+  // Section 309 — même cœur que sellPropertyShare pour un lot regroupé : acheteur ≠ vendeur (bogue 8), la banque paie
+  // sa valeur de rachat (bogue 9), entreprise acheteuse débitée seulement à
+  // l'acceptation de l'offre, encaisse revérifiée (décision « ventes unilatérales ») ; opts.dryRun : vérifications
+  // seules. Qui agit est vérifié par l'appelant.
   opts = opts || {};
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
-  const props = state.properties.filter(p=>p.groupMergeId===mergeId);
-  if(props.length===0) return fail(null);
+  const props = mergeId ? state.properties.filter(p=>p.groupMergeId===mergeId) : []; // Section 309 — jamais « tous les terrains non regroupés »
+  if(props.length===0) return fail('Ce lot n’existe plus — rouvrez la fenêtre.'); // Section 309 — bogue 35 : refus clair
   const owners = props[0].owners;
+  const seller = companyById(sellerId);
+  if(!seller) return fail('Entreprise vendeuse introuvable.'); // Section 309 — bogue 8
+  if(buyerId===sellerId) return fail('Une entreprise ne peut pas se vendre une part à elle-même — choisissez un autre acheteur.'); // Section 309 — bogue 8
+  const buyer = buyerId==='BANK' ? null : companyById(buyerId);
+  if(buyerId!=='BANK' && !buyer) return fail('Entreprise acheteuse introuvable.');
   const sellerOwn = owners.find(o=>o.companyId===sellerId);
-  if(!sellerOwn || pct<=0 || pct>sellerOwn.share) return fail('Pourcentage invalide.');
-  
-  
-  if(!(price>0)) return fail('Le prix convenu doit être positif.');
-  
-  
-  
+  if(!sellerOwn || !Number.isInteger(pct) || pct<=0 || pct>sellerOwn.share) return fail('Pourcentage invalide.');
+  if(buyerId==='BANK') price = bankBuybackPrice({type:'lot', id:mergeId}, pct); // Section 309 — bogue 9
+  else if(!(price>0)) return fail('Le prix convenu doit être positif.');
+
+
+
   const mortgageHost = lotMortgageHost(mergeId);
   if(mortgageHost && (mortgageHost.mortgages||[]).some(m=>m.companyId===sellerId)){
     const sellerCoName = companyById(sellerId)?.name || 'Cette entreprise';
     return fail(`${sellerCoName} a hypothéqué sa part de ce lot — remboursez l'hypothèque (repayMortgageLot) avant de pouvoir la vendre.`);
   }
-  
+
   if(isPropertyLockedByRevenueSwap(props[0].id, sellerId)){
     const sellerCoName = companyById(sellerId)?.name || 'Cette entreprise';
     return fail(`${sellerCoName} a vendu le revenu de ce lot (swap de revenu fixe/variable) — impossible de le vendre tant que l'accord est actif.`);
   }
   if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
-    
-    
-    
+
+
+
     return fail(`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie), sauf si vous vendez la totalité de votre part (${sellerOwn.share}%). Vendre à un autre joueur n'a pas de minimum.`);
   }
   let newOwners = owners.map(o=>({...o}));
   const sOwn = newOwners.find(o=>o.companyId===sellerId);
   sOwn.share -= pct;
   if(sOwn.share<=0) newOwners = newOwners.filter(o=>o.companyId!==sellerId);
-  const seller = companyById(sellerId);
-  const sellerPl = seller ? state.players.find(x=>x.id===seller.ceoId) : null;
-  if(buyerId==='BANK'){
+  const lotLabel = `Lot ${GROUPS[props[0].group].label}`;
+  if(buyer){
+    // Section 309 — encaisse de l'acheteur revérifiée à l'acceptation. Pas de plafond de copropriétaires ici :
+    // décision de Julien, il ne s'applique qu'à l'achat initial d'un terrain individuel (bogue 64 voulu).
+    const existing = newOwners.find(o=>o.companyId===buyerId);
+    if(existing) existing.share += pct; else newOwners.push({companyId:buyerId, share:pct});
+    if(!opts.dryRun && buyer.cash<price-1e-9) return fail(`${buyer.name} n'a pas assez d'encaisse pour payer ${fmt(price)} (encaisse : ${fmt(buyer.cash)}).`);
+  }
+  if(opts.dryRun) return {ok:true};
+  const sellerPl = state.players.find(x=>x.id===seller.ceoId) || null;
+  let entries;
+  if(!buyer){
     seller.cash += price; if(sellerPl) sellerPl.stats.salesRevenue += price; state.bank.cash -= price;
     logFin(seller.id, 'land_sale', price);
-    log(`${seller.name} vend ${pct}% du lot ${GROUPS[props[0].group].label} à la banque pour ${price.toFixed(2)}.`,
-      [{label:`${seller.name} (vente)`, amount:price}, {label:'Banque', amount:-price}]);
+    entries = [{label:`${seller.name} (vente)`, amount:price}, {label:'Banque (valeur de rachat)', amount:-price}];
+    log(`${seller.name} vend ${pct}% du lot ${GROUPS[props[0].group].label} à la banque pour ${price.toFixed(2)} (valeur de rachat calculée par le jeu).`, entries);
   } else {
-    
-    
-    const buyer = companyById(buyerId);
-    const buyerPl = buyer ? state.players.find(x=>x.id===buyer.ceoId) : null;
+
+
+    const buyerPl = state.players.find(x=>x.id===buyer.ceoId) || null;
     buyer.cash -= price; seller.cash += price;
     logFin(buyer.id, 'land_purchase', -price);
     logFin(seller.id, 'land_sale', price);
-    
-    
+
+
     addRealEstateCapex(realEstateKeyFor(props[0]), buyer.id, price);
     if(buyerPl) buyerPl.stats.spentBuying += price; if(sellerPl) sellerPl.stats.salesRevenue += price;
-    const existing = newOwners.find(o=>o.companyId===buyerId);
-    if(existing) existing.share += pct; else newOwners.push({companyId:buyerId, share:pct});
-    log(`${seller.name} vend ${pct}% du lot ${GROUPS[props[0].group].label} à ${buyer.name} pour ${price.toFixed(2)}.`,
-      [{label:`${buyer.name} (achat)`, amount:-price}, {label:`${seller.name} (vente)`, amount:price}]);
+    entries = [{label:`${buyer.name} (achat)`, amount:-price}, {label:`${seller.name} (vente)`, amount:price}];
+    log(`${seller.name} vend ${pct}% du lot ${GROUPS[props[0].group].label} à ${buyer.name} pour ${price.toFixed(2)}.`, entries);
   }
   props.forEach(p=>{ p.owners = newOwners.map(o=>({...o})); });
   if(!opts.silent){ await saveGame(); render(); }
-  return {ok:true};
+  return {ok:true, entries, label:`Vente de ${pct}% — ${lotLabel}`};
 }
 
 
@@ -14420,8 +14467,9 @@ async function adjustHouseReserve(companyId, delta){
 }
 
 async function sellHousesToCompany(sellerId, buyerId, qty, pricePerHouse, opts){
-  
-  
+  // Section 309 — décision « ventes unilatérales » : exécuté seulement à l'acceptation d'une offre par le CEO acheteur
+  // (acceptAssetSaleOffer) ; réserve du vendeur et encaisse de l'acheteur revérifiées ; opts.dryRun : vérifications
+  // seules (dépôt de l'offre).
   opts = opts || {};
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   if(sellerId===buyerId) return fail('Une entreprise ne peut pas se vendre des maisons à elle-même — choisissez une entreprise acheteuse différente.');
@@ -14432,18 +14480,151 @@ async function sellHousesToCompany(sellerId, buyerId, qty, pricePerHouse, opts){
   if(seller.houseReserve<qty) return fail(`${seller.name} n'a que ${seller.houseReserve} maison(s) en réserve non placée — impossible d'en vendre ${qty}.`);
   if(!(pricePerHouse>=0)) return fail('Le prix par maison doit être positif ou nul.');
   const totalPrice = qty*pricePerHouse;
+  if(!opts.dryRun && buyer.cash<totalPrice-1e-9) return fail(`${buyer.name} n'a pas assez d'encaisse pour payer ${fmt(totalPrice)} (encaisse : ${fmt(buyer.cash)}).`); // Section 309
+  if(opts.dryRun) return {ok:true};
   buyer.cash -= totalPrice;
   seller.cash += totalPrice;
   logFin(buyer.id, 'house_purchase', -totalPrice);
   logFin(seller.id, 'house_sale', totalPrice);
   seller.houseReserve -= qty;
   buyer.houseReserve += qty;
-  log(`${seller.name} vend ${qty} maison(s) à ${buyer.name} pour ${fmt(totalPrice)} (${fmt(pricePerHouse)}/maison).`,
-    [{label:`${buyer.name} (achat maisons)`, amount:-totalPrice}, {label:`${seller.name} (vente maisons)`, amount:totalPrice}]);
+  const entries = [{label:`${buyer.name} (achat maisons)`, amount:-totalPrice}, {label:`${seller.name} (vente maisons)`, amount:totalPrice}];
+  log(`${seller.name} vend ${qty} maison(s) à ${buyer.name} pour ${fmt(totalPrice)} (${fmt(pricePerHouse)}/maison).`, entries);
   if(!opts.silent){ await saveGame(); render(); }
-  return {ok:true};
+  return {ok:true, entries, label:`Vente de ${qty} maison(s) — ${seller.name} → ${buyer.name}`};
 }
 
+// Section 309 — décision de Julien « ventes unilatérales : exiger l'accord de l'acheteur ». Vendre des maisons de sa
+// réserve, ou une part de terrain / de lot, à une AUTRE entreprise dépose une offre dans state.assetSaleOffers
+// (défaut [] dans migrateState) : {id, kind:'houses'|'share', sellerId, buyerId, qty+pricePerHouse | assetType+assetId+
+// pct+price, byPlayerId, roll, createdAt}. Rien ne bouge (ni argent, ni maisons, ni parts) avant l'acceptation par le
+// CEO de l'entreprise acheteuse, qui revérifie tout sur l'état frais (réserve, part détenue, hypothèque, ABS, lot
+// regroupé, plafond de copropriétaires, encaisse, partie terminée). Une offre devenue impossible reste affichée
+// (refus clair à l'acceptation) jusqu'à son refus par l'acheteur ou son retrait par le vendeur.
+function assetSaleOfferWhat(o){
+  if(o.kind==='houses') return `${o.qty} maison(s) de sa réserve (${fmt(o.pricePerHouse)}/maison)`;
+  return `${o.pct}% de ${shareAssetLabel({type:o.assetType, id:o.assetId}) || 'un terrain qui n’existe plus'}`;
+}
+function assetSaleOfferTotal(o){
+  return o.kind==='houses' ? o.qty*o.pricePerHouse : o.price;
+}
+function executeAssetSaleOffer(o, opts){
+  if(o.kind==='houses') return sellHousesToCompany(o.sellerId, o.buyerId, o.qty, o.pricePerHouse, opts);
+  return executeShareSale({type:o.assetType, id:o.assetId}, o.sellerId, o.buyerId, o.pct, o.price, opts);
+}
+// Dépôt d'une offre — à appeler dans une applyFn (runModalActionWithRetry) ; seul le CEO vendeur peut la déposer.
+async function proposeAssetSale(f, opts){
+  opts = opts || {};
+  const fail = (msg)=>({ok:false, error:msg});
+  if(state.gameEndedReason) return fail('La partie est terminée.');
+  const seller = companyById(f.sellerId);
+  if(!seller) return fail('Entreprise introuvable.');
+  if(myPlayerId!==seller.ceoId) return fail(`Seul le CEO de ${seller.name} peut proposer la vente de ses actifs.`);
+  const buyer = companyById(f.buyerId);
+  if(!buyer || f.buyerId===f.sellerId) return fail('Choisissez une AUTRE entreprise acheteuse.');
+  const offer = f.kind==='houses'
+    ? {kind:'houses', qty:f.qty, pricePerHouse:f.pricePerHouse}
+    : {kind:'share', assetType:f.assetType, assetId:f.assetId, pct:f.pct, price:f.price};
+  Object.assign(offer, {id:uid(), sellerId:seller.id, buyerId:buyer.id, byPlayerId:myPlayerId, roll:state.gameClock.rollCount, createdAt:nowLabel()});
+  const check = await executeAssetSaleOffer(offer, {silent:true, dryRun:true});
+  if(!check.ok) return fail(check.error);
+  if(!state.assetSaleOffers) state.assetSaleOffers = [];
+  state.assetSaleOffers.push(offer);
+  log(`${seller.name} propose à ${buyer.name} : ${assetSaleOfferWhat(offer)} pour ${fmt(assetSaleOfferTotal(offer))} — en attente de sa réponse (onglet Mon Entreprise du CEO de ${buyer.name}). Rien n'est payé ni transféré avant son acceptation.`);
+  return {ok:true};
+}
+// Conditions affichées à l'acceptation (confirmWithFreshConditions), recalculées sur l'état courant.
+function assetSaleOfferConditions(offerId){
+  const o = (state.assetSaleOffers||[]).find(x=>x.id===offerId);
+  if(!o) return {unavailable:'Cette offre n’existe plus (retirée par le vendeur, déjà acceptée ou refusée).'};
+  const seller = companyById(o.sellerId), buyer = companyById(o.buyerId);
+  if(!seller || !buyer) return {unavailable:'Entreprise introuvable.'};
+  return {offerId:o.id, kind:o.kind, sellerName:seller.name, buyerName:buyer.name, what:assetSaleOfferWhat(o), total:assetSaleOfferTotal(o)};
+}
+async function acceptAssetSaleOffer(offerId, expected){
+  const res = await attemptActionWithRetry(async ()=>{
+    if(state.gameEndedReason) return {ok:false, error:'La partie est terminée.'};
+    const o = (state.assetSaleOffers||[]).find(x=>x.id===offerId);
+    if(!o) return {ok:false, error:'Cette offre n’existe plus (retirée par le vendeur, déjà acceptée ou refusée).'};
+    const buyer = companyById(o.buyerId);
+    if(!buyer || myPlayerId!==buyer.ceoId) return {ok:false, error:`Seul le CEO de ${buyer?buyer.name:'l’entreprise acheteuse'} peut accepter cette offre.`};
+    if(expected && !sameConditions(expected, assetSaleOfferConditions(offerId))) return staleConditionsResult();
+    const r = await executeAssetSaleOffer(o, {silent:true});
+    if(!r.ok) return {ok:false, error:`Offre non exécutée — ${r.error||'conditions non remplies.'} Rien n'a été payé ni transféré ; l'offre reste en attente (refusez-la, ou le vendeur peut la retirer).`};
+    state.assetSaleOffers = state.assetSaleOffers.filter(x=>x.id!==offerId);
+    return r;
+  }, {label:'Acceptation d’une offre de vente'});
+  if(res.ok) render();
+  return res;
+}
+function modalAcceptAssetSaleOffer(offerId){
+  return confirmWithFreshConditions({
+    title: 'Accepter une offre de vente',
+    compute: ()=>assetSaleOfferConditions(offerId),
+    describe: c=>`<div class="small" style="margin-bottom:10px;">${esc(c.sellerName)} vend à ${esc(c.buyerName)} : <b>${esc(c.what)}</b>, pour <b>${fmt(c.total)}</b>. En acceptant, ${esc(c.buyerName)} paie ce montant tout de suite${c.kind==='houses'?' et reçoit les maisons dans sa réserve':' et reçoit la part'}. Tout est revérifié au moment de l'acceptation (encaisse, détention du vendeur, hypothèque, ABS, plafond de copropriétaires).</div>`,
+    okLabel: c=>`Accepter et payer ${fmt(c.total)}`,
+    run: c=>acceptAssetSaleOffer(offerId, c),
+    onDone: res=>{ if(res.entries && res.entries.length) showTransactionPopup(res.label, res.entries); },
+  });
+}
+async function refuseAssetSaleOffer(offerId){
+  const res = await attemptActionWithRetry(async ()=>{
+    const o = (state.assetSaleOffers||[]).find(x=>x.id===offerId);
+    if(!o) return {ok:false, error:'Cette offre n’existe plus.'};
+    const buyer = companyById(o.buyerId), seller = companyById(o.sellerId);
+    if(!buyer || myPlayerId!==buyer.ceoId) return {ok:false, error:`Seul le CEO de ${buyer?buyer.name:'l’entreprise acheteuse'} peut refuser cette offre.`};
+    state.assetSaleOffers = state.assetSaleOffers.filter(x=>x.id!==offerId);
+    log(`${buyer.name} refuse l'offre de ${seller?seller.name:'?'} : ${assetSaleOfferWhat(o)} pour ${fmt(assetSaleOfferTotal(o))}.`);
+    return {ok:true};
+  }, {label:'Refus d’une offre de vente'});
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
+  render();
+  return res;
+}
+async function cancelAssetSaleOffer(offerId){
+  const res = await attemptActionWithRetry(async ()=>{
+    const o = (state.assetSaleOffers||[]).find(x=>x.id===offerId);
+    if(!o) return {ok:false, error:'Cette offre n’existe plus.'};
+    const seller = companyById(o.sellerId), buyer = companyById(o.buyerId);
+    if(!seller || myPlayerId!==seller.ceoId) return {ok:false, error:'Seule l’entreprise auteure de l’offre peut la retirer.'};
+    state.assetSaleOffers = state.assetSaleOffers.filter(x=>x.id!==offerId);
+    log(`${seller.name} retire son offre à ${buyer?buyer.name:'?'} : ${assetSaleOfferWhat(o)} pour ${fmt(assetSaleOfferTotal(o))}.`);
+    return {ok:true};
+  }, {label:'Retrait d’une offre de vente'});
+  if(!res.ok){ if(res.error) alert(res.error); return res; }
+  render();
+  return res;
+}
+// Affichage dans l'onglet Mon Entreprise : offres reçues (Accepter / Refuser) et offres envoyées (Retirer).
+function assetSaleOffersHtml(company){
+  if(!company) return '';
+  const offers = state.assetSaleOffers||[];
+  const incoming = offers.filter(o=>o.buyerId===company.id), outgoing = offers.filter(o=>o.sellerId===company.id);
+  if(incoming.length===0 && outgoing.length===0) return '';
+  return `
+  <div class="section-title" style="margin-top:16px;">Offres de vente en attente</div>
+  ${incoming.map(o=>{
+    const seller = companyById(o.sellerId);
+    return `<div class="deed-actions" style="margin-bottom:6px;">
+      <span class="ownerchip">${o.kind==='houses'?'🏠':'🏷️'} ${esc(seller?seller.name:'?')} vous propose ${esc(assetSaleOfferWhat(o))} pour ${fmt(assetSaleOfferTotal(o))}</span>
+      <button class="btn btn-primary btn-sm" data-accept-asset-offer="${o.id}">Accepter</button>
+      <button class="btn btn-brick btn-sm" data-refuse-asset-offer="${o.id}">Refuser</button>
+    </div>`;
+  }).join('')}
+  ${outgoing.map(o=>{
+    const buyer = companyById(o.buyerId);
+    return `<div class="deed-actions" style="margin-bottom:6px;">
+      <span class="small">${o.kind==='houses'?'🏠':'🏷️'} Offre à ${esc(buyer?buyer.name:'?')} : ${esc(assetSaleOfferWhat(o))} pour ${fmt(assetSaleOfferTotal(o))} — en attente de sa réponse.</span>
+      <button class="btn btn-ghost btn-sm" data-cancel-asset-offer="${o.id}">Retirer</button>
+    </div>`;
+  }).join('')}
+  `;
+}
+function bindAssetSaleOfferButtons(){
+  document.querySelectorAll('[data-accept-asset-offer]').forEach(b=>b.addEventListener('click', ()=>modalAcceptAssetSaleOffer(b.dataset.acceptAssetOffer)));
+  document.querySelectorAll('[data-refuse-asset-offer]').forEach(b=>b.addEventListener('click', ()=>refuseAssetSaleOffer(b.dataset.refuseAssetOffer)));
+  document.querySelectorAll('[data-cancel-asset-offer]').forEach(b=>b.addEventListener('click', ()=>cancelAssetSaleOffer(b.dataset.cancelAssetOffer)));
+}
 
 function maxMortgage(p, companyId){
   
@@ -14578,6 +14759,9 @@ async function issueMortgage(propId, borrowerId, lenderId, opts){
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
   const p = state.properties.find(x=>x.id===propId);
   if(!p) return fail(null);
+  // Section 309 — bogue 34 : un terrain regroupé en lot (regroupement fait entre l'ouverture et la confirmation) ne
+  // s'hypothèque plus seul : l'hypothèque d'un lot passe par issueMortgageLot (valeur du lot, intérêt, saisie).
+  if(p.groupMergeId) return fail(`${p.name} fait désormais partie du lot ${GROUPS[p.group].label} regroupé — rien n’a été fait ; hypothéquez votre part du lot entier (menu Hypothéquer).`);
   const share = propertyOwnedShare(p, borrowerId);
   if(share<=0) return fail('Vous ne possédez pas de part de ce terrain.');
   
@@ -16927,6 +17111,7 @@ function bindTabEvents(t){
     document.querySelectorAll('[data-refuse-comp-offer]').forEach(b=>b.addEventListener('click', ()=>refuseRentCompensationOffer(b.dataset.refuseCompOffer)));
     document.querySelectorAll('[data-cancel-swap-offer]').forEach(b=>b.addEventListener('click', ()=>cancelRentSwapOffer(b.dataset.cancelSwapOffer)));
     document.querySelectorAll('[data-cancel-comp-offer]').forEach(b=>b.addEventListener('click', ()=>cancelRentCompensationOffer(b.dataset.cancelCompOffer)));
+    bindAssetSaleOfferButtons(); // Section 309
     
     
     
@@ -17690,102 +17875,175 @@ function modalBuyShares(pid){
   });
 }
 
-function modalSellShare(pid){
-  
-  
-  const p = state.properties.find(x=>x.id===pid);
-  if(p.owners.length===0){ alert('Ce terrain appartient déjà entièrement à la banque.'); return; }
-  
-  
-  
-  
+// Section 309 — bogue 9 : prix payé par la banque pour pct % d'un terrain ou d'un lot = sa valeur de rachat calculée
+// par le moteur (buybackValue / buybackValueLot), jamais un prix saisi par le vendeur.
+function bankBuybackPrice(asset, pct){
+  if(asset.type==='lot') return asset.id ? buybackValueLot(asset.id) * (pct/100) : 0;
+  const p = state.properties.find(x=>x.id===asset.id);
+  if(!p) return 0;
   const bv = buybackValue(p);
-  const suggestedSellPrice = (bv!=null && bv>0) ? bv : p.basePrice;
+  return (bv!=null ? bv : p.basePrice) * (pct/100);
+}
+// Section 309 — libellé d'un terrain ou d'un lot (null s'il n'existe plus).
+function shareAssetLabel(asset){
+  if(asset.type==='lot'){
+    const props = asset.id ? lotProperties(asset.id) : [];
+    return props.length ? `Lot ${GROUPS[props[0].group].label}` : null;
+  }
+  const p = state.properties.find(x=>x.id===asset.id);
+  return p ? p.name : null;
+}
+// Section 309 — bogue 35 : refus clair si un terrain vendu ou échangé seul fait désormais partie d'un lot regroupé
+// (l'administrateur a regroupé le lot entre l'ouverture de la fenêtre et la confirmation), ou si le lot n'existe plus.
+function shareAssetMergedRefusal(asset){
+  if(asset.type==='lot') return (asset.id && lotProperties(asset.id).length) ? null : 'Ce lot n’existe plus — rouvrez la fenêtre.';
+  const p = state.properties.find(x=>x.id===asset.id);
+  if(!p) return 'Terrain introuvable.';
+  if(p.groupMergeId) return `${p.name} fait désormais partie du lot ${GROUPS[p.group].label} regroupé (regroupement fait entre-temps par l’administrateur) — rien n’a été fait ; vendez ou échangez une part du lot entier.`;
+  return null;
+}
+function executeShareSale(asset, sellerId, buyerId, pct, price, opts){
+  return asset.type==='lot' ? sellMergedShare(asset.id, sellerId, buyerId, pct, price, opts) : sellPropertyShare(asset.id, sellerId, buyerId, pct, price, opts);
+}
+// Section 309 — vente d'une part d'un terrain seul (cœur, appelé dans une applyFn). Bogue 8 : acheteur ≠ vendeur ;
+// bogue 9 : la banque paie sa valeur de rachat ; bogue 35 : refus si le terrain est désormais dans un lot ; pas de
+// plafond de copropriétaires (décision de Julien : achat initial seulement) ; décision « ventes unilatérales » : une entreprise acheteuse n'est débitée qu'à
+// l'acceptation de l'offre, encaisse revérifiée. opts.dryRun : vérifications seules, rien n'est modifié (dépôt d'une
+// offre). Qui agit (CEO vendeur ou CEO acheteur) est vérifié par l'appelant.
+function sellPropertyShare(pid, sellerId, buyerId, pct, price, opts){
+  opts = opts || {};
+  const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
+  const prop = state.properties.find(x=>x.id===pid);
+  if(!prop) return fail('Terrain introuvable.');
+  const mergedRefusal = shareAssetMergedRefusal({type:'prop', id:pid});
+  if(mergedRefusal) return fail(mergedRefusal);
+  const seller = companyById(sellerId);
+  if(!seller) return fail('Entreprise vendeuse introuvable.');
+  if(buyerId===sellerId) return fail('Une entreprise ne peut pas se vendre une part à elle-même — choisissez un autre acheteur.');
+  const buyer = buyerId==='BANK' ? null : companyById(buyerId);
+  if(buyerId!=='BANK' && !buyer) return fail('Entreprise acheteuse introuvable.');
+  const sellerOwn = prop.owners.find(o=>o.companyId===sellerId);
+  if(!sellerOwn || !Number.isInteger(pct) || pct<=0 || pct>sellerOwn.share) return fail('Pourcentage invalide.');
+  if(buyerId==='BANK') price = bankBuybackPrice({type:'prop', id:pid}, pct);
+  else if(!(price>0)) return fail('Le prix convenu doit être positif.');
+  if((prop.mortgages||[]).some(m=>m.companyId===sellerId)){
+    return fail(`${seller.name} a hypothéqué sa part de ${prop.name} — remboursez l'hypothèque (repayMortgage) avant de pouvoir la vendre.`);
+  }
+  if(isPropertyLockedByRevenueSwap(pid, sellerId)){
+    return fail(`${seller.name} a vendu le revenu de ${prop.name} (swap de revenu fixe/variable) — impossible de le vendre tant que l'accord est actif.`);
+  }
+  if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
+    return fail(`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie), sauf si vous vendez la totalité de votre part (${sellerOwn.share}%). Vendre à un autre joueur n'a pas de minimum.`);
+  }
+  let newOwners = prop.owners.map(o=>({...o}));
+  const sOwn = newOwners.find(o=>o.companyId===sellerId);
+  sOwn.share -= pct;
+  if(sOwn.share<=0) newOwners = newOwners.filter(o=>o.companyId!==sellerId);
+  if(buyer){
+    const existing = newOwners.find(o=>o.companyId===buyerId);
+    if(existing) existing.share += pct; else newOwners.push({companyId:buyerId, share:pct});
+    if(!opts.dryRun && buyer.cash<price-1e-9) return fail(`${buyer.name} n'a pas assez d'encaisse pour payer ${fmt(price)} (encaisse : ${fmt(buyer.cash)}).`);
+  }
+  if(opts.dryRun) return {ok:true};
+  prop.owners = newOwners;
+  const sellerPl = state.players.find(x=>x.id===seller.ceoId) || null;
+  let entries;
+  if(!buyer){
+    seller.cash += price;
+    logFin(seller.id, 'land_sale', price);
+    if(sellerPl) sellerPl.stats.salesRevenue += price;
+    state.bank.cash -= price;
+    entries = [{label:`${seller.name} (vente ${pct}%)`, amount:price}, {label:'Banque (valeur de rachat)', amount:-price}];
+    log(`${seller.name} a vendu ${pct}% de ${prop.name} à la banque pour ${price.toFixed(2)} (valeur de rachat calculée par le jeu)`, entries);
+  } else {
+    const buyerPl = state.players.find(x=>x.id===buyer.ceoId) || null;
+    buyer.cash -= price; seller.cash += price;
+    logFin(buyer.id, 'land_purchase', -price);
+    logFin(seller.id, 'land_sale', price);
+    addRealEstateCapex(realEstateKeyFor(prop), buyer.id, price);
+    if(buyerPl) buyerPl.stats.spentBuying += price;
+    if(sellerPl) sellerPl.stats.salesRevenue += price;
+    entries = [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:`${seller.name} (vente ${pct}%)`, amount:price}];
+    log(`${seller.name} a vendu ${pct}% de ${prop.name} à ${buyer.name} pour ${price.toFixed(2)}`, entries);
+  }
+  return {ok:true, entries, label:`Vente de ${pct}% — ${prop.name}`};
+}
+function modalSellShare(pid){
+  // Section 309 — bogue 8 : fenêtre commune terrain / lot, le vendeur est l'entreprise du CEO qui agit.
+  return modalSellShareForm({type:'prop', id:pid});
+}
+// Section 309 — bogues 8 et 9, décision « ventes unilatérales ». Le vendeur est TOUJOURS l'entreprise du CEO qui agit
+// (plus de menu « Vendeur ») ; l'acheteur est une AUTRE entreprise ou la banque. Vente à la banque : elle paie sa
+// valeur de rachat calculée par le moteur (aucun prix saisi), confirmée par confirmWithFreshConditions. Vente à une
+// entreprise : dépôt d'une OFFRE (prix et pourcentage), que le CEO acheteur accepte ou refuse ; rien ne bouge avant.
+function modalSellShareForm(asset){
+  const myCo = myCompany();
+  if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
+  const label = shareAssetLabel(asset);
+  const mergedRefusal = shareAssetMergedRefusal(asset);
+  if(!label || mergedRefusal){ alert(mergedRefusal || 'Terrain introuvable.'); return; }
+  const held = assetOwnedShare(asset, myCo.id);
+  if(held<=0){ alert(`${myCo.name} ne possède aucune part de ${label}.`); return; }
+  const isLot = asset.type==='lot';
   openModal(`
-    <h3>Vendre une part — ${esc(p.name)}</h3>
-    <label>Vendeur (entreprise)</label>
-    <select id="mSeller">${p.owners.map(o=>`<option value="${o.companyId}">${esc(companyById(o.companyId)?.name||'?')} (${o.share}%)</option>`).join('')}</select>
-    <label>Acheteur (entreprise, ou banque)</label>
-    <select id="mBuyer"><option value="BANK">Banque</option>${activeCompanies().map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+    <h3>Vendre une part — ${esc(label)}</h3>
+    <div class="small" style="margin-bottom:8px;">Vendeur : <b>${esc(myCo.name)}</b> (${held}% détenus${isLot?' sur tout le lot':''}).</div>
+    <label>Acheteur (une autre entreprise, ou la banque)</label>
+    <select id="mBuyer"><option value="BANK">Banque — paie la valeur de rachat calculée par le jeu</option>${activeCompanyOptions(null, myCo.id, true)}</select>
     <label>Pourcentage vendu</label>
-    <input type="number" min="1" max="100" id="mPct" value="100">
-    ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque, sauf si vous vendez la TOTALITÉ de la part détenue par le vendeur choisi (même si elle est inférieure au minimum) — aucun minimum pour une vente à un autre joueur.</div>`:''}
-    <label>Prix convenu (en ${esc(state.unit)})</label>
-    <input type="number" step="0.01" min="0.01" id="mPrice" value="${suggestedSellPrice}">
+    <input type="number" min="1" max="${held}" step="1" id="mPct" value="${held}">
+    ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque, sauf si vous vendez la TOTALITÉ de votre part (même si elle est inférieure au minimum) — aucun minimum pour une vente à une autre entreprise.</div>`:''}
+    <div class="small" id="mBankPriceInfo" style="margin:6px 0;"></div>
+    <label>Prix demandé à l'entreprise acheteuse (pour ce pourcentage${isLot?', sur tout le lot':''}, en ${esc(state.unit)})</label>
+    <input type="number" step="0.01" min="0.01" id="mPrice" value="${bankBuybackPrice(asset, held).toFixed(2)}">
+    <div class="small" style="margin-top:6px;">Vente à une entreprise : c'est une <b>offre</b>. Rien n'est payé ni transféré avant que son CEO l'accepte (onglet Mon Entreprise) ; vous pouvez la retirer d'ici là.</div>
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
-      <button class="btn btn-primary" id="mOk">Confirmer la vente</button>
+      <button class="btn btn-primary" id="mOk">Continuer</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
+  const refreshBankInfo = ()=>{
+    const info = document.getElementById('mBankPriceInfo');
+    const buyerSel = document.getElementById('mBuyer');
+    if(!info || !buyerSel) return;
+    const pct = parseInt(document.getElementById('mPct').value)||0;
+    info.textContent = buyerSel.value==='BANK' ? `Banque : elle paie ${fmt(bankBuybackPrice(asset, pct))} pour ${pct}% (valeur de rachat ; le prix saisi ci-dessous ne s'applique qu'à une entreprise).` : '';
+  };
+  ['mBuyer','mPct'].forEach(id=>{ const el = document.getElementById(id); if(el){ el.addEventListener('change', refreshBankInfo); el.addEventListener('input', refreshBankInfo); } });
+  refreshBankInfo();
   document.getElementById('mOk').addEventListener('click', async ()=>{
-    const sellerId = document.getElementById('mSeller').value;
     const buyerId = document.getElementById('mBuyer').value;
     const pct = parseInt(document.getElementById('mPct').value)||0;
     const price = parseFloat(document.getElementById('mPrice').value)||0;
-    await runModalActionWithRetry(()=>{
-      
-      
-      
-      const prop = state.properties.find(x=>x.id===pid);
-      if(!prop) return {ok:false, error:'Terrain introuvable.'};
-      const sellerOwn = prop.owners.find(o=>o.companyId===sellerId);
-      
-      
-      
-      
-      if(!sellerOwn || pct<=0 || pct>sellerOwn.share) return {ok:false, error:'Pourcentage invalide.'};
-      if(!(price>0)) return {ok:false, error:'Le prix convenu doit être positif.'};
-      
-      
-      
-      
-      if((prop.mortgages||[]).some(m=>m.companyId===sellerId)){
-        return {ok:false, error:`${companyById(sellerId)?.name||'Cette entreprise'} a hypothéqué sa part de ${prop.name} — remboursez l'hypothèque (repayMortgage) avant de pouvoir la vendre.`};
-      }
-      
-      
-      if(isPropertyLockedByRevenueSwap(pid, sellerId)){
-        return {ok:false, error:`${companyById(sellerId)?.name||'Cette entreprise'} a vendu le revenu de ${prop.name} (swap de revenu fixe/variable) — impossible de le vendre tant que l'accord est actif.`};
-      }
-      if(buyerId==='BANK' && state.settings.bankMinSellPct>0 && pct<state.settings.bankMinSellPct && pct<sellerOwn.share){
-        
-        
-        
-        return {ok:false, error:`La banque n'accepte pas de racheter moins de ${state.settings.bankMinSellPct}% en une seule vente (minimum fixé au début de la partie), sauf si vous vendez la totalité de votre part (${sellerOwn.share}%). Vendre à un autre joueur n'a pas de minimum.`};
-      }
-      sellerOwn.share -= pct;
-      if(sellerOwn.share<=0) prop.owners = prop.owners.filter(o=>o.companyId!==sellerId);
-      const seller = companyById(sellerId);
-      const sellerPl = seller ? state.players.find(x=>x.id===seller.ceoId) : null;
-      if(buyerId==='BANK'){
-        seller.cash += price;
-        logFin(seller.id, 'land_sale', price);
-        if(sellerPl) sellerPl.stats.salesRevenue += price;
-        state.bank.cash -= price;
-        log(`${seller.name} a vendu ${pct}% de ${prop.name} à la banque pour ${price.toFixed(2)}`,
-          [{label:`${seller.name} (vente ${pct}%)`, amount:price}, {label:'Banque', amount:-price}]);
-      } else {
-        
-        
-        
-        
-        
-        const buyer = companyById(buyerId);
-        const buyerPl = buyer ? state.players.find(x=>x.id===buyer.ceoId) : null;
-        buyer.cash -= price; seller.cash += price;
-        logFin(buyer.id, 'land_purchase', -price);
-        logFin(seller.id, 'land_sale', price);
-        addRealEstateCapex(realEstateKeyFor(prop), buyer.id, price); 
-        if(buyerPl) buyerPl.stats.spentBuying += price;
-        if(sellerPl) sellerPl.stats.salesRevenue += price;
-        const existing = prop.owners.find(o=>o.companyId===buyerId);
-        if(existing) existing.share += pct; else prop.owners.push({companyId:buyerId, share:pct});
-        log(`${seller.name} a vendu ${pct}% de ${prop.name} à ${buyer.name} pour ${price.toFixed(2)}`,
-          [{label:`${buyer.name} (achat ${pct}%)`, amount:-price}, {label:`${seller.name} (vente ${pct}%)`, amount:price}]);
-      }
-      return {ok:true};
-    });
+    if(buyerId==='BANK') return modalConfirmBankShareSale(asset, myCo.id, pct);
+    return runModalActionWithRetry(()=>proposeAssetSale({kind:'share', assetType:asset.type, assetId:asset.id, sellerId:myCo.id, buyerId, pct, price}, {silent:true}));
+  });
+}
+// Section 309 — bogue 9 : conditions d'une vente à la banque, recalculées sur l'état courant.
+function bankShareSaleConditions(asset, sellerId, pct){
+  const seller = companyById(sellerId);
+  if(!seller) return {unavailable:'Entreprise introuvable.'};
+  const mergedRefusal = shareAssetMergedRefusal(asset);
+  if(mergedRefusal) return {unavailable:mergedRefusal};
+  return {label:shareAssetLabel(asset), sellerName:seller.name, pct, held:assetOwnedShare(asset, sellerId), price:bankBuybackPrice(asset, pct)};
+}
+function modalConfirmBankShareSale(asset, sellerId, pct){
+  return confirmWithFreshConditions({
+    title: `Vendre à la banque — ${shareAssetLabel(asset)||'?'}`,
+    compute: ()=>bankShareSaleConditions(asset, sellerId, pct),
+    describe: c=>`<div class="small" style="margin-bottom:10px;">${esc(c.sellerName)} vend <b>${c.pct}%</b> de ${esc(c.label)} (sur ${c.held}% détenus) à la banque. La banque paie sa <b>valeur de rachat</b>, calculée par le jeu : <b>${fmt(c.price)}</b>. Cette vente ne peut pas être annulée.</div>`,
+    okLabel: c=>`Vendre à la banque (${fmt(c.price)})`,
+    run: async c=>{
+      const res = await attemptActionWithRetry(()=>{
+        const seller = companyById(sellerId);
+        if(!seller || myPlayerId!==seller.ceoId) return {ok:false, error:'Seul le CEO de l’entreprise vendeuse peut vendre ses parts.'};
+        if(!sameConditions(c, bankShareSaleConditions(asset, sellerId, pct))) return staleConditionsResult();
+        return executeShareSale(asset, sellerId, 'BANK', pct, c.price, {silent:true});
+      }, {label:'Vente d’une part à la banque'});
+      if(res.ok){ render(); if(res.entries) showTransactionPopup(res.label, res.entries); }
+      return res;
+    },
   });
 }
 
@@ -18398,6 +18656,18 @@ async function buildHouse(pid, sourceCompanyId, compensationTotal, opts){
   if(res.entries && res.entries.length) showTransactionPopup(res.label, res.entries);
   return res;
 }
+// Section 309 — décision « compensation de maison » (Julien) : le montant saisi est la valeur convenue de la maison ;
+// chaque AUTRE copropriétaire paie sa quote-part (sa part / total des parts détenues par les entreprises, hors banque
+// et REIT) à l'entreprise qui fournit la maison ; celle-ci, si elle est copropriétaire, ne se paie pas sa propre
+// quote-part. Le montant réellement transféré (somme des quote-parts) est celui affiché partout (fenêtre, journal,
+// transaction). Renvoie la liste des versements [{companyId, share, amount}].
+function houseCompensationTransfers(p, sourceCompanyId, amount){
+  if(!p || !sourceCompanyId || !(amount>0)) return [];
+  const totalOwnersShare = p.owners.reduce((s,o)=>s+o.share,0);
+  if(totalOwnersShare<=0) return [];
+  return p.owners.filter(o=>o.companyId!==sourceCompanyId && o.share>0)
+    .map(o=>({companyId:o.companyId, share:o.share, amount:amount*(o.share/totalOwnersShare)}));
+}
 function buildHouseCore(pid, sourceCompanyId, compensationTotal, opts){
   opts = opts || {};
   const fail = (msg)=>{ if(!opts.silent && msg) alert(msg); return {ok:false, error:msg}; };
@@ -18418,66 +18688,79 @@ function buildHouseCore(pid, sourceCompanyId, compensationTotal, opts){
       return fail(`${co?co.name:'?'} n'a pas assez d'encaisse pour payer sa part de la construction (${fmt(cost*(insufficient.share/100))}).`);
     }
   }
+  // Section 309 — bogue 33 : la réserve de la source est revérifiée ici, sur l'état frais (deux constructions
+  // simultanées sur la même source) ; sans maison fournie, ni construction ni compensation. Avec l'option
+  // « provenance des maisons », une construction sans source est refusée.
+  let source = null;
+  if(sourceCompanyId){
+    source = companyById(sourceCompanyId);
+    if(!source) return fail('L’entreprise qui devait fournir la maison n’existe plus.');
+    if(!((source.houseReserve||0)>=1)) return fail(`${source.name} n'a plus de maison en réserve (elle a déjà été utilisée ou vendue entre-temps) — rien n'a été construit ni payé ; choisissez une autre source.`);
+  } else if(state.settings.features.houseSource){
+    return fail('Option « provenance des maisons » active : la maison doit provenir de la réserve d’une entreprise — choisissez la source.');
+  }
+  // Section 309 — décision « compensation de maison » : versements revérifiés sur l'état frais ; s'ils diffèrent de
+  // ceux affichés dans la fenêtre (parts changées entre-temps), rien n'est fait et la fenêtre les recalcule.
+  const transfers = source ? houseCompensationTransfers(p, source.id, compensationTotal||0) : [];
+  if(opts.expectedTransfers && !sameConditions(opts.expectedTransfers, transfers.map(t=>({companyId:t.companyId, amount:t.amount})))) return staleConditionsResult();
+  for(const t of transfers){
+    const payer = companyById(t.companyId);
+    const own = p.owners.find(o=>o.companyId===t.companyId);
+    const constructionPart = cost>0 && own ? cost*(own.share/100) : 0;
+    if(!payer || payer.cash < constructionPart + t.amount - 1e-9) return fail(`${payer?payer.name:'?'} n'a pas assez d'encaisse pour payer sa part de la construction (${fmt(constructionPart)}) et sa quote-part de la compensation (${fmt(t.amount)}).`);
+  }
   const entries = [];
   if(cost>0){
+    let paidByOwners = 0;
     p.owners.forEach(o=>{
       const owner = companyById(o.companyId);
       const part = cost*(o.share/100);
-      owner.cash -= part;
+      owner.cash -= part; paidByOwners += part;
       logFin(owner.id, 'house_construction', -part);
-      addRealEstateCapex(realEstateKeyFor(p), owner.id, part); 
+      addRealEstateCapex(realEstateKeyFor(p), owner.id, part);
       entries.push({label:`${owner.name} (${o.share}% construction)`, amount:-part});
     });
-    
-    
-    
-    
-    
-    
-    
-    
-    const reservedPct = etfReservedFloorPct(p);
-    if(reservedPct>0){
-      const etfDef = etfForGroup(p.group);
-      if(etfDef) entries.push({label:`Banque (${etfDef.label})`, amount:-(cost*reservedPct/100)});
+    // Section 309 — bogue 13 : la banque n'encaisse que ce que les entreprises paient. La part du lot qu'elles ne
+    // détiennent pas (réserve REIT, part revendue à la banque) est à la charge de la banque, comme le prévoyait déjà
+    // la ligne « Banque (REIT) » du reçu (règle §7 : chaque copropriétaire paie sa part de chaque maison). Avant, la
+    // banque était créditée du prix complet : 10 % de chaque maison créés avec le REIT. Le reçu est équilibré.
+    const bankBorne = cost - paidByOwners;
+    if(bankBorne>1e-9){
+      const reservedPct = etfReservedFloorPct(p);
+      const etfDef = reservedPct>0 ? etfForGroup(p.group) : null;
+      const ownedPct = p.owners.reduce((s,o)=>s+o.share,0);
+      entries.push({label:`Banque (${etfDef?`${etfDef.label}, `:''}part de ${Math.round((100-ownedPct)*100)/100}% non détenue par les entreprises — à sa charge)`, amount:-bankBorne});
     }
-    state.bank.cash += cost;
+    state.bank.cash += paidByOwners;
     entries.push({label:'Banque (construction)', amount:cost});
   }
   p.houses += 1;
   log(`Construction sur ${p.name}: ${houseLabel(p.houses)}${cost>0?` — coût ${fmt(cost)} réparti selon les parts.`:' — aucun coût (hôtel non facturé).'}`, entries.length?entries:null);
 
-  if(sourceCompanyId){
-    const source = companyById(sourceCompanyId);
-    if(source){
-      source.houseReserve = Math.max(0, source.houseReserve-1);
-      let compTotal = 0;
-      const amount = compensationTotal||0;
-      if(amount>0){
-        const totalOwnersShare = p.owners.reduce((s,o)=>s+o.share,0);
-        p.owners.forEach(o=>{
-          if(o.companyId===sourceCompanyId || totalOwnersShare<=0) return;
-          const payer = companyById(o.companyId);
-          if(!payer) return;
-          const part = amount * (o.share/totalOwnersShare);
-          payer.cash -= part; compTotal += part;
-          logFin(payer.id, 'house_compensation_paid', -part);
-          addRealEstateCapex(realEstateKeyFor(p), payer.id, part); 
-          entries.push({label:`${payer.name} (compensation maison, ${o.share}% des parts, hors banque/REIT)`, amount:-part});
-        });
-        source.cash += compTotal;
-        logFin(source.id, 'house_compensation_revenue', compTotal);
-        entries.push({label:`${source.name} (compensation reçue — maison de sa réserve)`, amount:compTotal});
-      }
-      log(`Maison de ${p.name} prise dans la réserve de ${source.name} (réserve restante: ${source.houseReserve})${compTotal>0?` — compensation de ${fmt(compTotal)} versée par les autres copropriétaires, au pro rata des parts (hors banque/REIT).`:' — aucune compensation.'}`);
+  if(source){
+    source.houseReserve = Math.max(0, source.houseReserve-1);
+    let compTotal = 0;
+    transfers.forEach(t=>{
+      const payer = companyById(t.companyId);
+      payer.cash -= t.amount; compTotal += t.amount;
+      logFin(payer.id, 'house_compensation_paid', -t.amount);
+      addRealEstateCapex(realEstateKeyFor(p), payer.id, t.amount);
+      entries.push({label:`${payer.name} (compensation maison, quote-part de ${t.share}% des parts, hors banque/REIT)`, amount:-t.amount});
+    });
+    if(compTotal>0){
+      source.cash += compTotal;
+      logFin(source.id, 'house_compensation_revenue', compTotal);
+      entries.push({label:`${source.name} (compensation reçue — maison de sa réserve)`, amount:compTotal});
     }
+    const ownSourceShare = propertyOwnedShare(p, source.id);
+    log(`Maison de ${p.name} prise dans la réserve de ${source.name} (réserve restante: ${source.houseReserve})${compTotal>0?` — compensation de ${fmt(compTotal)} réellement versée par les autres copropriétaires, chacun selon sa quote-part (valeur convenue de la maison : ${fmt(compensationTotal)}${ownSourceShare>0?` ; ${source.name} ne se paie pas sa propre quote-part de ${ownSourceShare}%`:''}).`:' — aucune compensation.'}`);
   }
 
   const label = `Construction${sourceCompanyId?' & compensation':''} — ${p.name}`;
-  
-  
-  
-  
+
+
+
+
   return {ok:true, entries, label};
 }
 
@@ -18515,24 +18798,37 @@ function modalBuildHouseSource(pid){
   });
 }
 
-function modalHouseCompensation(pid, sourceId){
-  
+function modalHouseCompensation(pid, sourceId, initialAmount, changedNotice){
+  // Section 309 — décision « compensation de maison » : le champ est la VALEUR CONVENUE de la maison ; la fenêtre
+  // montre la quote-part de chaque autre copropriétaire et le montant réellement transféré à la source (qui ne se
+  // paie pas sa propre quote-part). Les versements affichés sont revérifiés à la confirmation (buildHouseCore,
+  // expectedTransfers) ; s'ils ont changé, la fenêtre se redessine avec les nouveaux chiffres.
   const p = state.properties.find(x=>x.id===pid);
   const source = companyById(sourceId);
+  if(!p || !source){ alert('Ce terrain ou cette entreprise n’existe plus.'); return; }
   const payers = p.owners.filter(o=>o.companyId!==sourceId);
+  const sourceShare = propertyOwnedShare(p, sourceId);
   const totalOwnersShare = p.owners.reduce((s,o)=>s+o.share,0);
-  const breakdown = amount => payers.length===0 ? '' : payers.map(o=>{
-    const owner = companyById(o.companyId);
-    const w = totalOwnersShare>0 ? (o.share/totalOwnersShare) : 0;
-    return `${owner?esc(owner.name):'?'}: ${fmt(amount*w)} (${Math.round(w*100)}% des parts, hors banque/REIT)`;
-  }).join('<br>');
+  const shown = {owners: p.owners.map(o=>({...o}))}; // parts figées à l'ouverture : ce que la fenêtre affiche
+  const breakdown = amount => {
+    const transfers = houseCompensationTransfers(shown, sourceId, amount);
+    if(payers.length===0) return '';
+    const total = transfers.reduce((s,t)=>s+t.amount,0);
+    return transfers.map(t=>{
+      const owner = companyById(t.companyId);
+      const w = totalOwnersShare>0 ? (t.share/totalOwnersShare) : 0;
+      return `${owner?esc(owner.name):'?'} paie ${fmt(t.amount)} (quote-part ${Math.round(w*1000)/10}% — ${t.share}% des parts, hors banque/REIT)`;
+    }).join('<br>') + `<br><b>Montant réellement transféré à ${esc(source.name)} : ${fmt(total)}</b>${sourceShare>0?` (${esc(source.name)} ne se paie pas sa propre quote-part de ${Math.round(sourceShare/totalOwnersShare*1000)/10}%)`:''}`;
+  };
+  const amount0 = initialAmount>0 ? initialAmount : 0;
   openModal(`
     <h3>Compensation — ${esc(p.name)}</h3>
-    <div class="small" style="margin-bottom:8px;">Maison prise dans la réserve de <b>${esc(source?source.name:'?')}</b>. Si une compensation a été négociée entre les copropriétaires, inscrivez le montant total à lui transférer — réparti au pro rata des parts des AUTRES copropriétaires (jamais la banque ni les REIT). Laissez à 0 si aucune compensation n'a été convenue.</div>
+    ${changedNotice ? `<div class="small" id="mFreshNotice" style="margin-bottom:10px;padding:8px 10px;border-radius:6px;border:1px solid var(--brick,#C0392B);color:var(--brick,#C0392B);">⚠️ Les parts ont changé depuis l'ouverture de cette fenêtre (action d'un autre joueur) — rien n'a été fait. Vérifiez les nouveaux montants ci-dessous, puis confirmez à nouveau.</div>` : ''}
+    <div class="small" style="margin-bottom:8px;">Maison prise dans la réserve de <b>${esc(source.name)}</b>. Si une compensation a été négociée, inscrivez la valeur convenue de la maison : chaque AUTRE copropriétaire en paie sa quote-part (sa part parmi les parts détenues par les entreprises, jamais la banque ni les REIT) à ${esc(source.name)}${sourceShare>0?`, qui ne se paie pas la sienne`:''}. Laissez à 0 si aucune compensation n'a été convenue.</div>
     ${payers.length===0 ? `<div class="small">Aucun autre copropriétaire sur ce terrain — aucune compensation possible.</div>` : `
-    <label>Montant total à transférer à ${esc(source?source.name:'?')} (en ${esc(state.unit)})</label>
-    <input type="number" step="0.01" min="0" id="mCompAmount" value="0">
-    <div class="small" id="mCompBreakdown" style="margin-top:6px;">${breakdown(0)}</div>
+    <label>Valeur convenue de la maison (en ${esc(state.unit)})</label>
+    <input type="number" step="0.01" min="0" id="mCompAmount" value="${amount0}">
+    <div class="small" id="mCompBreakdown" style="margin-top:6px;">${breakdown(amount0)}</div>
     `}
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
@@ -18546,7 +18842,9 @@ function modalHouseCompensation(pid, sourceId){
   });
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const amount = amountInput ? (parseFloat(amountInput.value)||0) : 0;
-    const res = await runModalActionWithRetry(()=>buildHouse(pid, sourceId, amount, {silent:true}));
+    const expectedTransfers = houseCompensationTransfers(shown, sourceId, amount).map(t=>({companyId:t.companyId, amount:t.amount}));
+    const res = await runModalActionWithRetry(()=>buildHouse(pid, sourceId, amount, {silent:true, expectedTransfers}));
+    if(res && res.code==='stale-conditions'){ modalHouseCompensation(pid, sourceId, amount, true); return; }
     if(res && res.ok && res.entries && res.entries.length) showTransactionPopup(res.label, res.entries);
   });
 }
@@ -18605,6 +18903,7 @@ function modalShareSwap(){
     const [typeB, idB] = document.getElementById('mAssetB').value.split(':');
     const pctB = parseInt(document.getElementById('mPctB').value)||0;
     await runModalActionWithRetry(()=>{
+      if(myPlayerId!==state.creatorId) return {ok:false, error:'Seul le créateur de la partie peut arbitrer un échange de parts.'}; // Section 309 — revérifié dans l'applyFn
       if(companyAId===companyBId) return {ok:false, error:'Choisissez deux entreprises différentes.'};
       return executeShareSwap(typeA, idA, companyAId, pctA, typeB, idB, companyBId, pctB, {silent:true});
     });
@@ -18659,34 +18958,9 @@ function modalIssueLoanAdmin(){
 
 
 function modalSellMergedShare(mergeId){
-  const props = state.properties.filter(p=>p.groupMergeId===mergeId);
-  if(props.length===0) return;
-  const owners = props[0].owners;
-  if(owners.length===0) return;
-  openModal(`
-    <h3>Vendre une part du lot — ${esc(GROUPS[props[0].group].label)}</h3>
-    <label>Vendeur (entreprise)</label>
-    <select id="mSeller">${owners.map(o=>`<option value="${o.companyId}">${esc(companyById(o.companyId)?.name||'?')} (${o.share}%)</option>`).join('')}</select>
-    <label>Acheteur (entreprise, ou banque)</label>
-    <select id="mBuyer"><option value="BANK">Banque</option>${activeCompanies().map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
-    <label>Pourcentage vendu</label>
-    <input type="number" min="1" max="100" id="mPct" value="100">
-    ${state.settings.bankMinSellPct>0?`<div class="small">Minimum ${state.settings.bankMinSellPct}% pour une vente à la banque, sauf si vous vendez la TOTALITÉ de la part détenue par le vendeur choisi (même si elle est inférieure au minimum) — aucun minimum pour une vente à un autre joueur.</div>`:''}
-    <label>Prix convenu (pour tout le lot, en ${esc(state.unit)})</label>
-    <input type="number" step="0.01" id="mPrice" value="0">
-    <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" id="mCancel">Annuler</button>
-      <button class="btn btn-primary" id="mOk">Confirmer</button>
-    </div>`);
-  document.getElementById('mCancel').addEventListener('click', closeModal);
-  document.getElementById('mOk').addEventListener('click', async ()=>{
-    const sellerId = document.getElementById('mSeller').value;
-    const buyerId = document.getElementById('mBuyer').value;
-    const pct = parseInt(document.getElementById('mPct').value)||0;
-    const price = parseFloat(document.getElementById('mPrice').value)||0;
-    await runModalActionWithRetry(()=>sellMergedShare(mergeId, sellerId, buyerId, pct, price, {silent:true}));
-  });
+  // Section 309 — bogue 8 : fenêtre commune terrain / lot (modalSellShareForm), le vendeur est l'entreprise du CEO
+  // qui agit, l'acheteur une autre entreprise (offre à accepter) ou la banque (valeur de rachat).
+  return modalSellShareForm({type:'lot', id:mergeId});
 }
 
 function modalMortgageLot(mergeId){
@@ -18948,7 +19222,7 @@ function modalSellHouses(){
   }
   openModal(`
     <h3>Vendre des maisons — ${esc(myCo.name)}</h3>
-    <div class="small" style="margin-bottom:10px;">Vendez une partie de votre réserve non placée (<b>${myCo.houseReserve}</b> maison(s) disponible(s)) à une autre entreprise, pour un prix librement négocié entre les deux — comme le reste des mécaniques de négociation libre du jeu. Le paiement est immédiat.</div>
+    <div class="small" style="margin-bottom:10px;">Vendez une partie de votre réserve non placée (<b>${myCo.houseReserve}</b> maison(s) disponible(s)) à une autre entreprise, pour un prix librement négocié entre les deux — comme le reste des mécaniques de négociation libre du jeu. C'est une <b>offre</b> : rien n'est payé ni transféré avant que le CEO de l'entreprise acheteuse l'accepte (onglet Mon Entreprise) ; vous pouvez la retirer d'ici là.</div>
     <label>Entreprise acheteuse</label>
     <select id="mSellHousesBuyer">${activeCompanyOptions(null, myCo.id, true)}</select>
     <label>Nombre de maisons à vendre (max ${myCo.houseReserve})</label>
@@ -18959,7 +19233,7 @@ function modalSellHouses(){
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
-      <button class="btn btn-primary" id="mOk">Vendre</button>
+      <button class="btn btn-primary" id="mOk">Proposer la vente</button>
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
   const qtyInput = document.getElementById('mSellHousesQty');
@@ -18977,7 +19251,8 @@ function modalSellHouses(){
     const buyerId = document.getElementById('mSellHousesBuyer').value;
     const qty = parseInt(qtyInput.value)||0;
     const price = parseFloat(priceInput.value)||0;
-    await runModalActionWithRetry(()=>sellHousesToCompany(myCo.id, buyerId, qty, price, {silent:true}));
+    // Section 309 — décision « ventes unilatérales » : dépôt d'une offre, exécutée à l'acceptation du CEO acheteur.
+    await runModalActionWithRetry(()=>proposeAssetSale({kind:'houses', sellerId:myCo.id, buyerId, qty, pricePerHouse:price}, {silent:true}));
   });
 }
 

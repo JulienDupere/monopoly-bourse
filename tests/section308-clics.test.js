@@ -34,7 +34,8 @@ const compose = (...fs) => src => fs.reduce((s, f) => f(s), src);
 // Contre-épreuves.
 const NO_DEBOUNCE = src => src.replace('function shouldIgnoreActionClick(nowMs, busy, lastBlockingMs, isActionTarget){', 'function shouldIgnoreActionClick(nowMs, busy, lastBlockingMs, isActionTarget){ return false;');
 const NO_JAIL_CHECK = src => src.replace(/    if\(co\.inJail\) return \{ok:false, error:`\$\{co\.name\} fait déjà[^\n]*\n/, '');
-const NO_ETF_CHECK = src => src.replace(/    if\(typeof opts\.expectedHeld==='number'[^\n]*\n/, '');
+// Section 310 : la vente REIT est devenue une offre ; la contre-épreuve retire aussi la garde « offre identique déjà en attente ».
+const NO_ETF_CHECK = src => src.replace(/    if\(typeof opts\.expectedHeld==='number'[^\n]*\n/, '').replace(/    if\(pendingEtf\.some\([^\n]*\n/, '');
 // Lot 1c : la confirmation revérifie aussi les conditions (rang, montant) ; la contre-épreuve retire les deux gardes.
 const NO_GO_CHECK = src => src.replace("if(Number.isInteger(opts.expectedOwed) && (co.goAdvancesOwed||0)!==opts.expectedOwed){", 'if(false){')
   .replace("if(opts.expectedConditions && !sameConditions(opts.expectedConditions, goAdvanceConditions(companyId))) return staleConditionsResult();", '');
@@ -165,6 +166,9 @@ async function game3(engineOpts){
       // Le bouton porte la détention affichée (100 %) : les deux envois aussi.
       const call = `sellEtfUnits(${JSON.stringify(etf)}, ${JSON.stringify(a)}, ${JSON.stringify(c)}, 30, 5, {expectedHeld:100})`;
       await T.eng.run(`Promise.all([${call}, ${call}])`);
+      // Section 310 — décision « revente de parts REIT » : chaque envoi dépose une offre ; Co Carl accepte celles qui existent.
+      const nOffers = T.eng.run(`state.assetSaleOffers.length`);
+      await T.eng.run(`(async ()=>{ const me = myPlayerId; myPlayerId = coOf('Co Carl').ceoId; for(const o of [...state.assetSaleOffers]) await acceptAssetSaleOffer(o.id); myPlayerId = me; })()`);
       const S = T.saved();
       const carl = S.companies.find(x => x.id === c), carl0 = S0.companies.find(x => x.id === c);
       const alice = S.companies.find(x => x.id === a), alice0 = S0.companies.find(x => x.id === a);
@@ -172,7 +176,7 @@ async function game3(engineOpts){
       if(variant === 'corrigé'){
         ok(near(carl.etfHoldings[etf], 30) && near(carl0.cash - carl.cash, 5), 'D : Co Carl reçoit 30 % et paie 5 M$, une seule fois');
         ok(near(alice.etfHoldings[etf], 70) && near(alice.cash - alice0.cash, 5), 'D : Co Alice garde 70 % et encaisse 5 M$');
-        ok(T.alerts.length === 1 && /détient maintenant 70%/.test(T.alerts[0]) && /rien n'a été vendu/.test(T.alerts[0]), 'D : le 2e envoi est refusé (« détient maintenant 70 % … rien n’a été vendu »)');
+        ok(nOffers === 1 && T.alerts.length === 1 && /déjà en attente/.test(T.alerts[0]), 'D : le 2e envoi est refusé (section 310 : « offre déjà en attente », une seule offre à accepter)');
         ok(near(T.eng.cashTotal(), T0), 'D : conservation de la monnaie');
       } else {
         ok(near(carl.etfHoldings[etf], 60) && near(carl0.cash - carl.cash, 10), 'D : contre-épreuve — sans la vérification, la vente est répétée (60 %, 10 M$)');

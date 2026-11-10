@@ -17,10 +17,12 @@ démonstration à quatre joueurs. Ils décrivent le comportement de l'applicatio
 
 ## Aide-mémoire du joueur
 
-[Aide_memoire.pdf](Aide_memoire.pdf) résume les neuf cahiers en cinq pages imprimables (format Lettre) :
-une page de garde, puis une fiche par thème — fonder son entreprise, les actions du joueur, les actions des
-entreprises, le financement pour et contre. Les chiffres cités sont les valeurs par défaut des réglages,
-vérifiées contre `index.html` le 2026-10-19.
+[Aide_memoire.pdf](Aide_memoire.pdf) résume les neuf cahiers en sept pages imprimables (format Lettre) :
+une page de garde, puis six fiches — fonder son entreprise, les actions du joueur, les actions des
+entreprises, le financement pour et contre, les options en une page, et « qui, quand, avec quelle poche »
+(fenêtre, poche, dette et cubes de chaque action, d'après le code, plus les valeurs par défaut des réglages).
+Les chiffres cités sont les valeurs par défaut des réglages, vérifiées contre `index.html` le 2026-10-19
+(fiches 1 à 4) et le 2026-11-02 (fiches 5 et 6, ajouts aux autres).
 
 Source modifiable : [Aide_memoire.html](Aide_memoire.html) (contenu de page sans squelette `<html>`, publié
 aussi comme artefact claude.ai). Pour régénérer le PDF, envelopper le fichier dans
@@ -29,7 +31,7 @@ interface :
 
     chrome --headless=new --no-pdf-header-footer --print-to-pdf=Aide_memoire.pdf <fichier enveloppé>
 
-Vérifier ensuite que le PDF fait exactement 5 pages.
+Vérifier ensuite que le PDF fait exactement 7 pages (chaque fiche masque ce qui déborde : un pied de page absent signale un débordement).
 
 ## Corrections apportées aux PDF
 
@@ -47,6 +49,7 @@ Vérifier ensuite que le PDF fait exactement 5 pages.
 | 2026-10-25 | 315 | 0, 4, 6, 7 et aide-mémoire | Vente annoncée du CEO ramenée au plafond (cahier 4 p. 14) ; percentile Croissance et seuil des deux tiers (cahier 6 p. 8) ; arriérage qui bloque le dividende récurrent (cahier 7 p. 25) ; seul le récurrent protège le sac type ; tour qui passe tout seul quand toutes les entreprises sont enquêtées. |
 | 2026-10-25 | 316 | 0, 1, 3, 4, 5, 7 et aide-mémoire | Dividende du lancer final versé (cahier 4 p. 9) ; consultation seule après la fin ; compensation et lot commercial réglés à une fin en cours d'année ; aucune fermeture forcée au lancer final. |
 | 2026-10-25 | 317 | 0, 1, 2, 3, 4, 5, 6 | Capitalisation « part de la banque comprise » (cahier 4 p. 6) ; années numérotées à partir de 1 ; captures signalées (cahier 4 p. 13, cahier 5 p. 6, cahier 6 p. 6) ; libellés du dividende récurrent, de l'ordre bid et du P&L options. |
+| 2026-11-02 | — | aide-mémoire | Passage à sept pages : fiche 5 « Les options en une page » (cahier 3) et fiche 6 « Qui, quand, avec quelle poche » (fenêtres vérifiées dans le code). Lien de la page de garde corrigé (monopoly-finance.vercel.app, README) ; horloge : mises de REIT et de lot commercial à la pause après le premier lancer de l'année ; ajouts : marché secondaire des privilégiées, tableau des cases hostiles, « Devenir l'assureur », trois sortes de swap, rachat d'actions. |
 
 Depuis la série 307–317 (octobre 2026), chaque cahier touché se termine par une page « Mise à jour » qui résume le
 reste des changements et signale les captures devenues inexactes (les images ne sont pas retouchées).

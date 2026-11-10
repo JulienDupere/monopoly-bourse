@@ -1,0 +1,214 @@
+{
+  "Cahier_0.pdf": [
+    {
+      "page": 13,
+      "ancien": "3 — le nombre maximum de copropriétaires sur un même terrain.",
+      "nouveau": "**3** — le nombre maximum de copropriétaires à l'achat d'un terrain.",
+      "section": "309",
+      "raison": "Le plafond de trois copropriétaires ne vaut qu'à l'achat initial d'un terrain ; un lot regroupé peut en compter davantage."
+    }
+  ],
+  "Cahier_2.pdf": [
+    {
+      "page": 10,
+      "ancien": "Ils annoncent que la garantie joue « en fin de partie ». En réalité la déduction est immédiate et permanente, et votre valeur nette sert aussi à vérifier votre marge à chaque lancer. Un CEO qui accepte une grosse offre garantie peut donc voir ses positions à découvert ou ses options écrites fermées de force bien avant la fin de la partie.",
+      "nouveau": "Ils annoncent que la garantie joue « en fin de partie ». En réalité la déduction de votre valeur nette est **immédiate et permanente** : elle pèse sur votre classement à tout moment. Elle ne touche pas votre marge, qui exclut déjà vos parts de CEO : accepter une offre garantie ne déclenche aucun appel de marge.",
+      "section": "314",
+      "raison": "Bogue 31 corrigé : la garantie n'est plus retirée une seconde fois de la marge du CEO ; elle ne peut plus provoquer d'appel de marge (les textes de l'application parlent toujours de « fin de partie »)."
+    },
+    {
+      "page": 15,
+      "ancien": "La déduction sur votre patrimoine est immédiate, permanente, et elle compte dans votre marge à chaque lancer.",
+      "nouveau": "La déduction sur votre patrimoine est immédiate et permanente, mais elle ne compte pas dans votre marge.",
+      "section": "314",
+      "raison": "Même correction que p. 10 : la garantie ne compte plus dans la marge du CEO."
+    }
+  ],
+  "Cahier_3.pdf": [
+    {
+      "page": 2,
+      "ancien": "Rien ne vous en empêche, aucun message ne vous prévient.",
+      "nouveau": "Seuls la marge à l'ouverture et un plafond de 15 % des parts vous arrêtent.",
+      "section": "307, 314",
+      "raison": "Marge vérifiée à l'ouverture (307) et plafond des options écrites nues (314) : l'écriture nue n'est plus libre."
+    },
+    {
+      "page": 4,
+      "ancien": "Les puts et les options écrites n'ont pas de plafond.",
+      "nouveau": "Même plafond pour les options écrites nues, puts compris ; aucun pour les covered calls.",
+      "section": "314",
+      "raison": "Plafond de 15 % des parts par joueur sur les contrats écrits nus (réponse de Julien : aucun plafond pour les covered calls ; les puts achetés restent sans plafond)."
+    },
+    {
+      "page": 16,
+      "ancien": "Il commence par la couverture classique — parts détenues pour un call écrit, encaisse immobilisée pour un put écrit — puis, sur ce qui reste, il cherche la jambe sœur : même stratégie, même type, même échéance, côté acheté.",
+      "nouveau": "Il cherche la **jambe sœur** — même stratégie, même type, même échéance, côté acheté — avant vos parts pour un call écrit, après votre encaisse pour un put écrit.",
+      "section": "314",
+      "raison": "Retouche de la revue : pour un call, la jambe achetée du spread passe désormais avant les parts détenues ; les puts gardent l'ordre encaisse puis jambe sœur."
+    },
+    {
+      "page": 16,
+      "ancien": "La jambe écrite d'un bull spread est un call : des parts réellement détenues la couvrent. Celle d'un bear spread est un put : l'encaisse la couvre. Cette couverture-là s'applique avant la jambe sœur et reste recalculée à chaque contrôle — dépenser votre encaisse rend un put écrit nu rétroactivement.",
+      "nouveau": "La jambe écrite d'un **bear** spread est un put : l'**encaisse** la couvre, **avant** la jambe sœur, recalculée à chaque contrôle — dépenser votre encaisse rend un put écrit nu rétroactivement. Celle d'un **bull** spread est un call : la jambe sœur la couvre d'abord, vos parts restent libres.",
+      "section": "314",
+      "raison": "Même retouche : les parts ne couvrent plus en premier la jambe call d'un spread ; elles restent disponibles pour les autres calls écrits."
+    },
+    {
+      "page": 19,
+      "ancien": "Vendre un straddle encaisse 917 $ immédiatement, sans aucun débit — et l'application ne vérifie pas votre encaisse à l'ouverture, puisqu'il n'y a rien à payer. Un joueur sans un sou peut donc en ouvrir cinquante contrats. La facture arrive ensuite : deux jambes écrites, chacune comptée séparément pour la marge, soit jusqu'à 60 % du notionnel en valeur nette exigée dès le lancer suivant. Et le règlement en cash à l'échéance n'a lui non plus aucune garde : il peut vous laisser en encaisse négative.",
+      "nouveau": "Vendre un straddle encaisse 917 $ immédiatement, sans aucun débit. Mais ses deux jambes écrites, chacune comptée séparément pour la marge, exigent jusqu'à **60 %** du notionnel en valeur nette, et l'application **le vérifie dès l'ouverture** : un joueur sans un sou est refusé. Ensuite, la marge se recalcule à chaque lancer. Le règlement en cash à l'échéance, lui, n'a aucune garde : il peut vous laisser en encaisse négative.",
+      "section": "307",
+      "raison": "Marge initiale : une stratégie avec jambes écrites est refusée si la valeur nette admissible passerait sous la marge exigée."
+    },
+    {
+      "page": 20,
+      "ancien": "Contrats couverts = parts détenues ÷ 100. Le reste est nu.",
+      "nouveau": "Contrats couverts = **blocs entiers de 100 parts détenues**. Le reste est nu.",
+      "section": "314",
+      "raison": "Retouche de la revue : la couverture se compte en contrats entiers, par blocs de 100 parts partagés entre les calls écrits (150 parts couvrent 1 contrat, plus 1,5). Cellule de tableau : 73 caractères tiennent sur une ligne (largeur de cellule ≈ 79 caractères)."
+    },
+    {
+      "page": 20,
+      "ancien": "le calcul ajoute une étape après le tableau",
+      "nouveau": "le calcul ajoute une étape au tableau",
+      "section": "314",
+      "raison": "Pour un call, la jambe sœur est désormais cherchée AVANT la couverture par les parts : « après » est faux (détail dans la page de mise à jour). `ancien` s'arrête avant la césure « ci-/dessus »."
+    },
+    {
+      "page": 22,
+      "ancien": "couvrent 2,5, et la moitié du troisième est nue.",
+      "nouveau": "couvrent 2, et le troisième est entièrement nu.",
+      "section": "314",
+      "raison": "Couverture en contrats entiers : 250 parts couvrent 2 contrats, pas 2,5. Cette fin de paragraphe est un bloc à part dans le PDF (ligne 2 du piège 1)."
+    },
+    {
+      "page": 23,
+      "ancien": "Aucun débit, aucune vérification d'encaisse — puis jusqu'à 60 % du notionnel exigés au lancer suivant.",
+      "nouveau": "Aucun débit, mais jusqu'à 60 % du notionnel exigés en marge dès l'ouverture, puis à chaque lancer.",
+      "section": "307",
+      "raison": "La marge d'un straddle vendu est vérifiée à l'ouverture."
+    }
+  ],
+  "Cahier_4.pdf": [
+    {
+      "page": 6,
+      "ancien": "Ce que vaut l'entreprise en bourse, hors part de la banque",
+      "nouveau": "Ce que vaut l'entreprise en bourse, part de la banque comprise",
+      "section": "317",
+      "raison": "Bogue 89 : la capitalisation affichée porte sur toutes les parts émises, part de la banque comprise (libellé de l'application corrigé, calcul inchangé)."
+    },
+    {
+      "page": 6,
+      "ancien": "La taille réelle du morceau en jeu",
+      "nouveau": "La taille de l'entreprise entière",
+      "section": "317",
+      "raison": "Conséquence de la ligne précédente : le chiffre n'est pas le seul flottant."
+    },
+    {
+      "page": 9,
+      "ancien": "Si la partie s'arrête dans cette fenêtre, quelle qu'en soit la cause — plancher boursier, banque propriétaire de tout, durée maximale atteinte, prêt de dernier recours — la totalité retourne à la trésorerie de l'entreprise et compte donc dans son équité au classement final. Vous, actionnaire, ne touchez rien : le dividende n'a jamais été versé.",
+      "nouveau": "Si la partie s'arrête avant le lancer du versement, quelle qu'en soit la cause — plancher boursier, banque propriétaire de tout, durée maximale atteinte, prêt de dernier recours — la totalité **retourne à la trésorerie de l'entreprise** et compte donc dans son équité au classement final. Vous ne touchez rien. Si elle s'arrête au lancer même du versement, le dividende est payé.",
+      "section": "316",
+      "raison": "Décision de Julien : un dividende annoncé dû au lancer qui termine la partie est versé aux actionnaires."
+    },
+    {
+      "page": 14,
+      "ancien": "annulée en entier à l'échéance.",
+      "nouveau": "ramenée au plafond à l'échéance ; si le plafond est déjà atteint, elle est annulée.",
+      "section": "315",
+      "raison": "Décision de l'utilisateur : une vente du CEO au-delà du plafond de 15 % est exécutée pour les parts encore permises au lieu d'être annulée."
+    }
+  ],
+  "Cahier_5.pdf": [
+    {
+      "page": 5,
+      "ancien": "Une fois que l'administrateur les a ouverts, les loyers correspondants s'accumulent dans le fonds, puis sont distribués aux détenteurs de parts à chaque fin d'année. Avant l'ouverture, ce loyer n'est versé à personne.",
+      "nouveau": "Une fois qu'une première enchère a attribué le fonds, les loyers correspondants s'y accumulent, puis sont distribués aux détenteurs de parts à chaque fin d'année. Avant cette enchère, le visiteur ne paie pas cette part.",
+      "section": "310",
+      "raison": "Réserve payée selon les parts du REIT détenues : rien avant la première enchère d'un REIT, la réserve entière ensuite (ouvrir le REIT ne suffit pas). Paragraphe en bas de page : longueur identique."
+    },
+    {
+      "page": 7,
+      "ancien": "Une mise ne peut pas dépasser l'encaisse de votre entreprise.",
+      "nouveau": "Le total de vos mises REIT ne peut pas dépasser l'encaisse de votre entreprise.",
+      "section": "310",
+      "raison": "Bogue 28 : la limite porte sur le total des mises REIT de l'entreprise (la mise du lot commercial n'y entre pas, décision de Julien)."
+    }
+  ],
+  "Cahier_6.pdf": [
+    {
+      "page": 8,
+      "ancien": "Le percentile de votre marge nette parmi toutes les entreprises actives du semestre.",
+      "nouveau": "Le **percentile de votre marge nette** face aux autres entreprises actives du semestre.",
+      "section": "315",
+      "raison": "Bogue 41 : le percentile est la part des AUTRES entreprises que l'on dépasse."
+    },
+    {
+      "page": 8,
+      "ancien": "Trois états : au-dessus du deuxième tiers = bon, entre médiane et deux tiers = neutre, en dessous = mauvais",
+      "nouveau": "Trois états : dépasser au moins les deux tiers des autres = bon, la moitié = neutre, moins = mauvais",
+      "section": "315",
+      "raison": "Réponse de Julien : seuil exact des deux tiers (la 2e entreprise sur 4 est « bonne »)."
+    }
+  ],
+  "Cahier_7.pdf": [
+    {
+      "page": 3,
+      "ancien": "appliquent la formule taux facturé = taux de base + (ratio d'endettement × facteur de prime). Le ratio d'endettement est votre dette totale divisée par vos actifs bruts. Plus vous êtes endetté, plus le prochain emprunt coûte cher : exactement comme une note de crédit qui se dégrade. Avec les réglages par défaut, une entreprise sans dette paie 35 % sur son hypothèque ; la même entreprise endettée à 50 % paierait 60 %.",
+      "nouveau": "appliquent la formule **taux facturé = taux de base + (ratio d'endettement, plafonné à 1, × facteur de prime)**. Le ratio d'endettement est votre dette totale, découvert compris, divisée par vos actifs bruts. Plus vous êtes endetté, plus le prochain emprunt coûte cher : exactement comme une note de crédit qui se dégrade. Avec les réglages par défaut, une entreprise sans dette paie 35 % sur son hypothèque ; la même entreprise endettée à 50 % paierait 60 %, et jamais plus de 85 %.",
+      "section": "312",
+      "raison": "Bogue 10 : une encaisse négative (découvert) compte comme une dette. Bogue 65 : taux plafonné au taux de base + prime maximale (35 % + 50 %)."
+    },
+    {
+      "page": 19,
+      "ancien": "Les textes de l'application disent que la garantie joue « en fin de partie ». En réalité la déduction est permanente et immédiate, et votre valeur nette sert aussi à vérifier votre marge à chaque lancer. Un CEO qui accepte une grosse offre garantie peut donc voir ses positions à découvert ou ses options écrites fermées de force, bien avant la fin de la partie.",
+      "nouveau": "Les textes de l'application disent que la garantie joue « en fin de partie ». En réalité la déduction de votre valeur nette est **permanente et immédiate** : elle pèse sur votre classement à tout moment. Elle ne touche pas votre marge, qui exclut déjà vos parts de CEO : une offre garantie ne déclenche aucun appel de marge.",
+      "section": "314",
+      "raison": "Bogue 31 : la garantie n'est plus retirée une seconde fois de la marge du CEO."
+    },
+    {
+      "page": 25,
+      "ancien": "Surtout, tant qu'il existe, l'annonce d'un dividende ordinaire est refusée.",
+      "nouveau": "Surtout, tant qu'il existe, aucun dividende ordinaire n'est versé, pas même le récurrent.",
+      "section": "315",
+      "raison": "Bogue 27 : l'arriérage bloque aussi le versement automatique du dividende récurrent."
+    },
+    {
+      "page": 28,
+      "ancien": "Une entreprise avec des liquidités inutilisées peut détenir votre hypothèque — et encaisse alors l'intérêt à la place de la banque. Pour le prêteur, c'est un placement garanti par un actif réel ; pour vous, c'est un créancier qui joue à la même table que vous.",
+      "nouveau": "Une entreprise avec des liquidités peut détenir votre hypothèque si son CEO accepte votre offre avant le prochain lancer ; elle encaisse alors l'intérêt. Pour elle, c'est un placement garanti par un actif réel ; pour vous, un créancier qui joue à la même table.",
+      "section": "312",
+      "raison": "Bogue 50 et décision de l'utilisateur : l'hypothèque auprès d'une entreprise est une offre que le CEO prêteur accepte ; elle expire au lancer suivant. Encadré : même nombre de lignes."
+    },
+    {
+      "page": 31,
+      "ancien": "Immédiat, sans cube rouge, sans dette.",
+      "nouveau": "Sans cube rouge, sans dette.",
+      "section": "309",
+      "raison": "Une vente à une entreprise (parts ou maisons) est une offre à accepter avant le lancer suivant : elle n'est plus immédiate (seule la vente d'une part à la banque l'est)."
+    }
+  ],
+  "Cahier_8.pdf": [
+    {
+      "page": 4,
+      "ancien": "sont partiellement verrouillés tant que l'accord court : vous ne pouvez ni vendre une part,",
+      "nouveau": "sont verrouillés dès l'annonce et tant que l'accord court : vous ne pouvez ni **vendre ni échanger une part**,",
+      "section": "311",
+      "raison": "Bogue 21 : verrou dès l'annonce de l'émission ; l'échange de parts est refusé lui aussi."
+    },
+    {
+      "page": 4,
+      "ancien": "En revanche, construire des maisons reste permis, et fusionner un lot aussi. Ce sont des décisions qui augmentent le loyer — donc qui profitent à l'investisseur autant qu'à vous — et le jeu n'a aucune raison de les bloquer.",
+      "nouveau": "En revanche, **construire des maisons reste permis** : cela augmente le loyer, donc profite à l'investisseur autant qu'à vous. **Regrouper un lot**, lui, est refusé tant qu'une émission court sur l'un de ses terrains.",
+      "section": "311",
+      "raison": "Bogue 18 : regroupement refusé pendant une émission sur un terrain du lot."
+    },
+    {
+      "page": 4,
+      "ancien": "Un terrain déjà hypothéqué ou déjà dans une autre émission n'apparaît pas.",
+      "nouveau": "Seuls y figurent les lots de couleur regroupés, les aéroports et les services, ni hypothéqués ni déjà dans une émission.",
+      "section": "311",
+      "raison": "Bogue 18 et décision de l'utilisateur : une émission ne porte que sur un lot de couleur déjà regroupé, un aéroport ou un service."
+    }
+  ]
+}

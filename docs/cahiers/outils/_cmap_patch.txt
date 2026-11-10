@@ -1,0 +1,23 @@
+def _cmap_pour(fonte):
+    gid2u = {}
+    for u in _ordre_unicode():
+        g = fonte.has_glyph(u)
+        if g and g not in gid2u:
+            gid2u[g] = u
+    items = sorted(gid2u.items())
+    nl = "\n"
+    en_tete = nl.join([
+        "/CIDInit /ProcSet findresource begin", "12 dict begin", "begincmap",
+        "/CIDSystemInfo <</Registry(Adobe)/Ordering(UCS)/Supplement 0>> def",
+        "/CMapName /Adobe-Identity-UCS def", "/CMapType 2 def", "1 begincodespacerange",
+        "<0000> <FFFF>", "endcodespacerange", ""])
+    corps = ""
+    for i in range(0, len(items), 100):
+        bloc = items[i:i + 100]
+        corps += "%d beginbfchar%s" % (len(bloc), nl)
+        corps += "".join("<%04x> <%04x>%s" % (g, u, nl) for g, u in bloc)
+        corps += "endbfchar" + nl
+    fin = nl.join(["endcmap", "CMapName currentdict /CMap defineresource pop", "end", "end", ""])
+    return (en_tete + corps + fin).encode("ascii")
+
+

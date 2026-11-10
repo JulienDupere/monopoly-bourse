@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<!-- Gabarit de la page « Mise à jour » ajoutée à la fin d'un cahier.
+     Calqué sur la dernière page des cahiers (Cahier_1.pdf p. 15) : fond #f7f2e8, cadre doré #b08d3f,
+     surtitre mono doré, titre serif 22 pt, encadrés #fbf8f2 à filet coloré, pied de page serif #554d3b.
+     Remplacer 0 (ex. « 1 »), 14 (numéro de la nouvelle page) et le contenu de <main>.
+     Couleurs de filet : .or (défaut), .vert, .rouge. Impression : Chrome sans interface, format Lettre. -->
+<style>
+  @page { size: 8.5in 11in; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 612pt; height: 792pt; }
+  body { background: #f7f2e8; color: #16181d; font-family: Arial, "Liberation Sans", sans-serif;
+         -webkit-print-color-adjust: exact; print-color-adjust: exact; position: relative; overflow: hidden; }
+  .cadre { position: absolute; left: 43pt; top: 43pt; width: 526pt; height: 706pt; border: 0.75pt solid rgba(176, 141, 63, 0.5); }
+  main { position: absolute; left: 79pt; top: 80pt; width: 454pt; }
+  .surtitre { font-family: Consolas, "DejaVu Sans Mono", monospace; font-weight: bold; font-size: 8pt;
+              letter-spacing: 2.4pt; color: #b08d3f; text-transform: uppercase; }
+  h1 { font-family: "Liberation Serif", "Times New Roman", serif; font-weight: bold; font-size: 22pt;
+       line-height: 1.2; margin-top: 8pt; }
+  .filet { position: relative; height: 1pt; background: #b08d3f; margin: 16pt 0 14pt; }
+  .filet::before, .filet::after { content: ""; position: absolute; top: -2.5pt; width: 5pt; height: 5pt;
+       background: #b08d3f; transform: rotate(45deg); }
+  .filet::before { left: -3pt; } .filet::after { right: -3pt; }
+  .chapeau { font-family: "Liberation Serif", "Times New Roman", serif; font-style: italic; font-size: 11.2pt; color: #6a6f78;
+             line-height: 1.45; margin-bottom: 12pt; }
+  .encadre { background: #fbf8f2; border-left: 2pt solid #b08d3f; padding: 9pt 12pt 10pt; margin-bottom: 9pt; }
+  .encadre.vert { border-left-color: #1e7a4b; } .encadre.rouge { border-left-color: #a8322a; }
+  .encadre h2 { font-family: Consolas, "DejaVu Sans Mono", monospace; font-weight: bold; font-size: 8pt;
+                letter-spacing: 2pt; text-transform: uppercase; color: #b08d3f; margin-bottom: 5pt; }
+  .encadre.vert h2 { color: #1e7a4b; } .encadre.rouge h2 { color: #a8322a; }
+  .encadre p, .encadre li { font-size: 9.9pt; line-height: 15.5pt; }
+  .encadre ul { padding-left: 13pt; }
+  .encadre p + p { margin-top: 4pt; }
+  .pied { position: absolute; top: 745pt; left: 51pt; right: 49pt; font-family: "DejaVu Serif", Cambria, "Times New Roman", serif;
+          font-size: 8pt; color: #554d3b; letter-spacing: 1.3pt; word-spacing: 2pt; display: flex; justify-content: space-between; }
+  /* Section 307-317 : comme dans les cahiers d'origine, le cadre s'interrompt derrière le numéro de page. */
+  .pied span:last-child { background: #f6f1e7; padding: 0 4pt 0 10pt; }
+</style>
+</head>
+<body>
+  <div class="cadre"></div>
+  <main>
+    <div class="surtitre">Cahier nº 0 · Mise à jour</div>
+    <h1>Ce qui a changé en octobre 2026</h1>
+    <div class="filet"></div>
+    <p class="chapeau">L'application a été corrigée en octobre 2026. La page 13 a été corrigée en place ; voici ce qui change pour toute la table.</p>
+
+    <section class="encadre">
+      <h2>Jouer à plusieurs appareils</h2>
+      <ul>
+        <li>Au premier accès, l'écran <b>« Vous êtes »</b> demande votre nom (ou le mode spectateur), mémorisé ensuite sur l'appareil.</li>
+        <li>Si un autre joueur agit pendant que vous remplissez une fenêtre, votre saisie reste en place. Si les chiffres ont bougé, certaines fenêtres (prêts, assurance, ventes, subvention) affichent <b>« Les conditions ont changé »</b> : vérifiez, puis confirmez à nouveau.</li>
+        <li><b>« ⏳ Enregistrement en cours… »</b> s'affiche en bas de l'écran. Sans connexion, l'action est refusée ; un double clic est ignoré.</li>
+      </ul>
+    </section>
+
+    <section class="encadre vert">
+      <h2>Le tour de jeu</h2>
+      <ul>
+        <li>Au semestre, le bouton <b>✅ Tour Terminé</b> disparaît aussi tant que votre <b>encaisse personnelle</b> est négative ; un bandeau rouge de Mon Entreprise l'explique.</li>
+        <li>Si toutes les entreprises sont en enquête de l'AMF, le tour passe tout seul ; le bouton « ⏭️ Faire passer le tour » sert de secours.</li>
+        <li>« 🎲 Résultats du tour » attend la fermeture de la fenêtre en cours.</li>
+      </ul>
+    </section>
+
+    <section class="encadre">
+      <h2>Ventes et copropriété</h2>
+      <p>Vendre une part ou des maisons à une autre entreprise devient une <b>offre</b> : son CEO l'accepte ou la refuse dans « Offres de vente en attente », avant le lancer suivant. La banque rachète une part tout de suite, à sa valeur de rachat ; les maisons ne se vendent qu'à une entreprise. Le plafond de trois copropriétaires ne vaut qu'à l'achat d'un terrain : un lot regroupé peut en compter plus.</p>
+    </section>
+
+    <section class="encadre rouge">
+      <h2>La fin de la partie</h2>
+      <p>Dès la fin, l'en-tête affiche « 🏁 Partie terminée… — consultation seulement » et toute action est refusée. Un dividende dû au lancer final est versé. Une fin en cours d'année règle aussitôt les accords de compensation, et le lot commercial au prorata des lancers écoulés.</p>
+    </section>
+
+    <section class="encadre">
+      <h2>Les années</h2>
+      <p>La barre du haut compte les années à partir de 1 : « Année : 1 (semestre 1/2 — 0/3 lancers faits) » au début de la partie.</p>
+    </section>
+  </main>
+  <div class="pied"><span>Monopoly Bourse · Cahier 0</span><span>14</span></div>
+</body>
+</html>

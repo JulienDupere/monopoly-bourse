@@ -1,0 +1,134 @@
+[
+ {
+  "fiche": "Couverture",
+  "section": "316",
+  "ancien": "<li>La durée maximale tirée au sort en secret est atteinte.</li>",
+  "nouveau": "<li>La durée maximale tirée au sort en secret est atteinte.</li>\n          <li>Ensuite, l'application passe en consultation : plus aucune action n'est enregistrée.</li>"
+ },
+ {
+  "fiche": "Fiche 1",
+  "section": "315",
+  "ancien": "<td><b>Toute baisse</b> du versement, ou un versement nul : sac à 20 rouges d'un coup. Verser plus que le bénéfice : 5 cubes rougis.</td>",
+  "nouveau": "<td><b>Toute baisse</b> du dividende récurrent, ou un semestre sans versement récurrent (un dividende annoncé ne le remplace pas) : sac à 20 rouges d'un coup. Verser plus que le bénéfice, hors part de la banque : 5 cubes rougis.</td>"
+ },
+ {
+  "fiche": "Fiche 1",
+  "section": "309",
+  "ancien": "<li>Copropriété jusqu'à <span class=\"num\">3</span> entreprises.",
+  "nouveau": "<li>Copropriété jusqu'à <span class=\"num\">3</span> entreprises à l'achat (davantage possible après un regroupement en lot)."
+ },
+ {
+  "fiche": "Fiche 1",
+  "section": "312",
+  "ancien": "Dette au-dessus du seuil (<span class=\"num\">50 %</span> par défaut) et marge négative",
+  "nouveau": "Dette au-dessus du seuil (<span class=\"num\">50 %</span> par défaut, encaisse négative comprise) et marge négative"
+ },
+ {
+  "fiche": "Fiche 2",
+  "section": "307, 314",
+  "ancien": "<td>L'argent encaissé est déjà dû : ne le dépensez jamais. Le taux monte quand tout le monde shorte la même action.</td>",
+  "nouveau": "<td>L'argent encaissé est déjà dû : ne le dépensez jamais. Le taux monte quand tout le monde shorte la même action. Ouverture refusée si la marge manque ; le rachat exige l'encaisse.</td>"
+ },
+ {
+  "fiche": "Fiche 2",
+  "section": "314",
+  "ancien": "Un bid puise dans l'encaisse puis dans les bons.",
+  "nouveau": "Un bid puise dans l'encaisse puis dans les bons, même si l'encaisse est un peu négative."
+ },
+ {
+  "fiche": "Fiche 2",
+  "section": "307, 314",
+  "ancien": "<td>Nue : marge de <span class=\"num\">30 %</span>, livraison forcée à l'échéance, découvert possible.</td>",
+  "nouveau": "<td>Nue : marge de <span class=\"num\">30 %</span>, vérifiée dès l'ouverture, et au plus <span class=\"num\">15 %</span> des parts en contrats nus. Livraison forcée à l'échéance, découvert possible.</td>"
+ },
+ {
+  "fiche": "Fiche 2",
+  "section": "314",
+  "ancien": "<td>Covered call : <span class=\"num\">100</span> parts par contrat.",
+  "nouveau": "<td>Covered call : <span class=\"num\">100</span> parts par contrat, sans plafond."
+ },
+ {
+  "fiche": "Fiche 2",
+  "section": "307, 316",
+  "ancien": "<p>Sinon l'application ferme votre plus grosse position, sans prévenir, puis la suivante. Gardez une réserve égale à la moitié de vos passifs.</p>",
+  "nouveau": "<p>Sinon l'application ferme votre plus grosse position, sans prévenir, puis la suivante, en vendant d'abord vos bons. Au lancer final, rien n'est fermé : tout est valorisé au cours. Gardez une réserve égale à la moitié de vos passifs.</p>"
+ },
+ {
+  "fiche": "Fiche 2",
+  "section": "315",
+  "ancien": "L'ordre s'exécute <span class=\"num\">6</span> lancers plus tard, au cours du jour.</p>",
+  "nouveau": "L'ordre s'exécute <span class=\"num\">6</span> lancers plus tard, au cours du jour. Une vente au-delà de <span class=\"num\">15 %</span> des parts dans l'année est ramenée au plafond.</p>"
+ },
+ {
+  "fiche": "Fiche 3",
+  "section": "314",
+  "ancien": "<p>Au semestre, impossible de valider avant de revenir à zéro : vendez, empruntez ou hypothéquez.</p>",
+  "nouveau": "<p>Au semestre, impossible de valider tant que la trésorerie ou votre encaisse personnelle est négative : vendez, empruntez ou hypothéquez.</p>"
+ },
+ {
+  "fiche": "Fiche 3",
+  "section": "310",
+  "ancien": "<td>La banque garde <span class=\"num\">10 %</span> de chaque terrain de couleur. Les loyers vont au fonds, distribués en fin d'année.</td><td>Enchère scellée annuelle du lot entier, mise minimale <span class=\"num\">100 K$</span>. Le plus offrant rachète les autres détenteurs.</td>",
+  "nouveau": "<td>La banque garde <span class=\"num\">10 %</span> de chaque terrain de couleur. Dès la première enchère d'un REIT, le visiteur paie cette part au fonds, distribuée en fin d'année ; avant, il ne la paie pas.</td><td>Enchère scellée annuelle du lot entier, mise minimale <span class=\"num\">100 K$</span>, total des mises au plus l'encaisse. Le plus offrant rachète les autres détenteurs. Part portée au bilan à sa valeur d'achat ; revente sur offre acceptée.</td>"
+ },
+ {
+  "fiche": "Fiche 3",
+  "section": "310",
+  "ancien": "Comptez environ <span class=\"num\">0,6</span> visite par case et par an avec quatre entreprises.</td>",
+  "nouveau": "Comptez environ <span class=\"num\">0,6</span> visite par case et par an avec quatre entreprises. Mise non limitée par l'encaisse : rien n'est payé avant le règlement.</td>"
+ },
+ {
+  "fiche": "Fiche 3",
+  "section": "315",
+  "ancien": "Une entreprise Dividendes règle un <b>dividende récurrent</b> sur une jauge à sept paliers.</p>",
+  "nouveau": "Une entreprise Dividendes règle un <b>dividende récurrent</b> sur une jauge à sept paliers : lui seul protège son sac type.</p>"
+ },
+ {
+  "fiche": "Fiche 3",
+  "section": "313",
+  "ancien": "N'assurez que ce que la trésorerie ne peut pas absorber.</p>",
+  "nouveau": "L'indemnité d'un loyer est plafonnée au montant « à risque » affiché à la signature. N'assurez que ce que la trésorerie ne peut pas absorber.</p>"
+ },
+ {
+  "fiche": "Fiche 3",
+  "section": "309, 312",
+  "ancien": "Rouvrez les détails juste avant d'accepter : les montants vieillissent.</p>",
+  "nouveau": "Rouvrez les détails juste avant d'accepter : les montants vieillissent. Vendre une part ou des maisons à une entreprise, ou s'hypothéquer auprès d'elle, passe aussi par une offre : son CEO l'accepte avant le lancer suivant, sinon elle expire.</p>"
+ },
+ {
+  "fiche": "Fiche 4",
+  "section": "311",
+  "ancien": "Seule une entreprise tierce le déclenche.</td>",
+  "nouveau": "Seule une entreprise tierce le déclenche. Un seul swap général ou à budget à la fois.</td>"
+ },
+ {
+  "fiche": "Fiche 4",
+  "section": "309",
+  "ancien": "<td>Comptant immédiat, sans dette ni intérêt. Améliore les ratios. Les maisons en réserve ne rapportent rien.</td>",
+  "nouveau": "<td>Sans dette ni intérêt. À la banque : comptant immédiat, au prix de rachat. À une entreprise : sur offre que son CEO accepte. Les maisons en réserve ne rapportent rien.</td>"
+ },
+ {
+  "fiche": "Fiche 4",
+  "section": "312",
+  "ancien": "<td><span class=\"num\">50 %</span> du prix de base, en tout temps. Idéale pour un terrain isolé qui dort.</td><td><span class=\"num\">35 %</span> par an, plus une prime selon votre endettement.",
+  "nouveau": "<td><span class=\"num\">50 %</span> du prix de base, en tout temps (auprès d'une entreprise : sur offre acceptée). Idéale pour un terrain isolé qui dort.</td><td><span class=\"num\">35 %</span> par an, plus une prime selon votre endettement (<span class=\"num\">85 %</span> au plus)."
+ },
+ {
+  "fiche": "Fiche 4",
+  "section": "311",
+  "ancien": "de votre part des loyers futurs vendus contre du capital. Ni dette, ni intérêt, ni cube. Construire reste permis.</p>",
+  "nouveau": "de votre part des loyers futurs (lot de couleur regroupé, aéroport ou service) vendus contre du capital. Ni dette, ni intérêt, ni cube. Construire reste permis.</p>"
+ },
+ {
+  "fiche": "Fiche 4",
+  "section": "311",
+  "ancien": "les terrains du panier sont verrouillés : ni vente, ni hypothèque, ni swap.",
+  "nouveau": "les terrains sont verrouillés dès l'annonce : ni vente, ni échange, ni hypothèque, ni swap."
+ },
+ {
+  "fiche": "Fiche 4",
+  "section": "312",
+  "ancien": "D dès que la dette atteint les actifs.",
+  "nouveau": "D dès que la dette, encaisse négative comprise, atteint les actifs."
+ }
+]

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<!-- Gabarit de la page « Mise à jour » ajoutée à la fin d'un cahier.
+     Calqué sur la dernière page des cahiers (Cahier_1.pdf p. 15) : fond #f7f2e8, cadre doré #b08d3f,
+     surtitre mono doré, titre serif 22 pt, encadrés #fbf8f2 à filet coloré, pied de page serif #554d3b.
+     Remplacer 7 (ex. « 1 »), 39 (numéro de la nouvelle page) et le contenu de <main>.
+     Couleurs de filet : .or (défaut), .vert, .rouge. Impression : Chrome sans interface, format Lettre. -->
+<style>
+  @page { size: 8.5in 11in; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 612pt; height: 792pt; }
+  body { background: #f7f2e8; color: #16181d; font-family: Arial, "Liberation Sans", sans-serif;
+         -webkit-print-color-adjust: exact; print-color-adjust: exact; position: relative; overflow: hidden; }
+  .cadre { position: absolute; left: 43pt; top: 43pt; width: 526pt; height: 706pt; border: 0.75pt solid rgba(176, 141, 63, 0.5); }
+  main { position: absolute; left: 79pt; top: 80pt; width: 454pt; }
+  .surtitre { font-family: Consolas, "DejaVu Sans Mono", monospace; font-weight: bold; font-size: 8pt;
+              letter-spacing: 2.4pt; color: #b08d3f; text-transform: uppercase; }
+  h1 { font-family: "Liberation Serif", "Times New Roman", serif; font-weight: bold; font-size: 22pt;
+       line-height: 1.2; margin-top: 8pt; }
+  .filet { position: relative; height: 1pt; background: #b08d3f; margin: 16pt 0 14pt; }
+  .filet::before, .filet::after { content: ""; position: absolute; top: -2.5pt; width: 5pt; height: 5pt;
+       background: #b08d3f; transform: rotate(45deg); }
+  .filet::before { left: -3pt; } .filet::after { right: -3pt; }
+  .chapeau { font-family: "Liberation Serif", "Times New Roman", serif; font-style: italic; font-size: 11.2pt; color: #6a6f78;
+             line-height: 1.45; margin-bottom: 12pt; }
+  .encadre { background: #fbf8f2; border-left: 2pt solid #b08d3f; padding: 9pt 12pt 10pt; margin-bottom: 9pt; }
+  .encadre.vert { border-left-color: #1e7a4b; } .encadre.rouge { border-left-color: #a8322a; }
+  .encadre h2 { font-family: Consolas, "DejaVu Sans Mono", monospace; font-weight: bold; font-size: 8pt;
+                letter-spacing: 2pt; text-transform: uppercase; color: #b08d3f; margin-bottom: 5pt; }
+  .encadre.vert h2 { color: #1e7a4b; } .encadre.rouge h2 { color: #a8322a; }
+  .encadre p, .encadre li { font-size: 9.9pt; line-height: 15.5pt; }
+  .encadre ul { padding-left: 13pt; }
+  .encadre p + p { margin-top: 4pt; }
+  .pied { position: absolute; top: 745pt; left: 51pt; right: 49pt; font-family: "DejaVu Serif", Cambria, "Times New Roman", serif;
+          font-size: 8pt; color: #554d3b; letter-spacing: 1.3pt; word-spacing: 2pt; display: flex; justify-content: space-between; }
+  /* Section 307-317 : comme dans les cahiers d'origine, le cadre s'interrompt derrière le numéro de page. */
+  .pied span:last-child { background: #f6f1e7; padding: 0 4pt 0 10pt; }
+</style>
+</head>
+<body>
+  <div class="cadre"></div>
+  <main>
+    <div class="surtitre">Cahier nº 7 · Mise à jour</div>
+    <h1>Ce qui a changé en octobre 2026</h1>
+    <div class="filet"></div>
+    <p class="chapeau">Suite de la mise à jour d'octobre 2026 : ventes d'actifs, assurance et propositions en attente.</p>
+
+    <section class="encadre">
+      <h2>Vendre une part ou des maisons</h2>
+      <ul>
+        <li>Le vendeur est toujours votre entreprise. À la banque, la vente est immédiate, au prix de rachat annoncé dans la confirmation.</li>
+        <li>À une entreprise, c'est une <b>offre</b> : son CEO l'accepte (« Accepter et payer… ») ou la refuse dans « Offres de vente en attente » ; elle expire au lancer suivant. Les maisons ne se vendent qu'ainsi. La légende de la page 34 (« comptant immédiat ») ne vaut que pour la banque.</li>
+        <li>Pas d'échange d'une part hypothéquée, sous ABS ou engagée dans un swap spécifique.</li>
+      </ul>
+    </section>
+
+    <section class="encadre rouge">
+      <h2>Assurance</h2>
+      <ul>
+        <li>La franchise ne peut plus être négative.</li>
+        <li>Le montant « à risque » affiché à la signature <b>plafonne l'indemnité</b> d'un loyer (service : ajusté aux dés) : terrain nu couvert pour 0,5 M$, puis hôtel construit, loyer de 20 M$ : l'assureur paie 0,5, vous payez 19,5. Une taxe reste couverte en entier, moins la franchise.</li>
+        <li>Une prime qui a changé depuis l'ouverture de la fenêtre demande une 2e confirmation.</li>
+        <li>Un contrat annuel ou semestriel signé sur une case couverte par votre propre sous-standard l'annule et rembourse sa prime. Une case taxe déjà assurée par votre entreprise n'est plus proposée, un type désactivé n'apparaît pas, et un contrat dont l'assureur a disparu ne couvre plus rien.</li>
+      </ul>
+    </section>
+
+    <section class="encadre vert">
+      <h2>Répondre à une proposition</h2>
+      <p>« Propositions en attente » reçoit aussi les offres d'hypothèque et les demandes de résiliation de swap ; « Offres de vente en attente » regroupe les ventes de parts, de maisons et de REIT. Ces offres et demandes expirent au lancer de dés suivant ; les offres de swap et de compensation, non.</p>
+    </section>
+
+    <section class="encadre">
+      <h2>Sortie publique du CEO</h2>
+      <p>Elle divise les rouges de chaque réserve par deux sans descendre sous les verts : elle n'ajoute jamais de rouge.</p>
+    </section>
+  </main>
+  <div class="pied"><span>Monopoly Bourse · Cahier 7</span><span>39</span></div>
+</body>
+</html>

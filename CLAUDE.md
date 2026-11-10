@@ -28,7 +28,7 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 | Élément | Valeur |
 |---|---|
 | Dépôt | `JulienDupere/monopoly-bourse` (public), branche `main`, aucun build : site statique d'un seul fichier |
-| Production | https://monopoly-bourse.vercel.app et https://monopoly-finance.vercel.app (Vercel redéploie à chaque push sur `main`) |
+| Production | https://monopoly-finance.vercel.app, projet Vercel `monopoly-finance` (redéploie à chaque push sur `main`) ; l'ancien projet `monopoly-bourse` est supprimé |
 | Base | Firebase Realtime Database, projet `monopolybourse`, données sous `data/<clé>`, partie partagée = clé `game:CODE` |
 
 ## Fichiers
@@ -108,4 +108,4 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 3. Ajouter `## NNN.` à la fin de `RESUME_ET_REGLES.md` : demande verbatim de Julien, mécanique retenue, tests
    (modèle : section 307).
 4. Montrer le résultat à Julien. Commit et `git push origin main` seulement avec son accord (pousser = mettre en
-   production), puis vérifier que https://monopoly-bourse.vercel.app se charge.
+   production), puis vérifier que https://monopoly-finance.vercel.app se charge.

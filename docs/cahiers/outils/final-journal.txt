@@ -1,0 +1,61 @@
+corrections : Cahier_0.pdf 1, Cahier_2.pdf 2, Cahier_3.pdf 10, Cahier_4.pdf 4, Cahier_5.pdf 2, Cahier_6.pdf 2, Cahier_7.pdf 5, Cahier_8.pdf 3
+Aide_memoire.pdf : 0 correction(s)
+Cahier_0.pdf : 1 correction(s)
+  ok p.13  lignes 1 -> 1, place restante 1.9 pt  [candidat 429.3, intervalle [418.6 ; inf] ; recomposition de l'original identique]
+Cahier_1.pdf : 0 correction(s)
+Cahier_2.pdf : 2 correction(s)
+  ok p.10  lignes 4 -> 3, place restante 15.2 pt  [candidat 486.0, intervalle [477.7 ; 487.0] ; recomposition de l'original identique]
+  ok p.15  lignes 1 -> 1, place restante 5.7 pt  [candidat 466.0, intervalle [466.0 ; inf] ; recomposition de l'original identique]
+Cahier_3.pdf : 10 correction(s)
+  ok p.2  lignes 4 -> 4, place restante 0.0 pt  [candidat 423.7, intervalle [421.4 ; 427.3] ; recomposition de l'original identique]
+  ok p.4  lignes 3 -> 3, place restante 0.0 pt  [candidat 485.3, intervalle [472.7 ; 504.6] ; recomposition de l'original identique]
+  ok p.16  lignes 4 -> 4, place restante 1.9 pt  [candidat 486.0, intervalle [485.6 ; 488.1] ; recomposition de l'original identique]
+  ok p.16  lignes 5 -> 5, place restante 0.0 pt  [candidat 486.0, intervalle [474.4 ; 488.0] ; recomposition de l'original identique]
+  ok p.19  lignes 5 -> 4, place restante 15.4 pt  [candidat 486.0, intervalle [474.6 ; 489.4] ; recomposition de l'original identique]
+  ok p.20  lignes 1 -> 1, place restante 5.0 pt  [candidat -143.2, intervalle [342.3 ; inf] ; recomposition de l'original identique]
+  ok p.20  lignes 5 -> 5, place restante 0.0 pt  [candidat 486.0, intervalle [486.1 ; 487.0] ; recomposition de l'original identique]
+  ok p.22  lignes 1 -> 1, place restante 5.7 pt  [candidat 450.0, intervalle [458.2 ; inf] ; recomposition de l'original identique]
+  ok p.23  lignes 1 -> 1, place restante 2.7 pt  [candidat 474.7, intervalle [474.7 ; inf] ; recomposition de l'original identique]
+  ok p.23  lignes 1 -> 1, place restante 5.7 pt  [candidat 475.4, intervalle [475.4 ; inf] ; recomposition de l'original identique]
+Cahier_4.pdf : 4 correction(s)
+  ok p.6  lignes 2 -> 2, place restante 5.0 pt  [candidat 234.3, intervalle [210.8 ; 245.1] ; recomposition de l'original identique]
+  ok p.6  lignes 2 -> 2, place restante 5.0 pt  [candidat 121.9, intervalle [111.4 ; 124.6] ; recomposition de l'original identique]
+  ok p.9  lignes 6 -> 6, place restante 0.0 pt  [candidat 486.0, intervalle [479.8 ; 486.7] ; recomposition de l'original identique]
+  ok p.14  lignes 5 -> 5, place restante 0.0 pt  [candidat 485.3, intervalle [468.8 ; 487.5] ; recomposition de l'original identique]
+Cahier_5.pdf : 2 correction(s)
+  ok p.5  lignes 5 -> 5, place restante 14.7 pt  [candidat 204.0, intervalle [504.7 ; 518.4] ; recomposition de l'original identique]
+  ok p.7  lignes 2 -> 2, place restante 8.3 pt  [candidat 485.3, intervalle [476.3 ; 489.5] ; recomposition de l'original identique]
+Cahier_6.pdf : 2 correction(s)
+  ok p.8  lignes 2 -> 2, place restante 5.0 pt  [candidat 203.4, intervalle [318.7 ; 363.1] ; recomposition de l'original identique]
+  ok p.8  lignes 2 -> 2, place restante 5.0 pt  [candidat -112.8, intervalle [228.5 ; 266.3] ; recomposition de l'original identique]
+Cahier_7.pdf : 5 correction(s)
+  ok p.3  lignes 6 -> 6, place restante 0.0 pt  [candidat 486.0, intervalle [485.9 ; 489.5] ; recomposition de l'original identique]
+  ok p.19  lignes 4 -> 3, place restante 15.2 pt  [candidat 486.0, intervalle [485.3 ; 495.0] ; recomposition de l'original identique]
+  ok p.25  lignes 4 -> 4, place restante 0.0 pt  [candidat 486.0, intervalle [464.4 ; 486.7] ; recomposition de l'original identique]
+  ok p.28  lignes 3 -> 3, place restante 0.0 pt  [candidat 486.0, intervalle [484.5 ; 497.4] ; recomposition de l'original identique]
+  ok p.31  lignes 1 -> 1, place restante 2.7 pt  [candidat 486.0, intervalle [483.2 ; inf] ; recomposition de l'original identique]
+Cahier_8.pdf : 3 correction(s)
+  ok p.4  lignes 3 -> 3, place restante 1.9 pt  [candidat 486.0, intervalle [478.1 ; 492.2] ; recomposition de l'original identique]
+  ok p.4  lignes 3 -> 2, place restante 15.4 pt  [candidat 486.0, intervalle [480.6 ; 519.1] ; recomposition de l'original identique]
+  ok p.4  lignes 2 -> 2, place restante 10.1 pt  [candidat 76.5, intervalle [487.4 ; 511.9] ; recomposition de l'original identique]
+Terminé : 0 erreur(s) de correction.
+pages : 14
+pages : 16
+pages : 17
+pages : 25
+pages : 16
+pages : 12
+pages : 15
+pages : 38
+pages : 39
+pages : 11
+Aide_memoire.pdf 5 -> 5
+Cahier_0.pdf 13 -> 14
+Cahier_1.pdf 15 -> 16
+Cahier_2.pdf 16 -> 17
+Cahier_3.pdf 24 -> 25
+Cahier_4.pdf 15 -> 16
+Cahier_5.pdf 11 -> 12
+Cahier_6.pdf 14 -> 15
+Cahier_7.pdf 37 -> 39
+Cahier_8.pdf 10 -> 11

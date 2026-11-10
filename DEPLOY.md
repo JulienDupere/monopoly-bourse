@@ -9,8 +9,9 @@ Firebase dans une session — je ne veux pas inventer des détails que je n'ai p
 
 - **Code source** : app web mono-fichier HTML/CSS/JS (pas de framework, pas de build step côté navigateur).
 - **Dépôt GitHub** : `JulienDupere/monopoly-bourse`.
-- **Hébergement** : Vercel, en ligne à <https://monopoly-bourse.vercel.app> (alias :
-  <https://monopoly-finance.vercel.app>, même déploiement). Redéploiement automatique à chaque push sur `main`.
+- **Hébergement** : Vercel, projet `monopoly-finance` (équipe « Boardgame à la quinzaine »), en ligne à
+  <https://monopoly-finance.vercel.app>. Redéploiement automatique à chaque push sur `main`. L'ancien projet
+  `monopoly-bourse` (<https://monopoly-bourse.vercel.app>) a été supprimé le 2026-10-25 à la demande de Julien.
 - **État de partie partagé** : Firebase Realtime Database — remplace, en production, l'API `window.storage`
   utilisée pendant le développement dans l'environnement Claude. Synchronisation en temps réel confirmée
   fonctionnelle entre les appareils des joueurs.

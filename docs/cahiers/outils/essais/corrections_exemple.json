@@ -1,0 +1,10 @@
+{
+  "Cahier_1.pdf": [
+    {"page": 15, "ancien": "à votre prix limite (chapitre 11).", "nouveau": "à votre prix limite (chapitre 11), jamais à un prix moins favorable que celui que vous avez vous-même fixé."},
+    {"page": 15, "ancien": "Aucune limite", "nouveau": "**Aucune limite (à surveiller)**"},
+    {"page": 15, "ancien": "Jamais", "nouveau": "Jamais, aucun coût de portage, aucun intérêt, aucune charge, aucun frais caché, rien du tout à payer jamais."}
+  ],
+  "Cahier_3.pdf": [
+    {"page": 3, "ancien": "il paie pour dormir tranquille", "nouveau": "il paie pour dormir tranquille (c'est la prime)"}
+  ]
+}

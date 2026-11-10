@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<!-- Gabarit de la page « Mise à jour » ajoutée à la fin d'un cahier.
+     Calqué sur la dernière page des cahiers (Cahier_1.pdf p. 15) : fond #f7f2e8, cadre doré #b08d3f,
+     surtitre mono doré, titre serif 22 pt, encadrés #fbf8f2 à filet coloré, pied de page serif #554d3b.
+     Remplacer 7 (ex. « 1 »), 38 (numéro de la nouvelle page) et le contenu de <main>.
+     Couleurs de filet : .or (défaut), .vert, .rouge. Impression : Chrome sans interface, format Lettre. -->
+<style>
+  @page { size: 8.5in 11in; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 612pt; height: 792pt; }
+  body { background: #f7f2e8; color: #16181d; font-family: Arial, "Liberation Sans", sans-serif;
+         -webkit-print-color-adjust: exact; print-color-adjust: exact; position: relative; overflow: hidden; }
+  .cadre { position: absolute; left: 43pt; top: 43pt; width: 526pt; height: 706pt; border: 0.75pt solid rgba(176, 141, 63, 0.5); }
+  main { position: absolute; left: 79pt; top: 80pt; width: 454pt; }
+  .surtitre { font-family: Consolas, "DejaVu Sans Mono", monospace; font-weight: bold; font-size: 8pt;
+              letter-spacing: 2.4pt; color: #b08d3f; text-transform: uppercase; }
+  h1 { font-family: "Liberation Serif", "Times New Roman", serif; font-weight: bold; font-size: 22pt;
+       line-height: 1.2; margin-top: 8pt; }
+  .filet { position: relative; height: 1pt; background: #b08d3f; margin: 16pt 0 14pt; }
+  .filet::before, .filet::after { content: ""; position: absolute; top: -2.5pt; width: 5pt; height: 5pt;
+       background: #b08d3f; transform: rotate(45deg); }
+  .filet::before { left: -3pt; } .filet::after { right: -3pt; }
+  .chapeau { font-family: "Liberation Serif", "Times New Roman", serif; font-style: italic; font-size: 11.2pt; color: #6a6f78;
+             line-height: 1.45; margin-bottom: 12pt; }
+  .encadre { background: #fbf8f2; border-left: 2pt solid #b08d3f; padding: 9pt 12pt 10pt; margin-bottom: 9pt; }
+  .encadre.vert { border-left-color: #1e7a4b; } .encadre.rouge { border-left-color: #a8322a; }
+  .encadre h2 { font-family: Consolas, "DejaVu Sans Mono", monospace; font-weight: bold; font-size: 8pt;
+                letter-spacing: 2pt; text-transform: uppercase; color: #b08d3f; margin-bottom: 5pt; }
+  .encadre.vert h2 { color: #1e7a4b; } .encadre.rouge h2 { color: #a8322a; }
+  .encadre p, .encadre li { font-size: 9.9pt; line-height: 15.5pt; }
+  .encadre ul { padding-left: 13pt; }
+  .encadre p + p { margin-top: 4pt; }
+  .pied { position: absolute; top: 745pt; left: 51pt; right: 49pt; font-family: "DejaVu Serif", Cambria, "Times New Roman", serif;
+          font-size: 8pt; color: #554d3b; letter-spacing: 1.3pt; word-spacing: 2pt; display: flex; justify-content: space-between; }
+  /* Section 307-317 : comme dans les cahiers d'origine, le cadre s'interrompt derrière le numéro de page. */
+  .pied span:last-child { background: #f6f1e7; padding: 0 4pt 0 10pt; }
+</style>
+</head>
+<body>
+  <div class="cadre"></div>
+  <main>
+    <div class="surtitre">Cahier nº 7 · Mise à jour</div>
+    <h1>Ce qui a changé en octobre 2026</h1>
+    <div class="filet"></div>
+    <p class="chapeau">L'application a été corrigée en octobre 2026. Les pages 3, 19, 25, 28 et 31 ont été corrigées en place ; voici le reste, sur deux pages.</p>
+
+    <section class="encadre">
+      <h2>Crédit et taux</h2>
+      <ul>
+        <li>Une encaisse négative compte comme une dette : cote plus basse (jusqu'à D), taux plus élevés, cours plus volatil, spirale de détresse possible.</li>
+        <li>Le taux ne dépasse jamais le taux de base plus la prime maximale : 85 % au plus pour l'hypothèque, et la 1re subvention d'avance rapporte au moins 1,25 M$ (réglages par défaut).</li>
+        <li>« 💸 Subvention d'avance » ouvre une confirmation (« Vendre la subvention (…) ») ; le journal reprend le taux confirmé.</li>
+      </ul>
+    </section>
+
+    <section class="encadre vert">
+      <h2>Prêts et hypothèques</h2>
+      <ul>
+        <li>« Accepter » une offre de prêt ouvre une confirmation : une offre modifiée entre-temps affiche « Les conditions ont changé ».</li>
+        <li>Hypothèque auprès d'une entreprise : une <b>offre</b> que son CEO accepte dans « Propositions en attente » avant le lancer suivant, sinon elle expire. Elle tombe si la part change. Auprès de la banque, rien ne change.</li>
+        <li>Le prêt de dernier recours retient 50 % des loyers dans toutes les parties, même sans l'option « Prêts ».</li>
+      </ul>
+    </section>
+
+    <section class="encadre">
+      <h2>Swaps et compensation</h2>
+      <ul>
+        <li>Un seul swap général ou à budget à la fois par entreprise, et un seul swap spécifique par terrain. Un terrain d'un swap spécifique ne se vend ni ne s'échange tant que le swap court.</li>
+        <li>Un swap à budget se résilie à l'amiable, sans paiement : « Proposer une résiliation amiable », à accepter avant le lancer suivant.</li>
+        <li>Seul le CEO destinataire répond à une offre de swap ou de compensation. Un lot ne se regroupe pas si une même entreprise a des swaps spécifiques sur deux de ses terrains.</li>
+        <li>Fin de partie en cours d'année : le solde d'un accord de compensation est réglé aussitôt, intérêt compris.</li>
+      </ul>
+    </section>
+
+    <section class="encadre rouge">
+      <h2>Dividendes privilégiés</h2>
+      <p>Un arriérage bloque aussi le dividende récurrent : une entreprise Dividendes voit son sac type passer à 20 rouges. La fenêtre « Dividende récurrent » affiche l'arriérage en rouge.</p>
+    </section>
+  </main>
+  <div class="pied"><span>Monopoly Bourse · Cahier 7</span><span>38</span></div>
+</body>
+</html>

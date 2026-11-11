@@ -53,6 +53,18 @@
 // chaînées sur un même chemin (deux transactions simultanées d'un même client partent chacune avec sa propre base),
 // pas de hachage (comparaison exacte des chaînes, équivalente pour des valeurs JSON sérialisées), pas de requêtes
 // (orderBy…), pas de persistance hors ligne, pas de règles de sécurité.
+// Section 319 — ajouts, tous DÉSACTIVÉS par défaut (le comportement ci-dessus est inchangé sans eux) :
+//  - new Reseau({ reconnexionProgressive: true }) : comme le vrai SDK (PersistentConnection), après une coupure le
+//    client retente de se connecter à délai croissant (tirage dans [0, délai], délai de 1 s multiplié par 1,3 à chaque
+//    échec, plafond 5 minutes) ; une tentative ne réussit que si le réseau est revenu (fin de la durée donnée à
+//    couper). La reconnexion n'a donc plus lieu à l'heure exacte du retour du réseau. database() reçoit alors
+//    goOffline() (tentative programmée annulée ; connexion ouverte fermée, transactions envoyées rejetées
+//    « disconnect ») et goOnline() (délai remis à 1 s, tentative immédiate). client.tentatives = heures des tentatives.
+//  - client.session = false : la session anonyme du client n'existe plus (currentUser nul) ; le serveur lui refuse
+//    écoutes, lectures et transactions (« permission_denied »). Une écoute refusée est retirée et son rappel
+//    d'annulation appelé, comme PersistentConnection.onListenRevoked_. signInAnonymously() recrée la session, sauf si
+//    client.authRefusee = true (connexion anonyme refusée : la promesse est rejetée).
+//  - R.revoquerEcoute(client, chemin) : le serveur révoque une écoute en place (même effet, par un message).
 //
 // Ordonnanceur : à chaque pas, un candidat est tiré au sort parmi : la tête de la file sortante de chaque client
 // connecté (livraison au serveur), la tête de sa file entrante (livraison au client), les minuteries échues
@@ -77,7 +89,8 @@ const instantane = v => ({ exists: () => v !== null && v !== undefined, val: () 
 const microtaches = () => new Promise(r => setImmediate(r));
 
 class Reseau {
-  constructor({ graine = 1, pasMinMs = 5, pasMaxMs = 120, maxEssaisTransaction = 25, journalMax = 400 } = {}){
+  constructor({ graine = 1, pasMinMs = 5, pasMaxMs = 120, maxEssaisTransaction = 25, journalMax = 400, reconnexionProgressive = false } = {}){
+    this.reconnexionProgressive = !!reconnexionProgressive;   // Section 319 — désactivée par défaut
     this.alea = mulberry32(graine);
     this.graine = graine;
     this.serveur = new Map();            // chemin -> valeur (chaîne JSON pour les parties)
@@ -116,6 +129,9 @@ class Reseau {
       stats: { transactions: 0, ecritures: 0, perimes: 0, abandonsLocaux: 0, refus: 0 },
       echecsAVenir: 0,                   // nombre de transactions que le serveur refusera
       infoConnecte: [],                  // écouteurs de « .info/connected » (Section 308 — retouche de la revue)
+      session: true,                     // Section 319 — session anonyme présente (voir l'en-tête)
+      authRefusee: false,                // Section 319 — signInAnonymously() refusée
+      tentatives: [],                    // Section 319 — heures des tentatives de reconnexion (reconnexionProgressive)
     };
     client.firebase = this.fauxSdk(client);
     client.setTimeout = (fn, ms) => R.planifier(client, fn, ms, false);
@@ -130,11 +146,19 @@ class Reseau {
     const apps = [];
     const utilisateur = { uid: 'anonyme-' + client.nom, isAnonymous: true };
     const auth = {
-      currentUser: utilisateur,
-      onAuthStateChanged(cb){ Promise.resolve().then(() => cb(utilisateur)); return () => {}; },
-      signInAnonymously: async () => ({ user: utilisateur }),
+      get currentUser(){ return client.session ? utilisateur : null; },   // Section 319 — session, authRefusee
+      onAuthStateChanged(cb){ Promise.resolve().then(() => cb(client.session ? utilisateur : null)); return () => {}; },
+      signInAnonymously: async () => {
+        if(client.authRefusee) throw Object.assign(new Error('auth/network-request-failed'), { code: 'auth/network-request-failed' });
+        client.session = true;
+        return { user: utilisateur };
+      },
     };
     const db = { ref: (chemin) => R.fausseRef(client, String(chemin)) };
+    if(R.reconnexionProgressive){          // Section 319 — goOffline / goOnline du vrai SDK (interrupt / resume)
+      db.goOffline = () => R.sdkHorsLigne(client);
+      db.goOnline = () => R.sdkEnLigne(client);
+    }
     return {
       apps,
       initializeApp(cfg){ const app = { name: '[DEFAULT]', options: cfg }; apps.push(app); return app; },
@@ -247,6 +271,12 @@ class Reseau {
     const actuel = this.valeur(q.chemin);
     switch(q.type){
       case 'ecoute': {
+        if(!client.session){               // Section 319 — écoute refusée : annulée chez le client
+          client.requetes.splice(client.requetes.indexOf(q), 1);
+          this.noter(`${client.nom} : écoute de ${q.chemin} REFUSÉE par le serveur (permission_denied)`);
+          client.entrant.push({ type: 'ecouteRefusee', chemin: q.chemin });
+          break;
+        }
         const s = this.abonnes.get(q.chemin) || new Set(); s.add(client); this.abonnes.set(q.chemin, s);
         client.requetes.splice(client.requetes.indexOf(q), 1);
         client.entrant.push({ type: 'donnee', chemin: q.chemin, valeur: actuel });
@@ -257,7 +287,7 @@ class Reseau {
         client.requetes.splice(client.requetes.indexOf(q), 1);
         break;
       }
-      case 'lire': repondre({ type: 'lu', valeur: actuel }); break;
+      case 'lire': repondre(!client.session ? { type: 'luRefuse' } : { type: 'lu', valeur: actuel }); break;   // Section 319 — sans session
       case 'ecrire': {
         this.ecrireServeur(q.chemin, q.valeur); this.stats.ecritures++;
         this.noter(`${client.nom} écrit (set) ${q.chemin}`);
@@ -266,7 +296,11 @@ class Reseau {
         break;
       }
       case 'tx': {
-        if(client.echecsAVenir > 0){
+        if(!client.session){               // Section 319 — client non authentifié : rien n'est écrit
+          this.stats.refus++; client.stats.refus++;
+          this.noter(`${client.nom} : transaction #${q.tx.num} REFUSÉE par le serveur (non authentifié)`);
+          repondre({ type: 'txErreur', code: 'permission_denied' });
+        } else if(client.echecsAVenir > 0){
           client.echecsAVenir--; this.stats.refus++; client.stats.refus++;
           this.noter(`${client.nom} : transaction #${q.tx.num} REFUSÉE par le serveur (permission_denied)`);
           repondre({ type: 'txErreur', code: 'permission_denied' });
@@ -304,6 +338,8 @@ class Reseau {
         this.notifier(client, m.chemin);
         break;
       case 'lu': retirer(); q.resolve(instantane(m.valeur)); break;
+      case 'luRefuse': retirer(); q.reject(Object.assign(new Error('permission_denied'), { code: 'PERMISSION_DENIED' })); break;   // Section 319
+      case 'ecouteRefusee': this.annulerEcoute(client, m.chemin); break;                                                           // Section 319
       case 'ecritOk':
         retirer();
         if(client.ecouteurs.has(q.chemin)){ client.vue.set(q.chemin, m.valeur); this.notifier(client, q.chemin); }
@@ -417,7 +453,59 @@ class Reseau {
       this.notifier(client, q.chemin);
       this.terminerTransaction(q.tx, new Error('disconnect'), false, null);
     }
-    this.planifier(null, () => this.reconnecter(client), dureeMs, false);
+    if(this.reconnexionProgressive) this.debuterPanne(client, dureeMs);   // Section 319
+    else this.planifier(null, () => this.reconnecter(client), dureeMs, false);
+  }
+  // ---------- Section 319 : reconnexion à délai croissant, goOffline / goOnline, écoute révoquée ----------
+  debuterPanne(client, dureeMs){
+    client.reseauDeRetourA = this.temps + Math.max(0, Number(dureeMs) || 0);
+    client.delaiReconnexion = 1000;                       // RECONNECT_MIN_DELAY
+    if(!client.sdkInterrompu) this.planifierTentative(client, this.hasard() * client.delaiReconnexion);
+  }
+  planifierTentative(client, delaiMs){
+    if(client.minuterieTentative) this.annulerMinuterie(client.minuterieTentative);
+    client.minuterieTentative = this.planifier(null, () => {
+      client.minuterieTentative = null;
+      if(!client.vivant || client.connecte || client.sdkInterrompu) return;
+      client.tentatives.push(this.temps);
+      if(this.temps >= client.reseauDeRetourA){ this.reconnecter(client); return; }
+      const d = this.hasard() * client.delaiReconnexion;   // comme le vrai SDK : Math.random() * reconnectDelay_
+      client.delaiReconnexion = Math.min(5 * 60 * 1000, client.delaiReconnexion * 1.3);
+      this.noter(`${client.nom} : tentative de reconnexion échouée, la suivante dans ${Math.round(d)} ms (délai du SDK : ${Math.round(client.delaiReconnexion)} ms)`);
+      this.planifierTentative(client, d);
+    }, delaiMs, false);
+  }
+  // goOffline() : PersistentConnection.interrupt — plus aucune tentative ; une connexion ouverte est fermée.
+  sdkHorsLigne(client){
+    if(!client.vivant) return;
+    client.sdkInterrompu = true;
+    if(client.minuterieTentative){ this.annulerMinuterie(client.minuterieTentative); client.minuterieTentative = null; }
+    if(client.connecte) this.couper(client, 0);
+  }
+  // goOnline() : PersistentConnection.resume — délai remis au minimum, tentative immédiate.
+  sdkEnLigne(client){
+    if(!client.vivant) return;
+    client.sdkInterrompu = false;
+    client.delaiReconnexion = 1000;
+    if(!client.connecte) this.planifierTentative(client, 0);
+  }
+  // Le serveur révoque une écoute en place (jeton expiré, session supprimée) : le client la retire et appelle le
+  // rappel d'annulation avec « permission_denied » (PersistentConnection.onListenRevoked_).
+  revoquerEcoute(client, chemin){
+    const s = this.abonnes.get(chemin); if(s) s.delete(client);
+    this.noter(`${client.nom} : écoute de ${chemin} RÉVOQUÉE par le serveur`);
+    if(client.vivant && client.connecte) client.entrant.push({ type: 'ecouteRefusee', chemin });
+  }
+  annulerEcoute(client, chemin){
+    const liste = client.ecouteurs.get(chemin) || [];
+    client.ecouteurs.delete(chemin);
+    client.vue.delete(chemin);
+    const s = this.abonnes.get(chemin); if(s) s.delete(client);
+    for(const e of liste){
+      if(typeof e.annule !== 'function') continue;
+      try{ e.annule(Object.assign(new Error('permission_denied'), { code: 'PERMISSION_DENIED' })); }
+      catch(err){ this.erreursEcouteurs.push(`${client.nom} : rappel d'annulation ${chemin} : ${err && err.stack || err}`); }
+    }
   }
   reconnecter(client){
     if(!client.vivant || client.connecte) return;

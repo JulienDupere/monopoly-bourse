@@ -687,6 +687,21 @@ const COMPANY_TYPE_GUIDELINE_UNIVERSAL = `Peu importe le type choisi : accumuler
 
 let firebaseDbInstance = null;
 let firebaseAuthPromise = null;
+// Section 319 — M5 : issue du dernier essai d'authentification ({ok, atMs}), null tant qu'il est en cours. Un échec
+// (connexion anonyme refusée, réseau) n'est plus gardé en cache pour toujours : firebaseAuthReady() réessaie une fois
+// FIREBASE_AUTH_RETRY_MIN_MS passées, et la remise en écoute (scheduleGameListenerRetry) oublie le résultat d'office.
+let firebaseAuthOutcome = null;
+const FIREBASE_AUTH_RETRY_MIN_MS = 5000;
+function forgetFirebaseAuthResult(){
+  if(firebaseAuthPromise && firebaseAuthOutcome){ firebaseAuthPromise = null; firebaseAuthOutcome = null; }
+}
+// Section 319 — M5 : écoute de la partie annulée par le serveur (« permission_denied ») et pas encore revenue :
+// l'appareil est « sourd » (voir attachGameListener). Déclarés ici : firebaseAuthReady() les lit.
+let firebaseListenLost = false;
+let firebaseListenWarning = false; // le bandeau #firebaseAuthWarning a été levé par une écoute annulée
+let firebaseRelistenAttempt = 0;
+let firebaseRelistenTimer = null;
+let firebaseRelistenPending = false; // un essai de remise en écoute est programmé ou en cours
 function firebaseDb(){
   if(firebaseDbInstance) return firebaseDbInstance;
   if(typeof firebase==='undefined' || !window.__FIREBASE_CONFIG__) return null;
@@ -703,11 +718,14 @@ function firebaseDb(){
 // réseau) — l'appelant continue alors comme avant et la base répondra « permission denied », ce que les
 // bandeaux saveFailedWarning/firebaseAuthWarning rendent visible au lieu d'un échec silencieux.
 function firebaseAuthReady(){
+  // Section 319 — M5 : un échec en cache est retenté après FIREBASE_AUTH_RETRY_MIN_MS (jamais pendant un essai en cours).
+  if(firebaseAuthPromise && firebaseAuthOutcome && !firebaseAuthOutcome.ok && Date.now()-firebaseAuthOutcome.atMs >= FIREBASE_AUTH_RETRY_MIN_MS) forgetFirebaseAuthResult();
   if(firebaseAuthPromise) return firebaseAuthPromise;
   if(typeof firebase==='undefined' || typeof firebase.auth!=='function'){
     firebaseAuthPromise = Promise.resolve(false);
     return firebaseAuthPromise;
   }
+  firebaseAuthOutcome = null; // Section 319 — M5
   firebaseAuthPromise = new Promise(resolve=>{
     let auth;
     try{
@@ -718,7 +736,8 @@ function firebaseAuthReady(){
       }
       auth = firebase.auth();
     }catch(e){ console.error('Initialisation de l’authentification Firebase impossible :', e); resolve(false); return; }
-    const done = (ok)=>{ toggleFirebaseAuthWarning(!ok); resolve(ok); };
+    // Section 319 — M5 : l'issue est datée (un échec sera retenté) ; le bandeau reste tant que l'appareil est sourd.
+    const done = (ok)=>{ firebaseAuthOutcome = {ok:!!ok, atMs: Date.now()}; toggleFirebaseAuthWarning(!ok || firebaseListenLost); resolve(ok); };
     if(auth.currentUser){ done(true); return; }
     let settled = false;
     const unsub = auth.onAuthStateChanged(user=>{
@@ -1153,6 +1172,7 @@ function migrateState(s){
   
   if(s.version===undefined) s.version = 0;
   if(!Array.isArray(s.appliedActionIds)) s.appliedActionIds = []; // Section 308 — accusé de réception perdu : identifiants des dernières actions enregistrées
+  if(!s.appliedActionSeq || typeof s.appliedActionSeq!=='object' || Array.isArray(s.appliedActionSeq)) s.appliedActionSeq = {}; // Section 319 — S1 : dernier numéro d'action enregistré par préfixe d'appareil (voir recordActionId)
   if(!s.settings) s.settings = {};
   
   
@@ -2542,6 +2562,7 @@ function actionFailureMessage(reason, attempts, detail){
   if(reason==='exception') return `Une erreur inattendue est survenue pendant l’action${detail ? ` (${detail})` : ''}. ${tail}`;
   if(reason==='reloaded') return `La partie a été rechargée pendant l’action. ${tail}`;
   if(reason==='unknown') return `La connexion au serveur a été perdue pendant l’enregistrement : impossible de savoir si votre action a été enregistrée. La partie se mettra à jour au retour de la connexion ; vérifiez-la avant de recommencer.`; // Section 308 — accusé de réception perdu
+  if(reason==='auth') return `Connexion à Firebase refusée : cet appareil ne reçoit plus la partie. ${tail} Un nouvel essai de connexion est lancé ; si cela persiste, rechargez la page.`; // Section 319 — M5 : appareil sourd (écoute annulée), et non « conflits répétés »
   return `Conflits répétés : d’autres joueurs enregistrent en même temps — nouvel essai automatique fait ${attempts} fois sans succès. ${tail} Réessayez dans un instant.`;
 }
 // Section 308 — accusé de réception perdu : le serveur peut avoir écrit une transaction dont la réponse s'est perdue
@@ -2552,12 +2573,72 @@ const ACTION_ID_PREFIX = Date.now().toString(36) + Math.random().toString(36).sl
 const APPLIED_ACTION_IDS_MAX = 100;
 let actionIdCounter = 0;
 let saveFailureMaybeWritten = false;
-function newActionId(){ return ACTION_ID_PREFIX + '.' + (++actionIdCounter); }
-function stateHasActionId(s, id){ return !!(s && Array.isArray(s.appliedActionIds) && s.appliedActionIds.includes(id)); }
+function newActionId(gen){ return ACTION_ID_PREFIX + '-' + (gen===undefined ? actionGeneration : gen) + '.' + (++actionIdCounter); } // Section 319 — S1 : préfixe = chargement de page + file d'actions
+function stateHasActionId(s, id){ return !!(s && Array.isArray(s.appliedActionIds) && s.appliedActionIds.includes(id)) || stateHasActionSeq(s, id); } // Section 319 — S1 : liste OU table par préfixe
+// Section 319 — S1 (relecture du 2026-11-11) : appliedActionIds ne garde que les 100 derniers identifiants ; après un
+// accusé perdu, si 100 actions d'autres joueurs passaient pendant la coupure, l'identifiant en était sorti et l'action
+// était rejouée (appliquée deux fois pour un seul clic). La question « mon action a-t-elle été écrite ? » reçoit donc
+// une réponse exacte, sans fenêtre glissante : state.appliedActionSeq garde, par préfixe (un par chargement de page),
+// le plus grand numéro d'action enregistré, mis à jour dans la même écriture que la mutation. Un appareil n'a qu'une
+// action à la fois et ses numéros ne font que monter : l'action n° n d'un préfixe est écrite si et seulement si la
+// table porte un numéro >= n pour ce préfixe (stateHasActionId : liste OU table). Le préfixe porte aussi le numéro
+// de la file d'actions (newActionId) : après un rechargement de partie (resetActionQueue), une action de l'ancienne
+// file peut encore être en vol pendant qu'une suivante s'enregistre, et ne doit pas être prise pour écrite.
+// appliedActionIds reste alimentée et consultée (appareils encore sur l'ancien code pendant une mise en ligne).
+// La table est bornée aux APPLIED_ACTION_SEQ_MAX préfixes les plus récemment mis à jour : un préfixe n'en sort
+// qu'après autant d'écritures d'AUTRES préfixes, donc autant de versions. Au-delà de cet écart depuis un essai
+// « peut-être écrit », l'absence ne prouve plus rien : l'issue est déclarée incertaine, jamais rejouée
+// (actionAbsenceProvable).
+const APPLIED_ACTION_SEQ_MAX = 300;
+function parseActionId(id){
+  const str = String(id), i = str.lastIndexOf('.');
+  const seq = i>0 ? Number(str.slice(i+1)) : NaN;
+  return (i>0 && Number.isInteger(seq) && seq>0) ? {prefix: str.slice(0, i), seq} : null;
+}
+function stateHasActionSeq(s, id){
+  const a = parseActionId(id), t = s && s.appliedActionSeq;
+  return !!(a && t && typeof t==='object' && !Array.isArray(t) && typeof t[a.prefix]==='number' && t[a.prefix]>=a.seq);
+}
+function actionAbsenceProvable(freshVersion, minMaybeWrittenBaseVersion){
+  return typeof freshVersion==='number' && minMaybeWrittenBaseVersion!==null && freshVersion - minMaybeWrittenBaseVersion <= APPLIED_ACTION_SEQ_MAX;
+}
 function recordActionId(id){
   if(!Array.isArray(state.appliedActionIds)) state.appliedActionIds = [];
   state.appliedActionIds.push(id);
   if(state.appliedActionIds.length > APPLIED_ACTION_IDS_MAX) state.appliedActionIds.splice(0, state.appliedActionIds.length - APPLIED_ACTION_IDS_MAX);
+  // Section 319 — S1 : et son numéro dans la table par préfixe (même écriture que la mutation).
+  const a = parseActionId(id);
+  if(!a) return;
+  if(!state.appliedActionSeq || typeof state.appliedActionSeq!=='object' || Array.isArray(state.appliedActionSeq)) state.appliedActionSeq = {};
+  const t = state.appliedActionSeq;
+  const prev = (typeof t[a.prefix]==='number') ? t[a.prefix] : 0;
+  delete t[a.prefix]; // réinséré en dernier : l'ordre des clés (conservé par JSON) est celui de la dernière mise à jour
+  t[a.prefix] = Math.max(prev, a.seq);
+  const keys = Object.keys(t);
+  for(let i=0; i<keys.length-APPLIED_ACTION_SEQ_MAX; i++) delete t[keys[i]];
+}
+// Section 319 — S2 (relecture du 2026-11-11) : sur un appareil partagé, « Vous êtes » changé pendant qu'une action
+// s'enregistrait faisait rejouer l'action (après un conflit) au nom du NOUVEAU joueur, les applyFn relisant
+// myPlayerId. Deux gardes : (1) les menus « Vous êtes » refusent le changement tant qu'une action de cet appareil
+// est en vol ou en file (identityChangeBlocked) ; (2) filet : l'identité est mémorisée à l'appel
+// d'attemptActionWithRetry et, avant chaque application de l'applyFn (la première comme les rejeux), si elle a
+// changé, rien n'est appliqué ni enregistré (voir attemptActionWithRetry). Une action lancée sans identité
+// (programme, écran « Vous êtes » : myPlayerId vide) n'agit pour aucun joueur : le filet ne la concerne pas.
+const IDENTITY_CHANGED_ACTION_MESSAGE = '« Vous êtes » a changé pendant l’enregistrement : l’action lancée au nom du joueur précédent n’a PAS été enregistrée. Refaites-la sous la bonne identité.';
+const IDENTITY_LOCKED_MESSAGE = 'Une action est en cours d’enregistrement : « Vous êtes » ne peut pas changer avant sa fin. Réessayez dans un instant.';
+function actionIdentityChanged(identityAtCall){
+  return identityAtCall!==undefined && identityAtCall!==null && myPlayerId!==identityAtCall;
+}
+function identityChangedActionResult(label){
+  if(label) setMyActionStatus(label, 'failed');
+  flashActionStatus(IDENTITY_CHANGED_ACTION_MESSAGE); // visible même si l'appelant n'affiche pas l'erreur
+  return {ok:false, error:IDENTITY_CHANGED_ACTION_MESSAGE, code:'identity-changed', notSaved:true, reason:'identity'};
+}
+// Garde des menus « Vous êtes » : vrai (avec un message bref) si l'identité ne peut pas changer maintenant.
+function identityChangeBlocked(newId){
+  if(actionsInFlight<=0 || !myPlayerId || newId===myPlayerId) return false;
+  flashActionStatus(IDENTITY_LOCKED_MESSAGE);
+  return true;
 }
 // Lecture de la valeur faisant foi : {ok:true, raw} ou {ok:false} si elle est impossible (hors ligne, erreur).
 async function readServerGameRaw(){
@@ -2588,8 +2669,23 @@ function attemptActionWithRetry(applyFn, opts){
   if(isKnownOffline()){
     takeClickedActionButton(); // le bouton cliqué n'est pas désactivé : rien n'est parti
     flashActionStatus(OFFLINE_ACTION_MESSAGE); // visible même si l'appelant n'affiche pas l'erreur
+    nudgeFirebaseReconnect(); // Section 319 — M4 : le SDK réessaie tout de suite au lieu d'attendre son délai (jusqu'à 5 minutes)
     return Promise.resolve(offlineActionResult());
   }
+  // Section 319 — M5 : appareil « sourd » (écoute de la partie annulée par le serveur) : sans écoute, aucune
+  // transaction ne peut aboutir. L'action n'est pas lancée ; message vrai (et non « conflits répétés » après 5 essais).
+  if(isFirebaseDeaf()){
+    takeClickedActionButton();
+    flashActionStatus(FIREBASE_DEAF_ACTION_MESSAGE);
+    retryGameListenerNow();
+    return Promise.resolve(firebaseDeafActionResult());
+  }
+  // Section 319 — S2 : filet. L'identité est mémorisée ici ; avant CHAQUE application (la première comme les rejeux
+  // après un conflit), si elle a changé, l'applyFn n'est pas exécutée : le refus suit le chemin habituel d'une
+  // applyFn qui refuse (state revient à l'état d'avant l'application, rien n'est enregistré, résultat notSaved).
+  const identityAtCall = myPlayerId;
+  const guardedFn = applyFn;
+  applyFn = ()=> actionIdentityChanged(identityAtCall) ? identityChangedActionResult(opts && opts.label) : guardedFn();
   const gen = actionGeneration;
   actionsInFlight++;
   const btn = takeClickedActionButton();
@@ -2643,13 +2739,16 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label, allow
   let res = null;
   let needsReapply = true;
   let baseRaw = null, baseLocals = null, failure = null;
-  const actionId = newActionId(); // Section 308 — accusé de réception perdu
+  const actionId = newActionId(gen); // Section 308 — accusé de réception perdu ; Section 319 — S1 : numéro propre à la file (gen)
   let maybeWritten = false;
   let maybeWrittenBaseVersion = null; // Section 308 — retouche de la revue : version de base la plus haute d'un essai peut-être écrit
+  let maybeWrittenMinBaseVersion = null; // Section 319 — S1 : la plus basse (borne de la table appliedActionSeq, voir actionAbsenceProvable)
   for(let attempt=1; attempt<=maxAttempts; attempt++){
     if(needsReapply){
       if(gen!==actionGeneration) return {ok:false, error:actionFailureMessage('reloaded'), notSaved:true, reason:'reloaded'};
+      if(attempt===1 && isKnownOffline()) nudgeFirebaseReconnect(); // Section 319 — M4 : action en file refusée hors ligne : reconnexion relancée
       if(attempt===1 && isKnownOffline()) return offlineActionResult(); // Section 308 — retouche de la revue : action en file, connexion coupée entre-temps
+      if(attempt===1 && isFirebaseDeaf()){ retryGameListenerNow(); return firebaseDeafActionResult(); } // Section 319 — M5 : action en file, écoute annulée entre-temps
       if(attempt===1) adoptReceivedStateBeforeAction(); // Section 308 — C2 : revérifiée sur l'état à jour
       if(baseLocals) restoreActionLocals(baseLocals);
       if(state && state.gameEndedReason && !allowAfterGameEnd) return gameEndedActionResult(label); // Section 316
@@ -2680,11 +2779,19 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label, allow
     if(saved===true){ if(label) setMyActionStatus(label, 'confirmed'); return res; }
     failure = (saved==='conflict') ? 'conflict' : 'network';
     if(saved==='conflict' && stateHasActionId(state, actionId)){ if(label) setMyActionStatus(label, 'confirmed'); return res; } // déjà écrite (accusé perdu) : pas de rejeu
+    // Section 319 — S1 : absente après un essai peut-être écrit, mais trop de versions ont passé pour que la table
+    // le prouve encore : issue incertaine, jamais de rejeu (state est déjà la valeur du serveur).
+    if(saved==='conflict' && maybeWritten && !actionAbsenceProvable(state.version, maybeWrittenMinBaseVersion)){
+      if(label) setMyActionStatus(label, 'failed');
+      if(gen===actionGeneration) restoreActionLocals(baseLocals);
+      return {ok:false, error:actionFailureMessage('unknown'), uncertain:true, reason:'unknown'};
+    }
     if(saved===false && saveFailureMaybeWritten){
       maybeWritten = true;
       // Section 308 — retouche de la revue : saveGame(false) laisse state intact : state.version est la base de cet essai.
       const bv = (typeof state.version==='number') ? state.version : 0;
       maybeWrittenBaseVersion = (maybeWrittenBaseVersion===null) ? bv : Math.max(maybeWrittenBaseVersion, bv);
+      maybeWrittenMinBaseVersion = (maybeWrittenMinBaseVersion===null) ? bv : Math.min(maybeWrittenMinBaseVersion, bv); // Section 319 — S1
     }
     if(onRetry) onRetry(attempt, failure);
 
@@ -2711,6 +2818,7 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label, allow
       // STRICTEMENT plus récente que la base de tout essai peut-être écrit (une écriture de base b donne la version
       // b+1 avec l'identifiant, que toutes les suivantes gardent) ; sinon l'issue reste incertaine.
       provenAbsent = typeof fresh.version==='number' && maybeWrittenBaseVersion!==null && fresh.version>maybeWrittenBaseVersion;
+      if(provenAbsent && !actionAbsenceProvable(fresh.version, maybeWrittenMinBaseVersion)) provenAbsent = false; // Section 319 — S1 : … et seulement tant que la table par préfixe peut encore le prouver
     }
     if(!provenAbsent){
       if(label) setMyActionStatus(label, 'failed');
@@ -2724,6 +2832,8 @@ async function runActionWithRetry(applyFn, {maxAttempts=5, onRetry, label, allow
   if(gen===actionGeneration){
     if(failure==='conflict') restoreActionLocals(baseLocals); else restoreActionBase(baseRaw, baseLocals);
   }
+  // Section 319 — M5 : appareil devenu sourd pendant l'action (écoute annulée) : le message dit la vraie cause.
+  if(isFirebaseDeaf()){ retryGameListenerNow(); failure = 'auth'; }
   return {ok:false, error:actionFailureMessage(failure, maxAttempts), notSaved:true, reason:failure};
 }
 
@@ -2775,7 +2885,7 @@ const OFFLINE_RESUME_GRACE_MS = 4000;
 let lastBecameVisibleMs = 0;
 try{
   if(typeof document!=='undefined' && typeof document.addEventListener==='function'){
-    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') lastBecameVisibleMs = Date.now(); });
+    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ lastBecameVisibleMs = Date.now(); retryGameListenerNow(); } }); // Section 319 — M5 : retour au premier plan = nouvelle série d'essais si l'appareil est sourd
   }
 }catch(e){}
 function isKnownOffline(nowMs){
@@ -2784,6 +2894,91 @@ function isKnownOffline(nowMs){
   return nowMs - firebaseDisconnectedSinceMs >= OFFLINE_REFUSE_GRACE_MS && nowMs - lastBecameVisibleMs >= OFFLINE_RESUME_GRACE_MS;
 }
 function offlineActionResult(){ return {ok:false, error:OFFLINE_ACTION_MESSAGE, notSaved:true, reason:'offline'}; }
+// Section 319 — M4 (relecture du 2026-11-11) : après une panne, le SDK compat 10.14.1 espace ses tentatives de
+// reconnexion (délai x1,3 à chaque échec, jusqu'à 5 minutes) et ne remet ce délai au minimum que sur un événement
+// « online » ou un retour au premier plan avec le délai déjà au maximum ; pendant ce temps toute action est refusée
+// (isKnownOffline) alors qu'Internet est revenu. goOffline() puis goOnline() remet le délai à 1 s et lance une
+// tentative tout de suite (PersistentConnection.interrupt / resume). Sans danger quand « .info/connected » est faux :
+// aucune transaction n'est alors « envoyée » (seules celles-là sont annulées par une interruption), celles en
+// attente et les écoutes restent en file et repartent à la reconnexion. Relance : à chaque action refusée hors
+// ligne, et toutes les FIREBASE_RECONNECT_NUDGE_EVERY_MS tant que la coupure dure (battement de startPolling),
+// jamais plus d'une fois par FIREBASE_RECONNECT_NUDGE_MIN_MS (une tentative en cours serait interrompue), seulement
+// page visible, jamais en mode local (window.storage) ni sans Firebase.
+const FIREBASE_RECONNECT_NUDGE_MIN_MS = 5000;
+const FIREBASE_RECONNECT_NUDGE_EVERY_MS = 15000;
+let lastFirebaseReconnectNudgeMs = 0;
+function nudgeFirebaseReconnect(minGapMs, minOfflineMs){
+  if(firebaseConnected!==false || window.storage) return false; // seulement quand « .info/connected » est faux, jamais en mode local
+  try{ if(typeof document!=='undefined' && document.visibilityState==='hidden') return false; }catch(e){}
+  const db = firebaseDbInstance;
+  if(!db || typeof db.goOffline!=='function' || typeof db.goOnline!=='function') return false;
+  const now = Date.now();
+  if(now - firebaseDisconnectedSinceMs < (minOfflineMs||0)) return false;
+  if(now - lastFirebaseReconnectNudgeMs < Math.max(minGapMs||0, FIREBASE_RECONNECT_NUDGE_MIN_MS)) return false;
+  lastFirebaseReconnectNudgeMs = now;
+  try{ db.goOffline(); }catch(e){ console.error('Relance de la connexion Firebase (goOffline) impossible :', e); }
+  try{ db.goOnline(); }catch(e){ console.error('Relance de la connexion Firebase (goOnline) impossible :', e); return false; } // toujours tenté : ne jamais rester hors ligne
+  return true;
+}
+// Section 319 — M5 (relecture du 2026-11-11) : une écoute annulée par le serveur (« permission_denied » : jeton
+// expiré après une longue veille, session anonyme supprimée, connexion anonyme ratée au chargement) n'était jamais
+// reposée : l'appareil ne recevait plus rien et chaque action échouait en « conflits répétés » (sans écoute, le cache
+// du SDK est vide et la 1re passe de la transaction abandonne). Désormais : l'écoute annulée est reposée après une
+// nouvelle authentification (résultat en cache oublié), par essais espacés et bornés tant que la partie est ouverte
+// (FIREBASE_RELISTEN_DELAYS_MS, environ 5 minutes) ; une action tentée ou un retour au premier plan relance une série
+// épuisée ; tant que l'appareil est sourd, une action est refusée avec la vraie cause ; le bandeau
+// #firebaseAuthWarning disparaît dès qu'une valeur est de nouveau reçue.
+const FIREBASE_RELISTEN_DELAYS_MS = [2000, 5000, 15000, 30000, 60000, 60000, 60000, 60000];
+const FIREBASE_DEAF_ACTION_MESSAGE = 'Connexion à Firebase refusée : cet appareil ne reçoit plus la partie, votre action n’a pas été envoyée. Un nouvel essai de connexion est lancé : réessayez dans un instant ; si cela persiste, rechargez la page.';
+function isFirebaseDeaf(){ return !window.storage && firebaseListenLost; }
+function firebaseDeafActionResult(){ return {ok:false, error:FIREBASE_DEAF_ACTION_MESSAGE, notSaved:true, reason:'auth'}; }
+function attachGameListener(db, generation){
+  if(generation!==syncGeneration || !gameCode) return; // Section 305 — stopSync()/startPolling() rappelé entre-temps.
+  const ref = db.ref('data/'+firebaseSafeKey('game:'+gameCode));
+  const callback = (snap)=>{
+    if(firebaseListenLost || firebaseListenWarning){ // Section 319 — M5 : l'écoute est revenue
+      firebaseListenLost = false; firebaseListenWarning = false; firebaseRelistenAttempt = 0;
+      toggleFirebaseAuthWarning(false);
+    }
+    lastReceivedRaw = snap.exists() ? snap.val() : null;
+    if(shouldDeferRemoteState()) return; // Section 308 — bogue 72 : une fenêtre ouverte ne bloque plus la synchro
+    applyRemoteStateIfNewer(lastReceivedRaw);
+  };
+  const onCancel = (err)=>{
+    console.error('Abonnement Firebase annulé :', err && (err.code||err.message||err));
+    if(err && /permission[_ ]denied/i.test(String(err.code||err.message||''))){ toggleFirebaseAuthWarning(true); firebaseListenWarning = true; }
+    if(generation!==syncGeneration) return;
+    if(firebaseListenerHandle && firebaseListenerHandle.callback===callback) firebaseListenerHandle = null; // le SDK a retiré cette écoute
+    firebaseListenLost = true;
+    scheduleGameListenerRetry(db, generation);
+  };
+  firebaseListenerHandle = {ref, callback}; // avant on() : une annulation immédiate doit trouver cette écoute
+  ref.on('value', callback, onCancel);
+}
+function scheduleGameListenerRetry(db, generation){
+  if(firebaseRelistenPending || firebaseListenerHandle || firebaseRelistenAttempt>=FIREBASE_RELISTEN_DELAYS_MS.length) return false;
+  firebaseRelistenPending = true;
+  const delay = FIREBASE_RELISTEN_DELAYS_MS[firebaseRelistenAttempt++];
+  firebaseRelistenTimer = setTimeout(()=>{
+    firebaseRelistenTimer = null;
+    if(generation!==syncGeneration) return; // stopSync() a déjà tout remis à zéro
+    if(!gameCode || !firebaseListenLost){ firebaseRelistenPending = false; return; }
+    forgetFirebaseAuthResult(); // nouvelle authentification : session anonyme recréée si elle a disparu
+    firebaseAuthReady().then(()=>{
+      if(generation!==syncGeneration) return;
+      firebaseRelistenPending = false;
+      if(!gameCode || !firebaseListenLost) return;
+      attachGameListener(db, generation); // refusée de nouveau : onCancel programme l'essai suivant
+    });
+  }, delay);
+  return true;
+}
+// Action refusée (appareil sourd) ou retour au premier plan : relance une série d'essais si la précédente est épuisée.
+function retryGameListenerNow(){
+  if(!isFirebaseDeaf() || firebaseRelistenPending || firebaseListenerHandle || !firebaseDbInstance) return false;
+  firebaseRelistenAttempt = 0;
+  return scheduleGameListenerRetry(firebaseDbInstance, syncGeneration);
+}
 const ACTION_STATUS_FLASH_MS = 2500;
 let actionStatusFlash = null; // {text, untilMs}
 function flashActionStatus(text){
@@ -6788,6 +6983,7 @@ function renderCompanySetupGate(me){
     </div>
   </div>`;
   document.getElementById('cWhoami').addEventListener('change', async e=>{
+    if(identityChangeBlocked(e.target.value)){ e.target.value = myPlayerId; return; } // Section 319 — S2 : pas de changement d'identité pendant qu'une action s'enregistre
     myPlayerId = e.target.value;
     await storageSet('mychar:'+gameCode, myPlayerId, false);
     render();
@@ -7171,22 +7367,9 @@ function startPolling(){
   }
   const generation = ++syncGeneration;
   watchFirebaseConnection(db); // Section 308 — retouche de la revue : « .info/connected » (local au SDK, sans authentification)
-  firebaseAuthReady().then(()=>{
-    if(generation!==syncGeneration || !gameCode) return; // Section 305 — stopSync()/startPolling() rappelé entre-temps.
-    const ref = db.ref('data/'+firebaseSafeKey('game:'+gameCode));
-    const callback = (snap)=>{
-      lastReceivedRaw = snap.exists() ? snap.val() : null;
-      if(shouldDeferRemoteState()) return; // Section 308 — bogue 72 : une fenêtre ouverte ne bloque plus la synchro
-      applyRemoteStateIfNewer(lastReceivedRaw);
-    };
-    const onCancel = (err)=>{
-      console.error('Abonnement Firebase annulé :', err && (err.code||err.message||err));
-      if(err && /permission[_ ]denied/i.test(String(err.code||err.message||''))) toggleFirebaseAuthWarning(true);
-    };
-    ref.on('value', callback, onCancel);
-    firebaseListenerHandle = {ref, callback};
-  });
+  firebaseAuthReady().then(()=>{ attachGameListener(db, generation); }); // Section 319 — M5 : écoute posée (et reposée après une annulation) par attachGameListener
   syncRetryTimer = setInterval(()=>{
+    nudgeFirebaseReconnect(FIREBASE_RECONNECT_NUDGE_EVERY_MS, FIREBASE_RECONNECT_NUDGE_EVERY_MS); // Section 319 — M4 : coupure qui dure, page visible : relance périodique de la reconnexion
     if(!gameCode || shouldDeferRemoteState()) return; // Section 308
     applyRemoteStateIfNewer(lastReceivedRaw);
   }, 3000);
@@ -7197,6 +7380,9 @@ function stopSync(){
   if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
   if(syncRetryTimer){ clearInterval(syncRetryTimer); syncRetryTimer = null; }
   if(firebaseListenerHandle){ firebaseListenerHandle.ref.off('value', firebaseListenerHandle.callback); firebaseListenerHandle = null; }
+  // Section 319 — M5 : plus d'essai de remise en écoute pour une partie quittée ou rechargée.
+  if(firebaseRelistenTimer){ clearTimeout(firebaseRelistenTimer); firebaseRelistenTimer = null; }
+  firebaseRelistenPending = false; firebaseListenLost = false; firebaseRelistenAttempt = 0;
   lastReceivedRaw = null;
 }
 
@@ -8392,6 +8578,7 @@ function render(){
   app.innerHTML = html;
   document.getElementById('tabbody').innerHTML = renderTab(activeTab);
   document.getElementById('whoami').addEventListener('change', async e=>{
+    if(identityChangeBlocked(e.target.value)){ e.target.value = myPlayerId; return; } // Section 319 — S2 : pas de changement d'identité pendant qu'une action s'enregistre
     myPlayerId = e.target.value;
     await storageSet('mychar:'+gameCode, myPlayerId, false);
     render();
@@ -8484,6 +8671,7 @@ function renderIdentityGate(){
 }
 async function chooseIdentity(playerId){
   if(!state || !state.players.some(p=>p.id===playerId)) return false;
+  if(identityChangeBlocked(playerId)) return false; // Section 319 — S2 (sans effet sur l'écran « Vous êtes » lui-même : aucune identité n'y est encore choisie)
   myPlayerId = playerId;
   await storageSet('mychar:'+gameCode, playerId, false);
   render();

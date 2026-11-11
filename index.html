@@ -1970,8 +1970,117 @@ function validateNewGameInputs(names, startCash, bankCash, s){
   if(s.maxGameYearsMax>0 && s.maxGameYearsMin>s.maxGameYearsMax) return 'Durée de partie : l’année minimale dépasse l’année maximale.';
   return null;
 }
+// Section 319 (S3) — création d'une partie « seulement si la place est libre ». Avant : le code tiré au hasard
+// (4 lettres parmi 24 = 331 776 codes) était écrit par un set() sans vérification, dont le retour n'était pas lu :
+// une partie existante de même code était remplacée sans message, et une création dont l'écriture échouait affichait
+// une partie absente du serveur. Désormais :
+// - écriture atomique (storageCreateIfAbsent) ; place prise : un autre code est tiré, sans rien dire au joueur
+//   (au plus CREATE_GAME_CODE_TRIES tirages) ;
+// - rien de la nouvelle partie n'est adopté sur l'appareil (state, gameCode, identité, « lastcode », écoute) avant la
+//   confirmation du serveur ; sans confirmation : message, et le joueur reste sur l'écran de création, sa saisie
+//   intacte (aucun rendu) ;
+// - coupure connue (isKnownOffline) : refus immédiat ; sinon attente bornée par CREATE_GAME_TIMEOUT_MS (connexion
+//   anonyme comprise). Une écriture abandonnée qui finit quand même par arriver (reconnexion) est retirée du serveur
+//   par discardAbandonedGame : personne ne connaît son code.
+const CREATE_GAME_CODE_TRIES = 20;
+const CREATE_GAME_TIMEOUT_MS = 15000;
+let createGameInFlight = false;
+function randomGameCode(){ return Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*24)]).join(''); }
+// Écrit value sous key seulement si rien n'y est enregistré. Renvoie 'created', 'taken' (place prise, rien n'est
+// écrit), 'failed' (refus ou erreur, rien n'est écrit) ou 'unknown' (connexion perdue après l'envoi : écrite ou non,
+// on ne sait pas). Firebase : la 1re passe de la transaction voit null (cache local vide, aucun écouteur sur ce
+// chemin) même si le serveur a une valeur ; c'est la vérification du serveur qui la fait rejouer sur la vraie valeur,
+// et la fonction abandonne alors (undefined) : committed=false = place prise.
+async function storageCreateIfAbsent(key, value, isAbandoned){
+  try{
+    if(window.storage){ // mode local (tests, navigateur sans serveur) : lire puis écrire
+      if(await storageGet(key, true)) return 'taken';
+      return (await storageSet(key, value, true))===null ? 'failed' : 'created';
+    }
+    const db = firebaseDb();
+    if(!db) return 'failed';
+    await firebaseAuthReady();
+    if(isAbandoned && isAbandoned()) return 'failed'; // abandon pendant la connexion anonyme : rien n'est envoyé
+    let tx;
+    try{
+      tx = await db.ref('data/'+firebaseSafeKey(key)).transaction(cur=>((cur===null || cur===undefined) ? value : undefined), undefined, false);
+    }catch(e){
+      return /permission/i.test(String((e && (e.code || e.message)) || e)) ? 'failed' : 'unknown';
+    }
+    return (tx && tx.committed) ? 'created' : 'taken';
+  }catch(e){ return 'failed'; }
+}
+// Retire du serveur une partie dont la création a été abandonnée, seulement si la valeur est exactement celle que cet
+// appareil a écrite (identifiants et date de création uniques). Sans attendre la réponse ; si la page est fermée
+// avant, la partie orpheline reste, sans conséquence (code inconnu de tous, et plus jamais écrasable).
+// La fonction renvoie null aussi pour null : sa 1re passe (cache local vide) part ainsi vérifier le serveur.
+function discardAbandonedGame(key, value){
+  try{
+    if(window.storage) return;
+    const db = firebaseDb();
+    if(!db) return;
+    const p = db.ref('data/'+firebaseSafeKey(key)).transaction(cur=>((cur===null || cur===undefined || cur===value) ? null : undefined), undefined, false);
+    if(p && typeof p.catch==='function') p.catch(()=>{});
+  }catch(e){}
+}
+// Réserve un code libre pour la partie s (s.code = premier tirage) et l'écrit. {ok:true, code, raw} ou {ok:false, reason}.
+async function reserveNewGame(s){
+  const local = !!window.storage;
+  if(!local){
+    const db = firebaseDb();
+    if(!db) return {ok:false, reason:'no-backend'};
+    watchFirebaseConnection(db); // l'état de la connexion est suivi dès l'écran de création
+    if(isKnownOffline()) return {ok:false, reason:'offline'};
+  }
+  const attempt = {abandoned:false};
+  const work = (async ()=>{
+    for(let i=0; i<CREATE_GAME_CODE_TRIES; i++){
+      if(i>0) s.code = randomGameCode();
+      const code = s.code, raw = JSON.stringify(s);
+      const r = await storageCreateIfAbsent('game:'+code, raw, ()=>attempt.abandoned);
+      if(r==='unknown' || (r==='created' && attempt.abandoned)) discardAbandonedGame('game:'+code, raw);
+      if(attempt.abandoned) return {ok:false, reason:'timeout'};
+      if(r==='created') return {ok:true, code, raw};
+      if(r!=='taken') return {ok:false, reason:r};
+    }
+    return {ok:false, reason:'no-free-code'};
+  })();
+  if(local) return work;
+  let timer = null;
+  const timeout = new Promise(resolve=>{ timer = setTimeout(()=>{ attempt.abandoned = true; resolve({ok:false, reason:'timeout'}); }, CREATE_GAME_TIMEOUT_MS); });
+  const res = await Promise.race([work, timeout]);
+  clearTimeout(timer);
+  return res;
+}
+function createGameFailureMessage(reason){
+  const tail = 'Ce que vous avez saisi est conservé';
+  if(reason==='offline') return `Pas de connexion au serveur : la partie n’a pas été créée. ${tail} ; réessayez quand la connexion revient.`;
+  if(reason==='timeout') return `Le serveur n’a pas répondu en ${Math.round(CREATE_GAME_TIMEOUT_MS/1000)} secondes (connexion lente ou coupée) : la partie n’a pas été créée. ${tail} ; vérifiez votre connexion puis réessayez.`;
+  if(reason==='unknown') return `La connexion au serveur a été perdue pendant la création : la partie n’a pas été ouverte. ${tail} ; réessayez au retour de la connexion.`;
+  if(reason==='no-free-code') return `Aucun code de partie libre trouvé en ${CREATE_GAME_CODE_TRIES} tirages : la partie n’a pas été créée. ${tail} ; réessayez.`;
+  if(reason==='no-backend') return `Aucun serveur de parties n’est joignable (Firebase non chargé ou non configuré) : la partie n’a pas été créée.`;
+  return `Le serveur a refusé ou n’a pas confirmé l’enregistrement : la partie n’a pas été créée. ${tail} ; vérifiez votre connexion puis réessayez.`;
+}
+// Bouton « Créer la partie » pendant la création (l'attente peut durer jusqu'à CREATE_GAME_TIMEOUT_MS).
+function setCreateGameBusy(busy){
+  try{
+    const btn = document.getElementById('createBtn');
+    if(!btn) return; // partie ouverte : l'écran de création n'existe plus
+    btn.disabled = !!busy;
+    btn.textContent = busy ? 'Création de la partie…' : 'Créer la partie';
+  }catch(e){}
+}
+// Une seule création à la fois (un 2e clic pendant l'attente est ignoré). Renvoie true si la partie est créée et
+// ouverte, false sinon (saisie refusée, place introuvable, écriture non confirmée).
 async function createGame(names, startCash, bankCash, unit, settings, neutralPawnNames){
-  const code = Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*24)]).join('');
+  if(createGameInFlight) return false;
+  createGameInFlight = true;
+  setCreateGameBusy(true);
+  try{ return await createGameOnce(names, startCash, bankCash, unit, settings, neutralPawnNames); }
+  finally{ createGameInFlight = false; setCreateGameBusy(false); }
+}
+async function createGameOnce(names, startCash, bankCash, unit, settings, neutralPawnNames){
+  let code = randomGameCode(); // Section 319 (S3) — premier tirage ; reserveNewGame en tire un autre si la place est prise
   
   
   
@@ -2162,16 +2271,21 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
     auctions: [],
     log: [{ts:nowLabel(), text:'Partie créée.'}]
   };
+  // Section 319 (S3) — state ne reçoit s que le temps de calculer le premier point d'historique ; la partie n'est
+  // adoptée (gameCode, state, identité, écoute) qu'une fois sa création confirmée par le serveur.
+  const stateBeforeCreation = state;
   state = s;
-  pushHistorySnapshot(0); 
-  await storageSet('game:'+code, JSON.stringify(s), true);
+  try{ pushHistorySnapshot(0); } finally{ state = stateBeforeCreation; }
+  const reserved = await reserveNewGame(s);
+  if(!reserved.ok){ alert(createGameFailureMessage(reserved.reason)); return false; }
+  code = reserved.code;
   gameCode = code; state = s;
   resetActionQueue(); // Section 308
   __gameEndedReviewMode = false; // Section 316 — bogue 100
-  await storageSet('mychar:'+code, players[0].id, false);
-  await storageSet('lastcode', code, false);
+  const identitySaved = await storageSet('mychar:'+code, players[0].id, false); // Section 319 (S3) — retours lus (voir plus bas)
+  const lastCodeSaved = await storageSet('lastcode', code, false);
   myPlayerId = players[0].id;
-  lastSerialized = JSON.stringify(s);
+  lastSerialized = reserved.raw; // Section 319 (S3) — exactement la valeur confirmée par le serveur
   
   
   seenDiceRollEventRoll = state.lastDiceRollEvent ? state.lastDiceRollEvent.roll : null;
@@ -2181,6 +2295,10 @@ async function createGame(names, startCash, bankCash, unit, settings, neutralPaw
   seenCeoAnnouncementExecutionIds = new Set((state.ceoAnnouncementExecutions||[]).map(e=>e.id));
   startPolling();
   render();
+  // Section 319 (S3) — la partie existe sur le serveur et reste ouverte ; si l'appareil n'a pas pu la mémoriser
+  // (stockage du navigateur refusé ou plein), le joueur est prévenu qu'il lui faudra le code après un rechargement.
+  if(identitySaved===null || lastCodeSaved===null) alert(`La partie ${code} est créée, mais cet appareil n’a pas pu la mémoriser (stockage du navigateur refusé ou plein). Notez le code ${code} : après un rechargement de la page, il faudra la rejoindre avec ce code.`);
+  return true;
 }
 
 async function loadGame(code){
@@ -4844,7 +4962,7 @@ function renderEntreprise(){
         ? `<div class="small">Toutes les entreprises sont enquêtées par l'AMF : personne ne lance, le tour passe tout seul.</div><button class="btn btn-ghost btn-sm" data-pass-all-jailed="1" data-roll="${state.gameClock.rollCount}">⏭️ Faire passer le tour</button>`
         : `<div class="small">Enquêtée par l'AMF, ne participe pas à ce tour.</div>`)
     : (company.ready
-        ? `<button class="btn btn-ghost btn-sm" data-cancel-ready="${company.id}" data-roll="${state.gameClock.rollCount}">🔄 Annuler Tour Terminé</button>`
+        ? `<button class="btn btn-ghost btn-sm" data-cancel-ready="${company.id}" data-roll="${state.gameClock.rollCount}">🔄 Annuler Tour Terminé</button>${stuckRollRescueHtml(true)}` // Section 319 (M1) — secours si le lancer n'est pas parti
         : (blockReadyForNegativeCash ? '' : `<button class="btn btn-pale-success btn-sm" data-mark-ready="${company.id}" data-roll="${state.gameClock.rollCount}">✅ Tour Terminé</button>`)); // Section 308 — data-roll : lancer affiché au moment du clic
 
   
@@ -8237,8 +8355,8 @@ function render(){
   }).join(' &nbsp;·&nbsp; ');
   const actionStatusRowHtml = readinessRowHtml ? `
   <div class="actionstatusbar">
-    <div style="flex:1;min-width:200px;">${readinessRowHtml}</div>
-  </div>` : '';
+    <div style="flex:1;min-width:200px;">${readinessRowHtml}</div>${stuckRollRescueHtml()}
+  </div>` : ''; // Section 319 (M1) — secours « Lancer les dés » si le lancer n'est pas parti
   
   
   
@@ -8292,6 +8410,8 @@ function render(){
     else { const el = document.getElementById('tab-'+activeTab); if(el && typeof el.focus==='function') el.focus(); }
   });
   bindTabEvents(activeTab);
+  // Section 319 (M1) — le clic de secours porte le numéro du lancer affiché, comme « Tour Terminé ».
+  document.querySelectorAll('[data-roll-rescue]').forEach(b=>b.addEventListener('click', ()=>rescueStuckRoll(parseInt(b.dataset.roll,10))));
   // Section 318 : focus rendu à l'onglet actif, et onglet actif ramené dans la partie visible de la bande (téléphone).
   if(tabHadFocus){
     const el = document.getElementById('tab-'+activeTab);
@@ -14893,6 +15013,68 @@ function noCompanyCanRoll(){
 // enchaînement automatique interrompu (réseau). Même lancer que le déclenchement automatique, lié au lancer affiché.
 async function passTurnAllJailed(expectedRoll){
   if(!noCompanyCanRoll()){ render(); return false; }
+  const triggered = await checkAllCompaniesReady(turnExpectedRoll(expectedRoll));
+  if(!triggered) render();
+  return triggered;
+}
+// Section 319 (M1) — tour figé. Le dernier « Tour Terminé » fait deux écritures : « prête » (markCompanyReady), puis
+// le lancer (checkAllCompaniesReady). Si la page disparaît entre les deux, ou si la seconde échoue, toutes les
+// entreprises sont prêtes sur le serveur, le lancer n'a pas eu lieu, et aucun appareil ne le relançait : chaque CEO
+// ne voyait que « Annuler Tour Terminé ». Secours VISIBLE, sans automatisme : quand cet état dure depuis
+// STUCK_ROLL_RESCUE_DELAY_MS sur cet appareil (pour ce lancer ; le délai couvre la demi-seconde normale entre les
+// deux écritures, sans rien faire clignoter), la barre des entreprises prêtes montre une ligne d'explication et un
+// bouton « Lancer les dés » à chaque joueur identifié (les spectateurs n'ont pas cette barre). Le bouton porte le
+// numéro du lancer affiché (data-roll) et appelle checkAllCompaniesReady : la garde de la section 308 (numéro de
+// lancer attendu, « déjà joué » sans alerte dans ce chemin) garantit toujours un seul lancer par tour.
+// stuckRollWatch est un état d'affichage propre à l'appareil (jamais dans state) : il repart de zéro après un
+// rechargement de la page, dont le premier rendu détecte l'état « prêtes sans lancer ».
+const STUCK_ROLL_RESCUE_DELAY_MS = 5000;
+const STUCK_ROLL_RERENDER_RETRY_MS = 1000;
+const STUCK_ROLL_RERENDER_MAX_RETRIES = 30;
+let stuckRollWatch = null; // {code, roll, sinceMs}
+function allRollersReadyWithoutRoll(){
+  if(!gameCode || !state || state.gameEndedReason) return false;
+  const rollers = activeCompanies().filter(c=>!c.inJail);
+  return rollers.length>0 && rollers.every(c=>c.ready);
+}
+// Appelée à chaque rendu de la barre : lance, garde ou arrête le chronomètre ; vrai quand le secours doit s'afficher.
+function stuckRollRescueDue(nowMs){
+  if(nowMs===undefined) nowMs = Date.now();
+  if(isSpectator || !allRollersReadyWithoutRoll()){ stuckRollWatch = null; return false; }
+  const roll = state.gameClock.rollCount;
+  if(!stuckRollWatch || stuckRollWatch.code!==gameCode || stuckRollWatch.roll!==roll){
+    stuckRollWatch = {code: gameCode, roll, sinceMs: nowMs};
+    scheduleStuckRollRerender(stuckRollWatch, STUCK_ROLL_RESCUE_DELAY_MS + 50, 0); // le bouton apparaît sans action d'un joueur
+    return false;
+  }
+  return nowMs - stuckRollWatch.sinceMs >= STUCK_ROLL_RESCUE_DELAY_MS;
+}
+// Rendu reprogrammé à la fin du délai. Jamais pendant une action de cet appareil (state est en cours de calcul) ni
+// pendant une vraie interaction avec un champ : nouvel essai borné ; au-delà, le prochain rendu montrera le bouton.
+function scheduleStuckRollRerender(watch, delayMs, tries){
+  setTimeout(()=>{
+    try{
+      if(stuckRollWatch!==watch || !gameCode || !state || isSpectator || !allRollersReadyWithoutRoll()) return;
+      if(state.gameClock.rollCount!==watch.roll || gameCode!==watch.code) return;
+      if(actionsInFlight>0 || shouldDeferRemoteState()){
+        if(tries<STUCK_ROLL_RERENDER_MAX_RETRIES) scheduleStuckRollRerender(watch, STUCK_ROLL_RERENDER_RETRY_MS, tries+1);
+        return;
+      }
+      renderPreservingForms();
+    }catch(e){ console.error('Affichage du secours « Lancer les dés » impossible :', e); }
+  }, delayMs);
+}
+// Deux emplacements : la barre des entreprises prêtes (tous les onglets) et, dans l'onglet Entreprise, sous
+// « Annuler Tour Terminé » (inPanel : même présentation que « Faire passer le tour »).
+function stuckRollRescueHtml(inPanel){
+  if(!stuckRollRescueDue()) return '';
+  const text = `Toutes les entreprises sont prêtes, mais le lancer n'est pas parti.`;
+  const button = `<button class="btn btn-ghost btn-sm" data-roll-rescue="1" data-roll="${state.gameClock.rollCount}">🎲 Lancer les dés</button>`;
+  return inPanel ? `<div class="small">${text}</div>${button}` : `<div style="flex-basis:100%;">⚠️ <b>${text}</b> ${button}</div>`;
+}
+// Clic sur « Lancer les dés » (secours) : même lancer que celui du dernier « Tour Terminé », lié au lancer affiché.
+// Déjà joué par un autre appareil, ou entreprises plus toutes prêtes : refus silencieux, l'écran est redessiné.
+async function rescueStuckRoll(expectedRoll){
   const triggered = await checkAllCompaniesReady(turnExpectedRoll(expectedRoll));
   if(!triggered) render();
   return triggered;

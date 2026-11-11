@@ -2430,7 +2430,15 @@ async function saveGame(opts){
   // JAMAIS par Firebase, même si le SDK est chargé (comme storageGet/storageSet et startPolling).
   const fbDb = window.storage ? null : firebaseDb();
   if(gameCode && fbDb){
+    // Section 319 — retouche du banc réel (vrai SDK) : si, au retour d'une attente, la partie ouverte n'est plus celle
+    // de l'appel (partie quittée, rechargée ou remplacée pendant qu'une action attendait le réseau), cet enregistrement
+    // ne touche plus ni state ni lastSerialized. Avant, il posait la version et la valeur de l'ancien appel sur l'état
+    // fraîchement chargé : l'écoute ne le corrigeait pas (valeur égale à lastSerialized) et l'action suivante effaçait
+    // la précédente du serveur. L'interface empêche déjà de quitter pendant une action ; ceci est la garde de fond.
+    const saveCode = gameCode, saveGen = actionGeneration;
+    const staleSave = ()=> gameCode!==saveCode || actionGeneration!==saveGen;
     await firebaseAuthReady(); // Section 305
+    if(staleSave()){ saveFailureMaybeWritten = false; return false; } // Section 319
     if(state.version===undefined) state.version = 0;
     const nextVersion = state.version + 1;
     
@@ -2451,6 +2459,7 @@ async function saveGame(opts){
         return rawToTry;
       }, undefined, false); // Section 308 — bogue 74 : applyLocally=false, l'écouteur ne voit jamais une valeur non confirmée par le serveur.
     }catch(e){ txResult = null; saveFailureMaybeWritten = !/permission/i.test(String((e && (e.code || e.message)) || e)); } // Section 308 — accusé de réception perdu : « disconnect » = écrite ou non, on ne sait pas
+    if(staleSave()){ saveFailureMaybeWritten = false; return !!(txResult && txResult.committed); } // Section 319 — retouche du banc réel : l'écriture a eu lieu ou non, mais l'état ouvert n'est plus le sien
     toggleSaveFailedWarning(txResult===null);
     if(txResult===null) return false; 
     if(txResult.committed){
@@ -2474,6 +2483,7 @@ async function saveGame(opts){
         const snap = await fbDb.ref('data/'+firebaseSafeKey('game:'+gameCode)).once('value');
         remoteRaw = (snap && snap.exists()) ? snap.val() : null;
       }catch(e){ remoteRaw = null; }
+      if(staleSave()){ saveFailureMaybeWritten = false; return false; } // Section 319
       if(!remoteRaw){ toggleSaveFailedWarning(true); saveFailureMaybeWritten = false; return false; } // Section 308 — transaction abandonnée sans envoi
     }
     // Section 307 — state est désormais TOUJOURS rafraîchi avant de renvoyer 'conflict'.
@@ -2878,7 +2888,7 @@ function watchFirebaseConnection(db){
     const ref = db.ref('.info/connected');
     const callback = snap=>{
       const v = snap ? snap.val() : null;
-      if(v===true) firebaseConnected = true;
+      if(v===true){ firebaseConnected = true; firebaseReconnectNudgeGapMs = FIREBASE_RECONNECT_NUDGE_MIN_MS; } // Section 319 — retouche du banc réel : connexion revenue, écart des relances remis au minimum
       else if(v===false){ if(firebaseConnected!==false) firebaseDisconnectedSinceMs = Date.now(); firebaseConnected = false; }
       updateActionStatusIndicator();
     };
@@ -2915,6 +2925,12 @@ function offlineActionResult(){ return {ok:false, error:OFFLINE_ACTION_MESSAGE, 
 const FIREBASE_RECONNECT_NUDGE_MIN_MS = 5000;
 const FIREBASE_RECONNECT_NUDGE_EVERY_MS = 15000;
 let lastFirebaseReconnectNudgeMs = 0;
+// Section 319 — retouche du banc réel (vrai SDK) : chaque relance abandonne la tentative de connexion en cours ; à
+// écart fixe, une connexion lente à s'établir (8 à 20 s) n'aboutissait donc plus jamais. L'écart exigé avant la
+// relance suivante double après chaque relance d'une même coupure (5, 10, 20, 40, puis 60 s) et revient au minimum
+// dès que « .info/connected » repasse à vrai : une connexion qui met moins d'une minute à s'ouvrir finit par aboutir.
+const FIREBASE_RECONNECT_NUDGE_MAX_GAP_MS = 60000;
+let firebaseReconnectNudgeGapMs = FIREBASE_RECONNECT_NUDGE_MIN_MS;
 function nudgeFirebaseReconnect(minGapMs, minOfflineMs){
   if(firebaseConnected!==false || window.storage) return false; // seulement quand « .info/connected » est faux, jamais en mode local
   try{ if(typeof document!=='undefined' && document.visibilityState==='hidden') return false; }catch(e){}
@@ -2922,8 +2938,9 @@ function nudgeFirebaseReconnect(minGapMs, minOfflineMs){
   if(!db || typeof db.goOffline!=='function' || typeof db.goOnline!=='function') return false;
   const now = Date.now();
   if(now - firebaseDisconnectedSinceMs < (minOfflineMs||0)) return false;
-  if(now - lastFirebaseReconnectNudgeMs < Math.max(minGapMs||0, FIREBASE_RECONNECT_NUDGE_MIN_MS)) return false;
+  if(now - lastFirebaseReconnectNudgeMs < Math.max(minGapMs||0, firebaseReconnectNudgeGapMs)) return false;
   lastFirebaseReconnectNudgeMs = now;
+  firebaseReconnectNudgeGapMs = Math.min(firebaseReconnectNudgeGapMs*2, FIREBASE_RECONNECT_NUDGE_MAX_GAP_MS);
   try{ db.goOffline(); }catch(e){ console.error('Relance de la connexion Firebase (goOffline) impossible :', e); }
   try{ db.goOnline(); }catch(e){ console.error('Relance de la connexion Firebase (goOnline) impossible :', e); return false; } // toujours tenté : ne jamais rester hors ligne
   return true;
@@ -8446,6 +8463,7 @@ function renderTicker(items){
 
 async function performQuitGame(){
   stopSync();
+  resetActionQueue(); // Section 319 — retouche du banc réel : une action encore en attente appartient à la partie quittée
   isSpectator = false;
   __gameEndedReviewMode = false; // Section 316 — bogue 100 : la consultation d'une partie terminée ne survit pas à la sortie
   await storageSet('lastcode', '', false);

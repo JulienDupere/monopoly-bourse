@@ -62,8 +62,8 @@ const ecartMin = t => t.slice(1).reduce((m, x, i) => Math.min(m, x - t[i]), Infi
       const attente = await attendreConnexion(e, retour, 6 * 60 * 1000);
       console.log(`    [${variante}] Internet revenu ; connexion rétablie après ${attente === null ? 'plus de 6 minutes' : s1(attente)}`);
       if(variante === 'corrigé'){
-        ok(relances.length >= 70 && relances.length <= 81 && ecartMin(relances) >= 15000, `A : une relance toutes les 15 s tant que la coupure dure (${relances.length} en 20 minutes, écart minimal ${s1(ecartMin(relances))})`);
-        ok(A.client.delaiReconnexion <= 15000, `A : le délai du SDK ne grossit plus (${s1(A.client.delaiReconnexion)} au lieu de 300 s)`);
+        ok(relances.length >= 17 && relances.length <= 26 && ecartMin(relances) >= 15000, `A : relances espacées tant que la coupure dure, 15 s au moins puis jusqu’à 60 s (${relances.length} en 20 minutes, écart minimal ${s1(ecartMin(relances))})`);
+        ok(A.client.delaiReconnexion <= 60000, `A : le délai du SDK reste sous une minute (${s1(A.client.delaiReconnexion)} au lieu de 300 s)`);
         ok(attente !== null && attente <= 20000, `A : connexion rétablie ${s1(attente)} après le retour d'Internet (moins de 20 s)`);
         const res = await R.attendrePromesse(A.eng.run(INVESTIR(1)));
         await R.pomper();
@@ -121,22 +121,21 @@ const ecartMin = t => t.slice(1).reduce((m, x, i) => Math.min(m, x - t[i]), Infi
     ok(A.eng.run('firebaseConnected') === false, 'C : coupure : « .info/connected » est faux');
     ok(A.eng.run('nudgeFirebaseReconnect()') === true && n() === 1, 'C : coupé : relance (goOffline puis goOnline)');
     ok(A.eng.run('nudgeFirebaseReconnect()') === false && n() === 1, 'C : relance immédiate suivante : refusée');
-    R.temps += 4999;
-    ok(A.eng.run('nudgeFirebaseReconnect()') === false && n() === 1, 'C : 4,999 s plus tard : encore refusée');
+    // Section 319 — retouche du banc réel : l'écart exigé double après chaque relance d'une même coupure (5, 10, 20, 40, 60 s).
+    R.temps += 9999;
+    ok(A.eng.run('nudgeFirebaseReconnect()') === false && n() === 1, 'C : 9,999 s plus tard : encore refusée (écart doublé après la 1re relance)');
     R.temps += 1;
-    ok(A.eng.run('nudgeFirebaseReconnect()') === true && n() === 2, 'C : 5 s plus tard : acceptée (au plus une relance par 5 s)');
-    R.temps += 5000;
-    ok(A.eng.run('nudgeFirebaseReconnect(FIREBASE_RECONNECT_NUDGE_EVERY_MS, FIREBASE_RECONNECT_NUDGE_EVERY_MS)') === false && n() === 2, 'C : relance périodique : pas avant 15 s de coupure');
-    R.temps += 5000;
-    ok(A.eng.run('nudgeFirebaseReconnect(FIREBASE_RECONNECT_NUDGE_EVERY_MS, FIREBASE_RECONNECT_NUDGE_EVERY_MS)') === false && n() === 2, 'C : relance périodique : pas moins de 15 s après la relance précédente');
+    ok(A.eng.run('nudgeFirebaseReconnect()') === true && n() === 2, 'C : 10 s plus tard : acceptée ; l’écart exigé passe à 20 s');
+    R.temps += 15000;
+    ok(A.eng.run('nudgeFirebaseReconnect(FIREBASE_RECONNECT_NUDGE_EVERY_MS, FIREBASE_RECONNECT_NUDGE_EVERY_MS)') === false && n() === 2, 'C : relance périodique 15 s après la précédente : refusée (écart exigé : 20 s)');
     R.temps += 5000;
     A.doc.visibilityState = 'hidden';
     ok(A.eng.run('nudgeFirebaseReconnect(FIREBASE_RECONNECT_NUDGE_EVERY_MS, FIREBASE_RECONNECT_NUDGE_EVERY_MS)') === false && A.eng.run('nudgeFirebaseReconnect()') === false && n() === 2, 'C : page cachée : aucune relance');
     A.doc.visibilityState = 'visible';
-    ok(A.eng.run('nudgeFirebaseReconnect(FIREBASE_RECONNECT_NUDGE_EVERY_MS, FIREBASE_RECONNECT_NUDGE_EVERY_MS)') === true && n() === 3, 'C : page visible, 15 s après la précédente : relance périodique');
-    ok(A.eng.run('FIREBASE_RECONNECT_NUDGE_MIN_MS') === 5000 && A.eng.run('FIREBASE_RECONNECT_NUDGE_EVERY_MS') === 15000, 'C : réglages — au plus une relance par 5 s, relance périodique toutes les 15 s');
+    ok(A.eng.run('nudgeFirebaseReconnect(FIREBASE_RECONNECT_NUDGE_EVERY_MS, FIREBASE_RECONNECT_NUDGE_EVERY_MS)') === true && n() === 3, 'C : page visible, 20 s après la précédente : relance périodique ; l’écart exigé passe à 40 s');
+    ok(A.eng.run('FIREBASE_RECONNECT_NUDGE_MIN_MS') === 5000 && A.eng.run('FIREBASE_RECONNECT_NUDGE_EVERY_MS') === 15000 && A.eng.run('FIREBASE_RECONNECT_NUDGE_MAX_GAP_MS') === 60000 && A.eng.run('firebaseReconnectNudgeGapMs') === 40000, 'C : réglages — 5 s au moins, 15 s pour la relance périodique, écart doublé jusqu’à 60 s');
     // goOffline qui échoue : goOnline est tenté quand même (ne jamais rester hors ligne).
-    R.temps += 6000;
+    R.temps += 40000;
     A.eng.run(`console = {error(){}, log(){}, warn(){}}; firebaseDbInstance.goOffline = function(){ throw new Error('panne simulée'); };`);
     ok(A.eng.run('nudgeFirebaseReconnect()') === true && n() === 4, 'C : goOffline en erreur : goOnline est appelé quand même');
     // SDK sans goOffline / goOnline (faux SDK par défaut) : rien, sans erreur.

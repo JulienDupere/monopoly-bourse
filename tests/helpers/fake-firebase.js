@@ -89,7 +89,8 @@ const instantane = v => ({ exists: () => v !== null && v !== undefined, val: () 
 const microtaches = () => new Promise(r => setImmediate(r));
 
 class Reseau {
-  constructor({ graine = 1, pasMinMs = 5, pasMaxMs = 120, maxEssaisTransaction = 25, journalMax = 400, reconnexionProgressive = false } = {}){
+  constructor({ graine = 1, pasMinMs = 5, pasMaxMs = 120, maxEssaisTransaction = 25, journalMax = 400, reconnexionProgressive = false, ouvertureLenteMs = 0 } = {}){
+    this.ouvertureLenteMs = Number(ouvertureLenteMs) || 0;    // Section 319 — retouche : durée d'ouverture d'une connexion (0 = immédiate) ; goOffline() l'abandonne
     this.reconnexionProgressive = !!reconnexionProgressive;   // Section 319 — désactivée par défaut
     this.alea = mulberry32(graine);
     this.graine = graine;
@@ -468,7 +469,12 @@ class Reseau {
       client.minuterieTentative = null;
       if(!client.vivant || client.connecte || client.sdkInterrompu) return;
       client.tentatives.push(this.temps);
-      if(this.temps >= client.reseauDeRetourA){ this.reconnecter(client); return; }
+      if(this.temps >= client.reseauDeRetourA){
+        if(!this.ouvertureLenteMs){ this.reconnecter(client); return; }
+        // Section 319 — retouche : le réseau est revenu mais la connexion met ouvertureLenteMs à s'ouvrir.
+        client.ouvertureEnCours = this.planifier(null, () => { client.ouvertureEnCours = null; if(client.vivant && !client.connecte && !client.sdkInterrompu) this.reconnecter(client); }, this.ouvertureLenteMs, false);
+        return;
+      }
       const d = this.hasard() * client.delaiReconnexion;   // comme le vrai SDK : Math.random() * reconnectDelay_
       client.delaiReconnexion = Math.min(5 * 60 * 1000, client.delaiReconnexion * 1.3);
       this.noter(`${client.nom} : tentative de reconnexion échouée, la suivante dans ${Math.round(d)} ms (délai du SDK : ${Math.round(client.delaiReconnexion)} ms)`);
@@ -480,6 +486,7 @@ class Reseau {
     if(!client.vivant) return;
     client.sdkInterrompu = true;
     if(client.minuterieTentative){ this.annulerMinuterie(client.minuterieTentative); client.minuterieTentative = null; }
+    if(client.ouvertureEnCours){ this.annulerMinuterie(client.ouvertureEnCours); client.ouvertureEnCours = null; } // Section 319 — retouche : la tentative en cours est abandonnée
     if(client.connecte) this.couper(client, 0);
   }
   // goOnline() : PersistentConnection.resume — délai remis au minimum, tentative immédiate.

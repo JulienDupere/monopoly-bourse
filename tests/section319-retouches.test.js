@@ -5,8 +5,12 @@
 //     groupe a créée entre-temps sous le même code n'est jamais supprimée.
 // R3. Une autre partie rejointe pendant l'attente d'une création reste ouverte ; la partie créée est retirée.
 // R4. Le bouton de secours « Lancer les dés » n'apparaît pas avant 5 s, même si l'écran est redessiné entre-temps.
+// R5. Connexion lente à s'ouvrir (défaut trouvé par le banc du vrai SDK) : les relances de la reconnexion s'espacent
+//     (écart doublé après chacune), sinon chaque relance abandonnait la tentative en cours et rien n'aboutissait.
+// R6. Partie quittée puis rejointe pendant qu'une action attend le réseau (trouvé par le banc du vrai SDK, garde de
+//     l'interface contournée) : l'enregistrement tardif ne touche plus l'état rechargé ; l'action n'est pas effacée.
 // Chaque scénario a sa contre-épreuve : l'ancien code (ou la garde retirée) est réintroduit par { transform }.
-const { Reseau, partie, appareil, ecouler, micro, sub } = require('./helpers/banc-319');
+const { Reseau, partie, appareil, ecouler, micro, sub, INVESTIR } = require('./helpers/banc-319');
 
 let nChecks = 0;
 const ok = (c, m) => { if(!c) throw new Error('ÉCHEC : ' + m); nChecks++; console.log('  OK', m); };
@@ -98,6 +102,54 @@ async function r4(transform){
   return { a0, a3, a5, lancer: A.eng.run('state.gameClock.rollCount') };
 }
 
+// R5 — panne de 20 s, puis le réseau revient mais la connexion met `lent` ms à s'ouvrir.
+const RELANCES_A_ECART_FIXE = sub('Math.max(minGapMs||0, firebaseReconnectNudgeGapMs)', 'Math.max(minGapMs||0, FIREBASE_RECONNECT_NUDGE_MIN_MS)');
+async function r5(transform, lent, clics){
+  const P = await partie(['Alice', 'Bob'], ['garp', 'garp']);
+  const R = new Reseau({ graine: 5, reconnexionProgressive: true, ouvertureLenteMs: lent });
+  R.ecrireServeur(P.chemin, P.raw);
+  const A = appareil(R, P, 'Alice', P.ids[0], { dom: true, transform });
+  await R.pomper();
+  R.couper(A.client, 20000);
+  await ecouler(R, 20000);
+  const t0 = R.maintenant();
+  while(!A.client.connecte && R.maintenant() - t0 < 120000){
+    if(clics) A.eng.run(INVESTIR(1));                      // le joueur retente son action : refusée hors ligne
+    await ecouler(R, clics ? 6000 : 1000);
+  }
+  const secondes = Math.round((R.maintenant() - t0) / 1000);
+  let action = null;
+  if(A.client.connecte){ await ecouler(R, 3000); action = await R.attendrePromesse(A.eng.run(INVESTIR(1))); }
+  return { connecte: A.client.connecte, secondes, action: action && action.ok };
+}
+
+// R6 — le vrai SDK répond à la lecture de loadGame depuis son cache, avec l'état d'AVANT l'action (une transaction
+// en attente y garde une écoute interne) : simulé ici en remplaçant storageGet le temps de rejoindre. Au retour du
+// réseau, la valeur reçue est mise de côté (comme pendant une saisie) jusqu'après l'accusé de la transaction.
+const SANS_GARDE_ENREGISTREMENT = sub('if(staleSave()){ saveFailureMaybeWritten = false; return !!(txResult && txResult.committed); }', '');
+async function r6(transform){
+  const P = await partie(['Alice', 'Bob'], ['garp', 'garp']);
+  const R = new Reseau({ graine: 11 });
+  R.ecrireServeur(P.chemin, P.raw);
+  const A = appareil(R, P, 'Alice', P.ids[0], { dom: true, transform });
+  await R.pomper();
+  const avant = R.valeur(P.chemin);
+  R.couper(A.client, 5000);
+  const p1 = A.eng.run(INVESTIR(1)); await micro();          // la transaction attend le réseau
+  A.eng.sandbox.__avant = avant; A.eng.sandbox.__cle = 'game:' + P.code;
+  A.eng.run('globalThis.__sg = storageGet; storageGet = async (k, sh) => (k === __cle ? __avant : __sg(k, sh));');
+  await A.eng.run('performQuitGame()');
+  const rejoint = await A.eng.run('loadGame(' + JSON.stringify(P.code) + ')');
+  A.eng.run('storageGet = __sg; globalThis.__sd = shouldDeferRemoteState; shouldDeferRemoteState = () => true;');
+  await ecouler(R, 8000); const r1 = await p1;
+  A.eng.run('shouldDeferRemoteState = __sd;');
+  await ecouler(R, 4000);                                    // le battement applique la valeur mise de côté
+  const bons = () => JSON.parse(R.valeur(P.chemin)).players[0].bondBalance || 0;
+  const serveur1 = bons(), ecran1 = A.eng.run('state.players[0].bondBalance || 0');
+  const r2 = await R.attendrePromesse(A.eng.run(INVESTIR(0.5))); await R.pomper();
+  return { rejoint, r1: r1 && r1.ok, serveur1, ecran1, r2: r2 && r2.ok, serveur2: bons(), egal: A.eng.run('JSON.stringify(state)') === R.valeur(P.chemin) };
+}
+
 (async () => {
   console.log('R1. Création refusée hors ligne : la reconnexion est relancée');
   let a = await r1(), b = await r1(SANS_RELANCE);
@@ -125,6 +177,21 @@ async function r4(transform){
   ok(a.a0 === false && a.a3 === false, 'R4 : pas de bouton au 1er rendu ni au rendu à 3 s');
   ok(a.a5 === true && a.lancer === 0, 'R4 : bouton présent à 5,2 s, sans qu’aucun lancer soit parti');
   ok(b.a3 === true, 'R4 : contre-épreuve — sans le délai, le bouton apparaît dès le rendu à 3 s');
+
+  console.log('R5. Connexion lente à s’ouvrir : les relances ne l’empêchent plus d’aboutir');
+  for(const [lent, clics, nom] of [[16000, false, 'ouverture de 16 s, sans rien faire'], [8000, true, 'ouverture de 8 s, action retentée toutes les 6 s'], [20000, true, 'ouverture de 20 s, action retentée toutes les 6 s']]){
+    a = await r5(undefined, lent, clics); b = await r5(RELANCES_A_ECART_FIXE, lent, clics);
+    console.log(`    ${nom} : corrigé = ${a.connecte ? 'connecté après ' + a.secondes + ' s' : 'jamais en 120 s'} ; écart fixe = ${b.connecte ? 'connecté après ' + b.secondes + ' s' : 'jamais en 120 s'}`);
+    ok(a.connecte && a.secondes <= 100 && a.action === true, `R5 : ${nom} — connecté après ${a.secondes} s, l’action suivante est enregistrée`);
+    ok(!b.connecte, `R5 : contre-épreuve (${nom}) — à écart fixe, la connexion n’aboutit jamais en 120 s`);
+  }
+
+  console.log('R6. Partie quittée puis rejointe pendant qu’une action attend le réseau');
+  a = await r6(); b = await r6(SANS_GARDE_ENREGISTREMENT);
+  console.log(`    corrigé : action 1 sur le serveur ${a.serveur1}, à l’écran ${a.ecran1} ; après l’action 2 : ${a.serveur2} ; sans la garde : à l’écran ${b.ecran1}, après l’action 2 : ${b.serveur2}`);
+  ok(a.rejoint === true && a.serveur1 === 1 && a.ecran1 === 1, 'R6 : l’action 1 (1 M$) est sur le serveur et l’écran rechargé la montre');
+  ok(a.r2 === true && Math.abs(a.serveur2 - 1.5) < 1e-9 && a.egal, 'R6 : après l’action 2 (0,5 M$), les deux sont sur le serveur (1,5 M$) et l’appareil = le serveur');
+  ok(b.ecran1 === 0 && Math.abs(b.serveur2 - 0.5) < 1e-9, 'R6 : contre-épreuve — sans la garde, l’action 2 efface l’action 1 du serveur (0,5 M$ au lieu de 1,5)');
 
   console.log(`${nChecks} vérifications OK`);
   process.exit(0);

@@ -1,6 +1,7 @@
 // Test — section 319, M6 : le logo d'une entreprise vit dans l'état de la partie, donc il est renvoyé à tous les
 // appareils à chaque action. Une photo en PNG de 240 px y pèse ~110 Ko, contre ~15 Ko en JPEG à la même taille.
-// Règle : image sans transparence = JPEG quand c'est plus léger ; logo dessiné ou transparent = PNG ; dans le doute, PNG.
+// Règle : image sans transparence = JPEG quand il pèse moins de la moitié du PNG (une photo : ~1/7) ; logo dessiné
+// (gain faible, bords moins nets) ou transparent = PNG ; dans le doute, PNG.
 // Les poids ci-dessous sont ceux mesurés (en caractères de data URL). Lancer :  node tests/section319-logos.test.js
 const { loadEngine } = require('./helpers/engine');
 
@@ -60,6 +61,10 @@ async function chaine(transform){
   console.log('2. Logo dessiné (aplats, texte)');
   r = choisir({ png: 2300, jpeg: 6400 });
   check(r.url === PNG(2300), 'un logo dessiné reste en PNG, plus léger et net (2 300 contre 6 400)');
+  // Mesuré dans Chrome sur un logo dessiné réduit de 1200 à 240 px : PNG 10 898 caractères, JPEG 8 515.
+  r = choisir({ png: 10898, jpeg: 8515 });
+  check(r.url === PNG(10898), 'JPEG à peine plus léger (8 515 contre 10 898) : PNG gardé, pour des bords nets');
+  check(choisir({ png: 10000, jpeg: 4000 }).url === JPEG(4000) && choisir({ png: 10000, jpeg: 6000 }).url === PNG(10000), 'seuil : JPEG à 40 % du PNG retenu, à 60 % écarté');
 
   console.log('3. Image avec transparence');
   r = choisir({ png: 112000, jpeg: 15000, alpha: 254 });

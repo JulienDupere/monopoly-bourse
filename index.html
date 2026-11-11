@@ -992,10 +992,10 @@ function nowLabel(){ const d=new Date(); return d.toLocaleTimeString('fr-CA',{ho
 
 // Section 319 — M6 (relecture de la synchro du 2026-11-11) : le logo vit dans l'état de la partie, donc il est renvoyé
 // à tous les appareils à chaque action. Une photo en PNG de 240 px y pèse ~110 Ko (mesuré), contre ~15 Ko en JPEG à
-// la même taille. Une image sans transparence est donc enregistrée en JPEG quand c'est plus léger ; un logo dessiné
-// (aplats, texte : ~2 Ko en PNG) ou transparent reste en PNG. Dans le doute (pixels illisibles, JPEG refusé par le
+// la même taille. Une image sans transparence est donc enregistrée en JPEG quand il pèse moins de la moitié du PNG
+// (une photo : ~1/7) ; un logo dessiné (aplats, texte : gain faible, bords moins nets) ou transparent reste en PNG. Dans le doute (pixels illisibles, JPEG refusé par le
 // navigateur), PNG comme avant. Les logos déjà enregistrés ne sont pas modifiés.
-const LOGO_JPEG_QUALITY = 0.85;
+const LOGO_JPEG_QUALITY = 0.85, LOGO_JPEG_MAX_RATIO = 0.5;
 function canvasHasTransparency(ctx, w, h){
   try{
     const d = ctx.getImageData(0, 0, w, h).data;
@@ -1008,7 +1008,7 @@ function lighterLogoDataUrl(canvas, ctx, w, h){
   if(canvasHasTransparency(ctx, w, h)) return png;
   let jpeg = null;
   try{ jpeg = canvas.toDataURL('image/jpeg', LOGO_JPEG_QUALITY); }catch(e){ jpeg = null; }
-  return (typeof jpeg==='string' && jpeg.indexOf('data:image/jpeg;base64,')===0 && jpeg.length<png.length) ? jpeg : png;
+  return (typeof jpeg==='string' && jpeg.indexOf('data:image/jpeg;base64,')===0 && jpeg.length<png.length*LOGO_JPEG_MAX_RATIO) ? jpeg : png;
 }
 function resizeImageFileToDataUrl(file, maxDim){
   return new Promise((resolve, reject)=>{
@@ -1024,7 +1024,7 @@ function resizeImageFileToDataUrl(file, maxDim){
         canvas.width = w; canvas.height = h;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, w, h);
-        resolve(lighterLogoDataUrl(canvas, ctx, w, h)); // Section 319 — M6 : JPEG si l'image est opaque et que c'est plus léger
+        resolve(lighterLogoDataUrl(canvas, ctx, w, h)); // Section 319 — M6 : JPEG si l'image est opaque et qu'il pèse moins de la moitié du PNG
       };
       img.src = reader.result;
     };

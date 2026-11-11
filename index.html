@@ -2050,7 +2050,7 @@ async function reserveNewGame(s){
     const db = firebaseDb();
     if(!db) return {ok:false, reason:'no-backend'};
     watchFirebaseConnection(db); // l'état de la connexion est suivi dès l'écran de création
-    if(isKnownOffline()) return {ok:false, reason:'offline'};
+    if(isKnownOffline()){ nudgeFirebaseReconnect(); return {ok:false, reason:'offline'}; } // Section 319 — retouche de la revue : l'écran de création n'a ni battement ni action refusée pour relancer la reconnexion (M4)
   }
   const attempt = {abandoned:false};
   const work = (async ()=>{
@@ -2296,8 +2296,16 @@ async function createGameOnce(names, startCash, bankCash, unit, settings, neutra
   const stateBeforeCreation = state;
   state = s;
   try{ pushHistorySnapshot(0); } finally{ state = stateBeforeCreation; }
+  const codeBeforeCreation = gameCode; // Section 319 — retouche de la revue
   const reserved = await reserveNewGame(s);
   if(!reserved.ok){ alert(createGameFailureMessage(reserved.reason)); return false; }
+  // Section 319 — retouche de la revue : pendant l'attente (jusqu'à 15 s), le joueur a pu rejoindre une autre partie
+  // (« Rejoindre »). Elle reste ouverte : la partie créée entre-temps est retirée du serveur et la création abandonnée.
+  if(gameCode!==codeBeforeCreation){
+    discardAbandonedGame('game:'+reserved.code, reserved.raw);
+    flashActionStatus('La création de partie lancée plus tôt est annulée : une autre partie a été ouverte entre-temps.');
+    return false;
+  }
   code = reserved.code;
   gameCode = code; state = s;
   resetActionQueue(); // Section 308
@@ -7383,6 +7391,9 @@ function stopSync(){
   // Section 319 — M5 : plus d'essai de remise en écoute pour une partie quittée ou rechargée.
   if(firebaseRelistenTimer){ clearTimeout(firebaseRelistenTimer); firebaseRelistenTimer = null; }
   firebaseRelistenPending = false; firebaseListenLost = false; firebaseRelistenAttempt = 0;
+  // Section 319 — retouche de la revue : le bandeau levé par une écoute annulée ne survit pas à la partie quittée
+  // (il reste si c'est la connexion anonyme elle-même qui est refusée).
+  if(firebaseListenWarning){ firebaseListenWarning = false; toggleFirebaseAuthWarning(!!(firebaseAuthOutcome && !firebaseAuthOutcome.ok)); }
   lastReceivedRaw = null;
 }
 

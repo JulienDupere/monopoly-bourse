@@ -211,7 +211,7 @@ const resume = r => JSON.stringify(r && { ok: r.ok, notSaved: r.notSaved, reason
     await R.pomper();
     ok(sourd(A) === false && A.eng.run('firebaseRelistenPending') === false && A.eng.run('firebaseRelistenAttempt') === 0 && ecoutes(e) === 0, 'E : stopSync() arrête les essais (aucune écoute reposée pour la partie quittée)');
     ok(R.stats.pas - pas0 < 50, 'E : plus aucune minuterie d’essai en attente');
-    ok(bandeau(A) === 'block', 'E : le bandeau reste tant que rien n’est revenu');
+    ok(bandeau(A) === 'none', 'E : partie quittée : le bandeau levé par l’écoute annulée est retiré (retouche de la revue)');
     A.client.session = true; A.client.authRefusee = false;   // la session est de retour
     const rejoint = await R.attendrePromesse(A.eng.run(`loadGame(${ESC(P.code)})`));
     await R.pomper();

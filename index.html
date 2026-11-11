@@ -6474,10 +6474,16 @@ function produitsBadgesHtml(p){
   if(p.cubes) badges.push(`<span class="pm-badge" style="background:var(--gold);">cubes</span>`);
   return badges.join('');
 }
+// Section 319 — fiches ouvertes de l'onglet « Produits », mémorisées sur l'appareil (jamais dans state), comme
+// entrepriseAccordionState pour « Mon Entreprise ». Clé = rang du produit dans PRODUCTS_MATRIX (table constante).
+// Avant : chaque redessin de l'onglet (action d'un autre joueur reçue) repliait la fiche que le joueur lisait.
+let produitsOpenRows = {};
+function produitsRowKey(p){ return 'pm'+PRODUCTS_MATRIX.indexOf(p); }
 function produitsRowHtml(p){
   const list = arr => arr.map(x=>`<li>${x}</li>`).join('');
+  const key = produitsRowKey(p); // Section 319
   return `
-  <details class="pm-row" data-poche="${p.poche.join(' ')}" data-fen="${p.fen}" data-dette="${p.dette?'oui':'non'}">
+  <details class="pm-row" data-pm-key="${key}" data-poche="${p.poche.join(' ')}" data-fen="${p.fen}" data-dette="${p.dette?'oui':'non'}"${produitsOpenRows[key]===true ? ' open' : ''}>
     <summary class="pm-row-summary">
       <span class="pm-col pm-col-name"><span class="pm-name">${p.nm}</span><span class="pm-sub">${p.sub}</span></span>
       <span class="pm-col pm-col-contre">${p.contre}</span>
@@ -19317,6 +19323,10 @@ function bindTabEvents(t){
       document.querySelectorAll('.pm-filter-btn.pm-active').forEach(b=>b.classList.remove('pm-active'));
       produitsApplyFilters();
     });
+    // Section 319 — une fiche ouverte (ou refermée) par le joueur est retenue pour les prochains dessins de l'onglet.
+    document.querySelectorAll('details.pm-row[data-pm-key]').forEach(d=>{
+      d.addEventListener('toggle', ()=>{ produitsOpenRows[d.dataset.pmKey] = !!d.open; });
+    });
     produitsApplyFilters();
   }
   
@@ -21143,7 +21153,9 @@ function insurerOptionsHtml(excludeId, worstCase, p, insuredCompanyId){
   }).join('');
 }
 
-function modalInsureBundle(claimMode, term, isRegenerate){
+// Section 319 — draft = {deductible, checked} : franchise tapée et cases cochées (clés « type:id ») à conserver
+// quand la fenêtre se redessine elle-même (mode d'indemnisation ou durée changés).
+function modalInsureBundle(claimMode, term, isRegenerate, draft){
   
   
   
@@ -21160,7 +21172,11 @@ function modalInsureBundle(claimMode, term, isRegenerate){
   if(!term){ if(isRegenerate) closeModal(); alert('Aucune assurance n’est signable maintenant dans cette partie (types d’assurance désactivés par le créateur, ou hors de leur fenêtre de signature).'); return; } // Section 313 — bogue 40
   const isSub = term==='sub';
   const termRolls = isSub ? null : (term==='semester' ? rollsUntilSemesterEnd() : rollsUntilYearEnd());
-  const items = isSub ? subInsurableItems(myCo.id) : insurableItems(myCo.id, claimMode, termRolls);
+  // Section 319 — la franchise affichée est celle TAPÉE dans la fenêtre (draft), sinon celle du tour ; les primes
+  // sont calculées dessus sans rien enregistrer (la confirmation l'enregistre, voir purchaseInsuranceBundle).
+  let shownDeductible = (draft && Number.isFinite(draft.deductible) && draft.deductible>=0) ? draft.deductible : sanitizeDeductible(myCo.currentDeductible); // Section 313 — bogues 14 et 15 : franchise des primes affichées
+  const itemsFor = ded=>isSub ? subInsurableItems(myCo.id, ded) : insurableItems(myCo.id, claimMode, termRolls, ded);
+  let items = itemsFor(shownDeductible);
   
   
   
@@ -21190,17 +21206,22 @@ function modalInsureBundle(claimMode, term, isRegenerate){
   
   
   
-  const premiums = items.map(it=>it.q.ceil);
-  const openSubRefunds = items.map(it=>insuranceSubRefundConditions(it, myCo.id, isSub)); // Section 309-313 — retouche de la revue des décisions : remboursements affichés, calculés à l'ouverture
-  const rows = items.length===0
+  // Section 319 — primes, remboursements et lignes recalculables (franchise changée) ; une case reste cochée d'un
+  // dessin à l'autre par sa clé « type:id ».
+  const itemKey = it=>it.type+':'+it.id;
+  let premiums = items.map(it=>it.q.ceil);
+  let openSubRefunds = items.map(it=>insuranceSubRefundConditions(it, myCo.id, isSub)); // Section 309-313 — retouche de la revue des décisions : remboursements affichés, calculés à l'ouverture
+  const rowLabelHtml = it=>`${esc(it.label)} : ${(it.q.prob*100).toFixed(2)}% de probabilité de sinistre. ${fmt(it.q.exposure)} à risque${insuranceItemIsService(it) ? ' pour un lancer de 7 (ajusté au lancer réel)' : ''}.${insuranceSubWarningHtml(it, term, myCo.id)}`;
+  const rowsHtml = checkedKeys=>items.length===0
     ? `<div class="small" style="padding:8px 0;">${isSub ? 'Aucun risque assurable en un seul lancé depuis votre position, pour ce terme.' : 'Aucun risque assurable depuis votre position, pour ce terme.'}</div>`
     : items.map((it,idx)=>`
     <div class="row" style="gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;">
-      <input type="checkbox" class="bundle-check" data-idx="${idx}" aria-label="${esc(it.label)}" style="width:auto;"><!-- Section 318 -->
-      <span style="flex:1;min-width:140px;">${esc(it.label)} : ${(it.q.prob*100).toFixed(2)}% de probabilité de sinistre. ${fmt(it.q.exposure)} à risque${insuranceItemIsService(it) ? ' pour un lancer de 7 (ajusté au lancer réel)' : ''}.${insuranceSubWarningHtml(it, term, myCo.id)}</span>
+      <input type="checkbox" class="bundle-check" data-idx="${idx}" aria-label="${esc(it.label)}" style="width:auto;"${checkedKeys.includes(itemKey(it)) ? ' checked' : ''}><!-- Section 318 ; Section 319 : case restée cochée -->
+      <span class="bundle-label" data-idx="${idx}" style="flex:1;min-width:140px;">${rowLabelHtml(it)}</span>
       <span class="bundle-premium-value" data-idx="${idx}" style="width:90px;text-align:right;font-family:'IBM Plex Mono',monospace;font-weight:700;">${fmt(premiums[idx])}</span>
     </div>`
   ).join('');
+  const rows = rowsHtml((draft && Array.isArray(draft.checked)) ? draft.checked : []);
   
   
   
@@ -21246,7 +21267,6 @@ function modalInsureBundle(claimMode, term, isRegenerate){
   
   
   
-  const shownDeductible = sanitizeDeductible(myCo.currentDeductible); // Section 313 — bogues 14 et 15 : franchise des primes affichées
   const deductibleFieldHtml = `<label>Franchise de ${esc(myCo.name)} pour ce tour (identique pour tous les contrats que VOTRE entreprise signe ce tour-ci, en ${esc(state.unit)})</label>
       <input type="number" step="0.01" min="0" id="mDeductibleGlobal" value="${shownDeductible}" style="margin-bottom:4px;">`;
   openModal(`
@@ -21293,22 +21313,51 @@ function modalInsureBundle(claimMode, term, isRegenerate){
     const el = document.getElementById('bundleSubtotal');
     if(el) el.textContent = `Sous-total (${count} case${count>1?'s':''} cochée${count>1?'s':''}): ${fmt(sum)}`;
   };
-  document.querySelectorAll('.bundle-check').forEach(c=>c.addEventListener('change', updateBundleSubtotal));
-  const mClaimModeEl = document.getElementById('mClaimMode');
-  if(mClaimModeEl) mClaimModeEl.addEventListener('change', (e)=>{ modalInsureBundle(e.target.value, term, true); });
-  document.getElementById('mTerm').addEventListener('change', (e)=>{ modalInsureBundle(claimMode, e.target.value, true); });
+  const wireBundleChecks = ()=>{ document.querySelectorAll('.bundle-check').forEach(c=>c.addEventListener('change', updateBundleSubtotal)); updateBundleSubtotal(); }; // Section 319 : sous-total recalculé (cases restées cochées)
+  wireBundleChecks();
   const mDedGlobalEl = document.getElementById('mDeductibleGlobal');
-  if(mDedGlobalEl) mDedGlobalEl.addEventListener('change', async ()=>{
-    
-    
-    
+  // Section 319 — ce que le joueur a déjà choisi dans la fenêtre : cases cochées (par clé) et franchise tapée.
+  const checkedBundleKeys = ()=>{
+    const keys = [];
+    document.querySelectorAll('.bundle-check').forEach(c=>{ const it = items[c.dataset.idx]; if(c.checked && it) keys.push(itemKey(it)); });
+    return keys;
+  };
+  const bundleDraft = ()=>{
+    const typed = mDedGlobalEl ? parseFloat(mDedGlobalEl.value) : NaN;
+    return {deductible: (Number.isFinite(typed) && typed>=0) ? typed : shownDeductible, checked: checkedBundleKeys()};
+  };
+  const mClaimModeEl = document.getElementById('mClaimMode');
+  if(mClaimModeEl) mClaimModeEl.addEventListener('change', (e)=>{ modalInsureBundle(e.target.value, term, true, bundleDraft()); }); // Section 319 : cases et franchise conservées
+  document.getElementById('mTerm').addEventListener('change', (e)=>{ modalInsureBundle(claimMode, e.target.value, true, bundleDraft()); }); // Section 319 : cases et franchise conservées
+  // Section 319 — la franchise tapée n'est plus ENREGISTRÉE à la sortie du champ. Avant : « change » lançait une
+  // action (setTurnDeductible) ; dans un navigateur, « change » part au mousedown, AVANT le « click » : le clic sur
+  // « Confirmer la sélection » tombait sur la garde anti-double-envoi (ignoré), puis la fenêtre était redessinée et
+  // les cases décochées. Désormais : rien n'est écrit ici, les primes sont recalculées sur place pour la franchise
+  // tapée (sans remplacer le bouton ni, si les lignes sont les mêmes, les cases : le clic en cours aboutit), et la
+  // confirmation enregistre la franchise avec le contrat (purchaseInsuranceBundle, section 313 — bogue 15).
+  if(mDedGlobalEl) mDedGlobalEl.addEventListener('change', ()=>{
     const typed = parseFloat(mDedGlobalEl.value);
-    const res = await setTurnDeductible(Number.isFinite(typed) ? typed : 0); // Section 313 — bogue 14 : franchise bornée par le moteur
-    // Section 313 — bogue 15 : si la fenêtre a été remplacée entre-temps (confirmation sur les conditions à jour,
-    // ouverte par un clic sur « Confirmer » juste après la saisie), elle n'est pas redessinée par-dessus.
-    const stillHere = document.getElementById('mDeductibleGlobal')===mDedGlobalEl;
-    if(!res.ok){ if(res.error) alert(res.error); if(stillHere) modalInsureBundle(claimMode, term, true); return; }
-    if(stillHere) modalInsureBundle(claimMode, term, true);
+    const v = Number.isFinite(typed) ? typed : 0;
+    if(v<0){ alert('La franchise doit être un montant positif ou nul.'); mDedGlobalEl.value = String(shownDeductible); return; } // Section 313 — bogue 14 : franchise négative refusée, retour à la franchise affichée
+    if(!Number.isFinite(typed)) mDedGlobalEl.value = '0';
+    const keep = checkedBundleKeys(), before = items.map(itemKey);
+    shownDeductible = v;
+    items = itemsFor(v);
+    premiums = items.map(it=>it.q.ceil);
+    openSubRefunds = items.map(it=>insuranceSubRefundConditions(it, myCo.id, isSub));
+    const sameRows = before.length===items.length && items.length>0 && items.every((it,i)=>itemKey(it)===before[i]);
+    if(sameRows){
+      items.forEach((it,idx)=>{
+        const labelEl = document.querySelector(`.bundle-label[data-idx="${idx}"]`), premEl = document.querySelector(`.bundle-premium-value[data-idx="${idx}"]`);
+        if(labelEl) labelEl.innerHTML = rowLabelHtml(it);
+        if(premEl) premEl.textContent = fmt(premiums[idx]);
+      });
+      updateBundleSubtotal();
+    } else {
+      const rowsEl = document.getElementById('bundleRows');
+      if(rowsEl) rowsEl.innerHTML = rowsHtml(keep);
+      wireBundleChecks();
+    }
   });
   document.getElementById('mOk').addEventListener('click', async ()=>{
     // Section 313 — bogues 15 et 49 : la prime n'est plus celle calculée à l'ouverture. À la confirmation, elle est

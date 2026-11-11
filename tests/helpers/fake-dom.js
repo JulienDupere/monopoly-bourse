@@ -101,6 +101,7 @@ function creerDocument({ html = coquille() } = {}){
       if(this._attrs.has('value')) this.value = this._attrs.get('value');
       if(this._attrs.has('disabled')) this.disabled = true;
       if(this._attrs.has('checked')) this.checked = true;
+      this.open = this._attrs.has('open');   // Section 319 : <details open> (avant : propriété absente, lue comme un nœud factice)
     }
     get _cls(){ if(!this._classes) this._classes = new Set((this._attrs.get('class') || '').split(/\s+/).filter(Boolean)); return this._classes; }
     get style(){ return this._style || (this._style = {}); }

@@ -2928,7 +2928,9 @@ let lastFirebaseReconnectNudgeMs = 0;
 // Section 319 — retouche du banc réel (vrai SDK) : chaque relance abandonne la tentative de connexion en cours ; à
 // écart fixe, une connexion lente à s'établir (8 à 20 s) n'aboutissait donc plus jamais. L'écart exigé avant la
 // relance suivante double après chaque relance d'une même coupure (5, 10, 20, 40, puis 60 s) et revient au minimum
-// dès que « .info/connected » repasse à vrai : une connexion qui met moins d'une minute à s'ouvrir finit par aboutir.
+// dès que « .info/connected » repasse à vrai : une connexion lente à s'ouvrir finit par aboutir (mesuré sur le vrai SDK
+// jusqu'à 20 s ; au-delà de 30 s le SDK abandonne lui-même la tentative, avec ou sans relance). Contrepartie : après
+// une longue panne, la 1re action refusée ne relance plus forcément ; elle attend la tentative suivante du SDK.
 const FIREBASE_RECONNECT_NUDGE_MAX_GAP_MS = 60000;
 let firebaseReconnectNudgeGapMs = FIREBASE_RECONNECT_NUDGE_MIN_MS;
 function nudgeFirebaseReconnect(minGapMs, minOfflineMs){

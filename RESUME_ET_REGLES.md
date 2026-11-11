@@ -2247,3 +2247,105 @@ Suite complète : `node tests/run-all.js` → 71 fichiers verts, 2 984 vérifica
 ### Changements visibles pour les joueurs (cahiers)
 
 Aucune règle ne change : les cahiers ne sont pas concernés. Visible seulement : mise en page mobile (onglets qui défilent, tableaux qui défilent dans leur cadre), navigation au clavier, liens « quitter la partie » inchangés d'aspect.
+
+## 319. Relecture Fable de la synchronisation : action jamais doublée après une longue absence, identité figée pendant un enregistrement, création de partie sans écrasement, tour figé secouru, reconnexion relancée, logos allégés — 2026-11-11
+
+Contexte : après la série 307–318, l'utilisateur a demandé, verbatim : « Est-ce que tu pense qu'une petite vérification
+par Fable peut falloir la peine ou non? », puis « Go relecture synchro ». Une relecture indépendante, en lecture seule,
+de l'enregistrement et de la synchronisation (rapport et scripts de preuve : `docs/audit/relecture-synchro-2026-11-11.md`)
+n'a trouvé aucun défaut bloquant, trois défauts sérieux mais rares (S1 à S3) et six points mineurs (M1 à M6). Décisions,
+verbatim : « go avec fable partout. tu ne fais rien pour m6 », puis, après mesure du poids des logos, « Oui, logos
+seulement ». Chaque changement du code porte le commentaire « Section 319 ».
+
+1. **S1 — action doublée après un accusé perdu** (`newActionId`, `recordActionId`, `stateHasActionId`,
+   `actionAbsenceProvable`). La liste `appliedActionIds` ne garde que 100 identifiants : si 100 actions d'autres joueurs
+   passaient pendant la coupure d'un appareil dont l'accusé s'était perdu, son action était rejouée (2 M$ investis pour
+   un clic). L'identifiant vaut désormais `PRÉFIXE-file.numéro` (préfixe par chargement de page, file =
+   `actionGeneration`) et l'état garde le dernier numéro écrit par préfixe-file dans `state.appliedActionSeq` (borné à
+   300 entrées, défaut `{}` dans `migrateState`), mis à jour dans la même écriture que la mutation. Une action est
+   « écrite » si la liste la contient OU si la table porte un numéro ≥ le sien. Ceinture : après un essai peut-être
+   écrit, action absente et plus de 300 versions d'écart = issue incertaine, jamais de rejeu. `appliedActionIds` est
+   gardée (appareils encore sur l'ancien code pendant la mise en ligne ; ils conservent la table en réécrivant l'état).
+2. **S2 — « Vous êtes » changé pendant un enregistrement** (`identityChangeBlocked`, `actionIdentityChanged`). Une action
+   rejouée après un conflit relisait `myPlayerId` et débitait le nouveau joueur. Le menu (`#whoami`, `#cWhoami`,
+   `chooseIdentity`) refuse le changement tant qu'une action de l'appareil est en vol ou en file, avec un message ;
+   filet : l'identité est mémorisée à l'appel d'`attemptActionWithRetry` et vérifiée avant chaque application ; si elle
+   a changé, rien n'est appliqué (`reason:'identity'`).
+3. **S3 — `createGame` écrasait une partie de même code** (`createGameOnce`, `reserveNewGame`, `storageCreateIfAbsent`,
+   `discardAbandonedGame`). Création atomique « seulement si la place est libre » (transaction ; lire puis écrire en
+   mode local) ; code pris : autre tirage (20 essais) ; rien n'est adopté avant la confirmation du serveur ; refus
+   immédiat si la coupure est connue (avec relance de la reconnexion), attente bornée à 15 s sinon, message clair, saisie
+   conservée. Une création abandonnée qui finit par s'écrire est retirée, seulement si la valeur est exactement celle
+   écrite par cet appareil. Une autre partie rejointe pendant l'attente reste ouverte ; la partie créée est retirée.
+4. **M1 — tour figé** (`stuckRollRescueDue`, `stuckRollRescueHtml`, `rescueStuckRoll`). Le dernier « Tour Terminé » fait
+   deux écritures (prête, puis lancer) ; si la page disparaissait entre les deux, plus rien ne lançait les dés. Après
+   5 s dans l'état « toutes prêtes, lancer pas parti », chaque joueur identifié (pas les spectateurs) voit « Toutes les
+   entreprises sont prêtes, mais le lancer n'est pas parti. » et un bouton « Lancer les dés » (barre des entreprises
+   prêtes et onglet Entreprise). Un seul lancer par tour reste garanti par le numéro de lancer attendu ; rien n'est
+   automatique ; l'état du délai est propre à l'appareil (rien dans `state`).
+5. **M2 — fenêtre « Assurer plusieurs cases »** (`modalInsureBundle`). La franchise n'est plus enregistrée à la sortie du
+   champ (c'était une action, qui faisait ignorer le clic « Confirmer » venu dans le même geste, puis décochait les
+   cases) : les primes sont recalculées sur place, les cases cochées et la franchise tapée survivent aux redessins, et
+   la franchise est enregistrée avec le contrat à la confirmation. Changement assumé : une franchise tapée puis
+   « Annuler » n'est plus retenue. `setTurnDeductible` n'a plus d'appelant dans l'interface.
+6. **M3 — onglet Produits** (`produitsOpenRows`, `produitsRowKey`). Les fiches dépliées sont mémorisées sur l'appareil :
+   une action d'un autre joueur ne les replie plus.
+7. **M4 — reconnexion lente du SDK** (`nudgeFirebaseReconnect`). Après une panne, le SDK espace ses tentatives jusqu'à
+   5 minutes pendant que l'application refuse toute action. Quand `.info/connected` est faux et la page visible,
+   `goOffline()` puis `goOnline()` relancent une tentative immédiate : relance périodique à partir de 15 s de coupure, et
+   à chaque action ou création refusée hors ligne. L'écart exigé entre deux relances d'une même coupure double après
+   chacune (5, 10, 20, 40, puis 60 s) et revient au minimum quand la connexion revient : à écart fixe (premier jet du
+   lot), chaque relance abandonnait la tentative en cours et une connexion lente à s'ouvrir (8 à 20 s) n'aboutissait
+   plus jamais — défaut trouvé par le banc du vrai SDK avant la mise en ligne. Jamais en mode local. Mesuré sur le vrai
+   SDK, code final : ouvertures de 4 à 20 s, toutes abouties (4 à 36 s) ; 30 s et plus, jamais, comme avant le lot (le
+   SDK abandonne lui-même une connexion non établie en 30 s). Serveur injoignable 75 s puis rétabli : reconnexion sans
+   rien faire en 0,4 à 12,9 s (avant le lot : 0,6 à 33,9 s), action tentée au retour réussie en 1,2 à 12,3 s (avant :
+   2,3 à 35,5 s). Contrepartie connue de l'écart doublé : après une longue panne, la première action refusée ne
+   relance plus forcément ; piste non retenue pour l'instant : deux écarts séparés (périodique, actions).
+8. **M5 — écoute révoquée, authentification ratée** (`attachGameListener`, `scheduleGameListenerRetry`, `isFirebaseDeaf`,
+   `forgetFirebaseAuthResult`). Une écoute annulée par le serveur est reposée après une nouvelle authentification (2, 5,
+   15, 30 s, puis 60 s quatre fois ; une action ou un retour au premier plan relance la série) ; un échec
+   d'authentification n'est plus gardé pour toujours (nouvel essai après 5 s) ; tant que l'appareil est « sourd », une
+   action est refusée avant envoi avec la vraie cause (`reason:'auth'`) au lieu de « Conflits répétés » ; le bandeau
+   disparaît à la première valeur reçue, ou quand la partie est quittée.
+9. **M6 — logos** (`lighterLogoDataUrl`, décision de l'utilisateur : « logos seulement »). Le logo vit dans l'état, donc
+   il est renvoyé à tous à chaque action : une photo en PNG de 240 px y pèse ~110 Ko (mesuré), ~15 Ko en JPEG. Une image
+   sans transparence est rangée en JPEG (qualité 0,85) s'il pèse moins de la moitié du PNG ; logo dessiné ou transparent
+   : PNG. Les logos déjà enregistrés ne changent pas. Le reste de M6 (historiques, envoi de tout l'état) n'est pas touché.
+
+10. **Garde de fond de `saveGame`** (hors des neuf constats : piste de la revue, prouvée par le banc du vrai SDK). Si la
+   partie ouverte n'est plus celle de l'appel au retour d'une attente (`gameCode` ou `actionGeneration` changés : partie
+   quittée puis rejointe pendant qu'une action attendait le réseau), l'enregistrement ne touche plus ni `state` ni
+   `lastSerialized`. Avant, il posait la version de l'ancien appel sur l'état rechargé, l'écoute ne corrigeait pas, et
+   l'action suivante effaçait la précédente du serveur. L'interface empêchait déjà de quitter pendant une action ;
+   `performQuitGame` vide maintenant aussi la file d'actions (`resetActionQueue`).
+
+**Non corrigé, signalé** : les réglages `mDiscount` et `mGrowth` de l'onglet Administration enregistrent au `change`
+sans bouton de confirmation : un clic sur un bouton d'action juste après la saisie est ignoré (avec message), le
+réglage étant bien enregistré. Décision de conception à prendre (bouton « Enregistrer », ou accepter).
+
+**Banc du vrai SDK** (compat 10.14.1 contre l'émulateur local, hors dépôt : `node C:\Users\Julien\tools\firebase-emulateur\banc-reel\tout-319.js`) :
+scénarios d'octobre rejoués sur le code d'aujourd'hui (66 sur 66 ; le code des sections 309 à 318 n'avait jamais tourné
+contre le vrai SDK), puis scénarios nouveaux : S1 à 100 et 250 actions, S3 (collision, panne, règles, premier clic), M5
+(règles fermées puis rétablies, `signOut`), parties d'avant le lot avec un appareil resté sur l'ancien code. Second
+passage sur le code final : 66 sur 66, 24 cas multi-appareils sur 24, 50 vérifications S3 / M5, « quitter puis
+rejoindre » corrigé (10 sur 10), création après 60 s de panne en 2 s. Non prouvé :
+expiration du jeton à une heure, vrais téléphones (iOS Safari, Android), repli en « long-polling ».
+
+**Revue et vérifications** : revue adverse des corrections (27 mutations, aucun défaut bloquant ni sérieux ; ses six
+constats mineurs sont traités ci-dessus ou dans `tests/section319-retouches.test.js`) ; vérification à l'écran dans un
+vrai navigateur, en mode local sans Firebase (création, fenêtre d'assurance en un clic réel après la saisie, fiche
+Produits, secours du lancer, menu « Vous êtes », logos — c'est elle qui a fait resserrer la règle du JPEG).
+
+**Tests** : `tests/section319-idempotence`, `-identite`, `-reconnexion`, `-ecoute`, `-creation`, `-tour-fige`,
+`-assurance`, `-produits`, `-logos`, `-retouches` (`.test.js`), chacun avec sa contre-épreuve ; banc commun
+`tests/helpers/banc-319.js` ; `tests/helpers/fake-firebase.js` gagne, désactivés par défaut : reconnexion à délai
+croissant, ouverture lente d'une connexion, `goOffline` / `goOnline`, session anonyme perdue ou refusée, écoute révoquée.
+
+### Changements visibles pour les joueurs (cahiers)
+
+Aucune règle de jeu ne change. Visible : la création de partie attend la confirmation du serveur (bouton « Création de la
+partie… », message si elle échoue) ; le bouton de secours « Lancer les dés » quand un tour reste figé ; dans « Assurer
+plusieurs cases », la franchise tapée n'est retenue qu'à la signature et les cases restent cochées ; « Vous êtes » ne
+change pas pendant un enregistrement ; les fiches de l'onglet Produits restent ouvertes. Cahiers à relire si on les
+met à jour : cahier 0 (création, tour de jeu) et cahier 7 (assurance). Les PDF ne sont pas modifiés par cette section.

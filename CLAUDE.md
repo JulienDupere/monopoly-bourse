@@ -53,6 +53,10 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
   66, 68, 69, 80, 81 (section 315, cubes, dividendes, états), 55, 56, 76, 92, 100 (section 316, fin de partie),
   77–79, 82–91, 93–99, 101 (section 317, affichage et saisie). Tous les moyens et faibles du périmètre sont traités,
   sauf 12, 45, 51, 53, 61, 62 (écartés par Julien) et 64 (voulu).
+- `docs/audit/relecture-synchro-2026-11-11.md` : relecture indépendante de l'enregistrement et de la synchronisation
+  (3 sérieux S1–S3, 6 mineurs M1–M6, scripts de preuve en annexe), corrigée par la section 319. Banc du vrai SDK contre
+  l'émulateur local, hors dépôt : `C:\Users\Julien\tools\firebase-emulateur\banc-reel\tout-319.js` (à rejouer quand on touche à
+  `saveGame`, à la file d'actions, à la reconnexion ou à la création de partie).
 - `docs/cahiers/` : neuf cahiers PDF de formation des joueurs et un aide-mémoire (index : `README.md`). Si une
   livraison change une mécanique qu'ils décrivent, le signaler à Julien (à jour des sections 307 à 317 au 2026-10-25 :
   corrections en place et page « Mise à jour » à la fin de chaque cahier, voir `README.md`).
@@ -67,7 +71,9 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 - Synchro multi-appareils : `startPolling`, `applyRemoteStateIfNewer`, champ `state.version`. Toute action passe par
   `attemptActionWithRetry` (file, adoptée seulement si enregistrée, clé d'idempotence `state.appliedActionIds`) ou
   `runModalActionWithRetry` ; rendu sur valeur reçue : `renderPreservingForms` ; conditions affichées revérifiées :
-  `confirmWithFreshConditions` (section 308).
+  `confirmWithFreshConditions` (section 308). Section 319 : table `state.appliedActionSeq` (action jamais rejouée),
+  identité figée pendant une action, `nudgeFirebaseReconnect` (relances espacées), `attachGameListener` (écoute
+  reposée), `reserveNewGame` (création sans écrasement), garde `staleSave` de `saveGame`.
 - Rendu : `render()` → `renderTab()` → `renderPortefeuille`, `renderEntreprise`, `renderDevenirAssureur`,
   `renderProduitsMatrice`, `renderAdmin`… ; liste des onglets dans `visibleTabs()`.
 - Tour de jeu : `rollDiceAndMove`, `performRollForAllCompanies`, `advanceGameClock`, `processYearEnd`.
@@ -90,8 +96,8 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 
 ## Tests
 
-- `node tests/run-all.js` lance tous les `tests/*.test.js` (71 fichiers, 2 984 vérifications et 53 cas
-  multi-appareils au 2026-10-25, après la vague 3 et la section 318). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
+- `node tests/run-all.js` lance tous les `tests/*.test.js` (81 fichiers, 3 333 vérifications et 53 cas
+  multi-appareils au 2026-11-11, après la section 319). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
   `tests/helpers/fake-firebase.js`, mini-DOM `tests/helpers/fake-dom.js` ; `SYNC_SEEDS=40` pour un passage long). Il charge
   tout le script d'`index.html`, donc une erreur de syntaxe le fait échouer. Tout doit passer avant un push.
 - Syntaxe seule : `node -e "new (require('vm').Script)(require('./tests/helpers/engine').engineSource())"`.
@@ -99,7 +105,7 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
   `vm` (faux DOM, `window.storage` en mémoire, aucun Firebase) ; `newGame(noms, types)` crée une partie et ses
   entreprises ; `run(code)` / `json(code)` évaluent dans le moteur et permettent de remplacer une fonction par un
   espion ; `cashTotal()` ; `check`, `near`. Options : `{ firebase }` (faux SDK, pour `saveGame`) et `{ transform }`
-  (contre-épreuve : réintroduire l'ancien code et prouver que le test échoue). Modèles : `tests/audit-bug*.test.js`.
+  (contre-épreuve : réintroduire l'ancien code et prouver que le test échoue). Modèles : `tests/audit-bug*.test.js` ; pour un scénario à plusieurs appareils : `tests/helpers/banc-319.js`.
 
 ## Livraison
 

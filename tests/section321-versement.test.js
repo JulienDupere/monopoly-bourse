@@ -274,24 +274,32 @@ scenario('S7', 'garde : un dividende que le cours ne peut pas absorber n’est p
   ok(!r3.announced && /au plus <b>0\.00 M\$|au plus <b>0 K\$/.test(r3.preview), `cours à la garde : 10 000 $ refusés (${r3.preview.replace(/<[^>]+>/g, '').slice(0, 90)}…)`);
   ok(near(m0, T.money(), 1e-9), 'monnaie conservée');
 
-  // d) Annonce passée à 100 $, cours tombé à 12 $ avant la clôture : ANNULÉE, rien versé, montant rendu, pas un versement.
+  // d) Annonce de 3 M$ passée à 100 $, cours tombé à 12 $ avant la clôture : RÉDUITE à 2 $ par action (0,4 M$),
+  //    2,6 M$ rendus ; puis, à la garde (10 $), une autre annonce est ANNULÉE en entier.
   {
     const D = await partie(o, ['garp']);
     prep(D, 0, { bnr: 0 });
     const r = await annoncer(D, 0, 3);
-    const holders0 = D.eng.json(`state.players.map(p=>p.cash)`), m1 = D.money();
+    const m1 = D.money();
     D.setup(0, `A.stockPrice = ${12 * US};`);
-    const cash0 = D.eng.run(`${D.co(0)}.cash`);
+    const cash0 = D.eng.run(`${D.co(0)}.cash`), alice0 = D.eng.run(`state.players[0].cash`);
     closeSemester(D);
-    const holders1 = D.eng.json(`state.players.map(p=>p.cash)`);
-    ok(r.announced && near(D.eng.run(`${D.co(0)}.cash`) - cash0, 3, 1e-9) && holders1.every((c, k) => near(c, holders0[k], 1e-12)) && near(D.price(0), 12 * US, 1e-15),
-      `annonce de 3 M$ faite à 100 $, cours 12 $ à la clôture : annulée, 3 M$ rendus à la trésorerie, aucun joueur payé, cours inchangé`);
     const id = D.eng.run(`${D.co(0)}.id`);
-    ok(near(D.eng.run(`dividendPaidInSemester(${JSON.stringify(id)}, 2)`), 0, 1e-12) && near(D.eng.run(`dividendNetPaidInSemester(${JSON.stringify(id)}, 2)`), 0, 1e-12),
-      'annulée : ni dividendPaidInSemester ni dividendNetPaidInSemester ne la comptent');
-    if(o.engine === 'new') ok(near(D.eng.json(`__realBNR(${D.co(0)}, 3)`).ordinaryPaid, 0, 1e-12) && D.eng.run(`companyAverageDividendAnnounced(${JSON.stringify(id)})`) === 0,
-      'annulée : pas déduite des BNR du semestre suivant, pas comptée dans la moyenne des annonces');
-    ok(D.eng.run(`__logs.some(l=>/🚫/.test(l) && /ANNULÉ/.test(l))`) && near(m1, D.money(), 1e-9), 'journal : annonce annulée ; monnaie conservée');
+    ok(r.announced && near(D.price(0), 10 * US, 1e-12) && near(D.eng.run(`state.players[0].cash`) - alice0, 60000 * 2 * US, 1e-9),
+      `annonce de 3 M$ faite à 100 $, cours 12 $ à la clôture : réduite à 2 $ par action (Alice, 60 000 parts, reçoit ${(D.eng.run(`state.players[0].cash`) - alice0).toFixed(4)} M$), cours -> ${fmt$(D.price(0))}`);
+    ok(near(D.eng.run(`dividendPaidInSemester(${JSON.stringify(id)}, 2)`), 0.4, 1e-9) && near(D.eng.run(`dividendNetPaidInSemester(${JSON.stringify(id)}, 2)`), 0.12, 1e-9),
+      'réduite : dividendPaidInSemester = 0,4 M$ déclarés, dividendNetPaidInSemester = 0,12 M$ (hors part de la banque)');
+    if(o.engine === 'new') ok(near(D.eng.json(`__realBNR(${D.co(0)}, 3)`).ordinaryPaid, 0.4, 1e-9) && near(D.eng.run(`companyAverageDividendAnnounced(${JSON.stringify(id)})`), 0.4, 1e-9),
+      'réduite : 0,4 M$ seulement déduits des BNR du semestre suivant et comptés dans la moyenne des annonces');
+    ok(D.eng.json(`__logs`).some(l=>/✂️/.test(l) && /réduit de 3\.00 M\$ à 400 K\$/.test(l) && /2\.60 M\$ rendu/.test(l)) && near(m1, D.money(), 1e-9), 'journal : « réduit de 3,00 M$ à 400 K$ … 2,60 M$ rendu » ; monnaie conservée');
+    // À la garde : plus rien ne passe, l'annonce est annulée en entier.
+    pushAnnouncement(D, 0, 1);
+    const cash1 = D.eng.run(`${D.co(0)}.cash`), alice1 = D.eng.run(`state.players[0].cash`);
+    closeSemester(D);
+    ok(near(D.eng.run(`${D.co(0)}.cash`) - cash1, 1, 1e-9) && near(D.eng.run(`state.players[0].cash`), alice1, 1e-12) && near(D.eng.run(`dividendPaidInSemester(${JSON.stringify(id)}, 3)`), 0, 1e-12)
+      && D.eng.run(`__logs.some(l=>/🚫/.test(l) && /ANNULÉ/.test(l))`), 'à la garde : annonce de 1 M$ annulée en entier, rendue, personne payé, pas un versement');
+    if(o.engine === 'new') ok(near(D.eng.run(`companyAverageDividendAnnounced(${JSON.stringify(id)})`), 0.4, 1e-9), 'annulée en entier : pas comptée dans la moyenne des annonces (toujours 0,4 M$)');
+    void cash0;
   }
   // e) Récurrent à 12 $ de cours, 5 $ par action, BNR nuls (au plus 2 $) : NON versé, sac type à 20 rouges ; la fenêtre le dit.
   {
@@ -306,7 +314,8 @@ scenario('S7', 'garde : un dividende que le cours ne peut pas absorber n’est p
       'récurrent non versé : aucun joueur payé, sac type à 20 rouges, cours inchangé');
     ok(E.eng.run(`__logs.some(l=>/🚫/.test(l) && /récurrent automatique NON versé/.test(l))`) && near(m1, E.money(), 1e-9), 'journal : récurrent non versé ; monnaie conservée');
   }
-  // f) Récurrent 1 $ (passe seul) + annonce de 1 M$ faite à 100 $ : à 12 $, l'annonce est annulée, le récurrent versé (baisse 1 $).
+  // f) Récurrent 1 $ + annonce de 1 M$ (5 $) faite à 100 $ : à 12 $ (au plus 2 $), le récurrent passe d'abord, l'annonce
+  //    est réduite à 1 $ par action ; cours -> 10 $.
   {
     const F = await partie(o, ['dividende'], { real100: true });
     prep(F, 0, { bnr: 0 });
@@ -314,10 +323,10 @@ scenario('S7', 'garde : un dividende que le cours ne peut pas absorber n’est p
     await annoncer(F, 0, 1);
     F.setup(0, `A.stockPrice = ${12 * US}; A.dividendRecurrentChangedSemesterIdx = -1;`);
     const w = await recurrent(F, 0, true, 3);
-    ok(/le dividende annoncé ce semestre sera annulé à la clôture/.test(w.warn), 'fenêtre du récurrent : l\'annonce sera annulée, le récurrent passe');
+    ok(/le dividende annoncé ce semestre sera réduit ou annulé à la clôture/.test(w.warn), 'fenêtre du récurrent : « sera réduit ou annulé à la clôture »');
     const m1 = F.money();
     closeSemester(F);
-    ok(near(F.price(0), 11 * US, 1e-12) && F.eng.run(`state.dividendAnnouncements.length`) === 0 && near(m1, F.money(), 1e-9), `annonce annulée, récurrent versé seul : cours 12 -> ${fmt$(F.price(0))}, monnaie conservée`);
+    ok(near(F.price(0), 10 * US, 1e-12) && F.eng.run(`state.dividendAnnouncements.length`) === 0 && near(m1, F.money(), 1e-9), `récurrent versé d'abord, annonce réduite à 1 $ : cours 12 -> ${fmt$(F.price(0))}, monnaie conservée`);
   }
   // g) Forme fermée : cours 12 $, garde 10 $, BNR 8 $ par action (1,6 M$) : au plus √(2 × 8) = 4 $ par action.
   {
@@ -593,7 +602,7 @@ scenario('S16', 'BNR en dollars : dividende versé avant l’IPO, puis IPO tardi
   ok(!err && near(eng.json(`dividendRetainedEarnings(state.companies[0], 2)`).perShare, b.perShare, 1e-15), 'partie portant l\'ancien cumul par action : se charge, le cumul est ignoré');
 });
 
-scenario('S17', 'options : strikes abaissés de la baisse du versement (toutes positions, stratégies comprises), sans gain fabriqué', 'fail', async (o, ok) => {
+scenario('S17', 'options : ajustement proportionnel au versement (strike × f, contrats ÷ f), sans gain fabriqué', 'fail', async (o, ok) => {
   const res = {};
   for(const avec of [false, true]){
     const T = await partie(o, ['garp'], { real100: true });
@@ -606,34 +615,131 @@ scenario('S17', 'options : strikes abaissés de la baisse du versement (toutes p
       const c = openOptionStrategy(co, bob, 'bearSpread', 'buy', 95e-6, 105e-6, 12, 5);
       return [a.ok, b.ok, c.ok, a.error||b.error||c.error||null]; })()`);
     const bob0 = T.eng.run(`state.players[1].cash - (state.players[1].cumDividendsReceived||0)`); // hors dividendes reçus (Bob détient aussi des actions)
-    const strikes0 = T.eng.json(`state.players.flatMap(p=>(p.optionPositions||[]).map(x=>x.strike))`);
+    const before = T.eng.json(`state.players.flatMap(p=>(p.optionPositions||[]).map(x=>({k:x.strike, n:x.shares, cost:x.shares*x.premiumAtOpen})))`);
     if(avec) await annoncer(T, 0, 3);
-    const snap = T.eng.run(`globalThis.__snap = snapshotPlayerBondsAndLoans(); 1`);
+    T.eng.run(`globalThis.__snap = snapshotPlayerBondsAndLoans(); 1`);
     closeSemester(T);
-    const strikes1 = T.eng.json(`state.players.flatMap(p=>(p.optionPositions||[]).map(x=>x.strike))`);
+    const after = T.eng.json(`state.players.flatMap(p=>(p.optionPositions||[]).map(x=>({k:x.strike, n:x.shares, cost:x.shares*x.premiumAtOpen})))`);
     if(avec){
+      const f = 92.5 / 100;
       ok(open[0] && open[1] && open[2], `positions ouvertes : put long, call long, bear spread (${JSON.stringify(open)})`);
-      ok(strikes1.length === strikes0.length && strikes1.every((k, j) => near(k, strikes0[j] - 7.5 * US, 1e-12)), `strikes abaissés de 7,50 $ : ${strikes0.map(x => (x / US).toFixed(1)).join(', ')} -> ${strikes1.map(x => (x / US).toFixed(1)).join(', ')}`);
-      const legs = T.eng.json(`state.players[1].optionPositions.filter(x=>x.strategyId).map(x=>x.strike)`);
-      ok(legs.length === 2 && near(Math.abs(legs[0] - legs[1]), 10 * US, 1e-12), 'bear spread : écart entre les jambes conservé (10 $)');
-      ok(T.eng.run(`__logs.filter(l=>/🔧/.test(l)).length`) === 1, 'une ligne de journal pour l\'entreprise');
-      // Variation du portefeuille du lancer : prime d'avant au strike d'AVANT (pas de faux gain).
+      ok(after.length === before.length && after.every((x, j) => near(x.k, before[j].k * f, 1e-12) && near(x.n, before[j].n / f, 1e-9) && near(x.cost, before[j].cost, 1e-15)),
+        `f = 0,925 : strikes ${before.map(x => (x.k / US).toFixed(1)).join(', ')} -> ${after.map(x => (x.k / US).toFixed(3)).join(', ')} ; contrats ÷ f ; coût d'ouverture (contrats × prime) inchangé`);
+      const legs = T.eng.json(`state.players[1].optionPositions.filter(x=>x.strategyId).map(x=>({k:x.strike, n:x.shares}))`);
+      ok(legs.length === 2 && near(Math.abs(legs[0].k - legs[1].k) * legs[0].n, 10 * US * 5, 1e-12), 'bear spread : largeur × contrats conservée (10 $ × 5)');
+      ok(T.eng.json(`__logs`).filter(l=>/🔧/.test(l) && /fractionnement/.test(l) && /100\.00 \$ → 92\.50 \$/.test(l) && /20 contrats → 21,62/.test(l)).length === 1, 'une ligne de journal : proportion et exemple (strike 100 $ → 92,50 $, 20 contrats → 21,62)');
       const dv = T.eng.json(`(function(){ const d = computePlayerPortfolioDeltas(__snap); const co=${A}; const pl = state.players[2]; const pos = pl.optionPositions[0];
         const hist = co.stockPriceHistory; const pricePrev = hist[hist.length-2].price; const r = state.settings.riskFreeRateAnnual||0;
         const Tprev = Math.max(0, (pos.expiryRoll-(state.gameClock.rollCount-1))/6);
-        const want = (optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll, false) - blackScholesPremium(pricePrev, 90e-6, Tprev, r, companyAnnualSigma(co), pos.type)) * OPTION_CONTRACT_MULTIPLIER * pos.shares;
+        const want = (optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll, false)*pos.shares - blackScholesPremium(pricePrev, 90e-6, Tprev, r, companyAnnualSigma(co), pos.type)*10) * OPTION_CONTRACT_MULTIPLIER;
         return {got: d[pl.id].optionVar, want}; })()`);
-      ok(near(dv.got, dv.want, 1e-12), `variation du portefeuille de Chloé : ${dv.got.toFixed(6)} M$ = prime d'après − prime d'avant au strike d'avant (${dv.want.toFixed(6)})`);
+      ok(near(dv.got, dv.want, 1e-12), `variation du portefeuille de Chloé : ${dv.got.toFixed(6)} M$ = valeur d'après − valeur d'avant (10 contrats au strike de 90 $) (${dv.want.toFixed(6)})`);
     } else {
-      ok(strikes1.every((k, j) => near(k, strikes0[j], 1e-15)), 'sans dividende : strikes inchangés');
+      ok(after.every((x, j) => near(x.k, before[j].k, 1e-15) && near(x.n, before[j].n, 1e-12)), 'sans dividende : strikes et contrats inchangés');
     }
-    // Revente du put de Bob : gain net comparable avec ou sans annonce.
     const pos = T.eng.json(`state.players[1].optionPositions.filter(x=>!x.strategyId).map(x=>({id:x.id, shares:x.shares}))`);
     T.eng.json(`(function(){ const r = closeOptionPosition(state.players[1], ${JSON.stringify(pos[0].id)}, ${pos[0].shares}); return r.ok; })()`);
     res[avec] = T.eng.run(`state.players[1].cash - (state.players[1].cumDividendsReceived||0)`) - bob0;
     ok(near(m0, T.money(), 1e-9), `${avec ? 'avec' : 'sans'} annonce : monnaie conservée`);
   }
   ok(Math.abs(res[true] - res[false]) < 0.05, `put de Bob revendu : gain net ${res[true].toFixed(4)} M$ avec annonce, ${res[false].toFixed(4)} M$ sans (pas de gain fabriqué par la baisse)`);
+});
+
+scenario('S19', 'options : valeur de marché de chaque position inchangée par l’ajustement (call, put, bear spread, straddle ; achetés et vendus ; baisse de 4 % et de 90 %)', 'fail', async (o, ok) => {
+  for(const f of [0.96, 0.10]){
+    const T = await partie(o, ['garp'], { real100: true });
+    prep(T, 0, { bnr: 6 });
+    const A = T.co(0);
+    // Chloé détient 10 000 parts : ses 100 calls écrits sont couverts ; après une grosse baisse, ils le sont en partie.
+    T.eng.run(`(function(){ const co=${A}; const bob = co.shareholders.find(s=>s.playerId===state.players[1].id); bob.shares -= 10000; co.shareholders.push({playerId: state.players[2].id, shares: 10000}); })()`);
+    const open = T.eng.json(`(function(){ const co=${A}; const bob=state.players[1], chloe=state.players[2]; const out = [];
+      out.push(openOptionPosition(co, bob, 'call', 'long', 105e-6, 12, 7));
+      out.push(openOptionPosition(co, bob, 'put', 'long', 95e-6, 12, 9));
+      out.push(openOptionPosition(co, chloe, 'call', 'short', 110e-6, 12, 100));
+      out.push(openOptionPosition(co, chloe, 'put', 'short', 90e-6, 12, 3));
+      out.push(openOptionStrategy(co, bob, 'bearSpread', 'buy', 95e-6, 105e-6, 12, 4));
+      out.push(openOptionStrategy(co, chloe, 'bearSpread', 'sell', 95e-6, 105e-6, 12, 2));
+      out.push(openOptionStrategy(co, bob, 'straddle', 'buy', 0, 0, 12, 3));
+      out.push(openOptionStrategy(co, chloe, 'straddle', 'sell', 0, 0, 12, 1));
+      return out.map(r=>r.ok ? 'ok' : r.error); })()`);
+    ok(open.every(x => x === 'ok'), `[f = ${f}] huit ouvertures : ${JSON.stringify(open)}`);
+    const valueCode = `(function(){ const co=${A}; const S = co.stockPrice; const r = state.settings.riskFreeRateAnnual||0;
+      return state.players.flatMap(p=>(p.optionPositions||[]).filter(x=>x.companyId===co.id).map(x=>({id:x.id,
+        v: (x.side==='long'?1:-1) * x.shares * OPTION_CONTRACT_MULTIPLIER * blackScholesPremium(S, x.strike, (x.expiryRoll-state.gameClock.rollCount)/6, r, __sigma0, x.type),
+        cost: x.shares * x.premiumAtOpen, k: x.strike, n: x.shares }))); })()`;
+    T.eng.run(`globalThis.__sigma0 = companyAnnualSigma(${A});`);
+    const v0 = T.eng.json(valueCode);
+    const nw0 = T.eng.json(`state.players.map(p=>netWorth(p))`);
+    T.eng.run(`(function(){ const co=${A}; const S0 = co.stockPrice; co.stockPrice = S0*${f}; adjustOptionsForDividend(co, S0, co.stockPrice); })()`);
+    const v1 = T.eng.json(valueCode);
+    const worst = Math.max(...v0.map((x, j) => Math.abs(x.v - v1[j].v) / Math.max(1e-9, Math.abs(x.v))));
+    ok(v1.length === v0.length && v0.every((x, j) => near(x.v, v1[j].v, Math.max(1e-12, 1e-9 * Math.abs(x.v)))), `[f = ${f}] valeur de marché de chacune des ${v0.length} positions inchangée, à volatilité égale (écart relatif max ${worst.toExponential(1)})`);
+    ok(v0.every((x, j) => near(x.cost, v1[j].cost, 1e-15) && near(v1[j].k, x.k * f, 1e-15) && near(v1[j].n, x.n / f, 1e-9)), `[f = ${f}] strikes × f, contrats ÷ f, coût d'ouverture inchangé`);
+    // Rien ne casse : marge, étiquettes, appels de marge (aucun déclenché par l'ajustement seul), fermeture partielle.
+    T.eng.run(`__logs.length = 0;`);
+    const probe = T.eng.json(`(function(){ const co=${A}; const out = {};
+      out.margin = state.players.map(p=>requiredMaintenanceMargin(p));
+      out.labels = state.players.flatMap(p=>(p.optionPositions||[]).map(x=>optionPositionStrategyLabel(p, co, x)));
+      out.naked = playerNakedWrittenContracts(state.players[2], co.id);
+      enforceMarginCalls();
+      return out; })()`);
+    const marginCalls = T.eng.json(`__logs.filter(l=>/Appel de marge/i.test(l))`);
+    ok(probe.margin.every(x => isFinite(x)) && probe.labels.every(x => typeof x === 'string') && marginCalls.length === 0,
+      `[f = ${f}] marge et étiquettes calculées sans erreur (contrats nus de Chloé : ${probe.naked.toFixed(2)}), aucun appel de marge déclenché par l'ajustement seul`);
+    const nw1 = T.eng.json(`state.players.map(p=>netWorth(p))`);
+    void nw0; void nw1;
+    const part = T.eng.json(`(function(){ const pos = state.players[1].optionPositions.find(x=>!x.strategyId && x.type==='call'); const n = pos.shares; const r = closeOptionPosition(state.players[1], pos.id, n/3); return {ok:r.ok, err:r.error||null, left: pos.shares, n}; })()`);
+    ok(part.ok && near(part.left, part.n * 2 / 3, 1e-9), `[f = ${f}] fermeture partielle d'un tiers des ${part.n.toFixed(4)} contrats : ${part.left.toFixed(4)} restants`);
+    // Règlement à l'échéance : le put long de Bob (9 contrats à 95 $ avant l'ajustement) exercé au même montant total
+    // (contrats ÷ f × 100 × strike × f = 9 × 100 × 95 $), avec 1/f fois plus de parts livrées.
+    const ex = T.eng.json(`(function(){ const co=${A}; const bob=state.players[1]; const pos = bob.optionPositions.find(x=>!x.strategyId && x.type==='put');
+      bob.optionPositions = [pos]; state.players.forEach(p=>{ if(p!==bob) p.optionPositions = []; }); // ce put seul à l'échéance
+      const n = pos.shares; co.stockPrice = pos.strike*0.5; state.gameClock.rollCount = pos.expiryRoll; const c0 = bob.cash;
+      const st = co.shareholders.find(s=>s.playerId===bob.id); const s0 = st.shares; settleExpiredOptions();
+      return {cash: bob.cash - c0, shares: s0 - st.shares, n}; })()`);
+    ok(near(ex.cash, 9 * 100 * 95 * US, 1e-9) && near(ex.shares, 900 / f, 1e-6), `[f = ${f}] put exercé à l'échéance : ${ex.cash.toFixed(6)} M$ encaissés (= 9 × 100 × 95 $), ${ex.shares.toFixed(1)} parts livrées (900 ÷ f)`);
+  }
+});
+
+scenario('S20', 'découvert : paie le dividende versé, le montant réduit, rien pour une annonce annulée', 'fail', async (o, ok) => {
+  for(const [label, priceAtClose, perShare] of [['versée', 100, 15], ['réduite', 12, 2], ['annulée (à la garde)', 10, 0]]){
+    const T = await partie(o, ['garp']);
+    prep(T, 0, { bnr: 0 });
+    T.eng.run(`accrueShortBorrowFees = function(){};`); // frais d'emprunt neutralisés : seul le paiement compensatoire compte
+    const sh = T.eng.json(`(function(){ const r = openShortPosition(${T.co(0)}, state.players[2], 1); return {ok:r.ok, err:r.error||null, shares: (state.players[2].shortPositions[${T.co(0)}.id]||{}).shares}; })()`);
+    const r = await annoncer(T, 0, 3);
+    T.setup(0, `A.stockPrice = ${priceAtClose * US};`);
+    const c0 = T.eng.run(`state.players[2].cash`), m1 = T.money();
+    closeSemester(T);
+    const paid = c0 - T.eng.run(`state.players[2].cash`);
+    ok(sh.ok && r.announced && near(paid, sh.shares * perShare * US, 1e-9) && near(m1, T.money(), 1e-9),
+      `annonce de 3 M$ ${label} : le vendeur à découvert (${sh.shares} parts) paie ${paid.toFixed(4)} M$ (= parts × ${perShare} $), monnaie conservée${sh.ok ? '' : ' — ' + sh.err}`);
+  }
+});
+
+scenario('S21', 'garde graduée (scénario vu à l’écran) : récurrent d’abord, puis les annonces dans l’ordre, la dernière réduite', 'fail', async (o, ok) => {
+  // Cours 100 $, BNR 10 $ par action, récurrent 1,50 $, annonces de 1 M$ (5 $) puis 16,7 M$ (83,50 $, le maximum affiché).
+  // Les cubes font glisser le cours à 98,23 $ : maximum 88,23 $ ; récurrent 1,50 $ versé, 1 M$ versé en entier, 16,7 M$
+  // réduit à 81,73 $ par action (16,346 M$), 0,354 M$ rendu, cours final 10 $.
+  const T = await partie(o, ['dividende']);
+  prep(T, 0, { bnr: 2 });
+  T.setup(0, `A.dividendBenchmarkPerShare = ${1.5 * US}; A.dividendAutoPay = true; A.dividendRecurrentNeedsReset = false;`);
+  const a1 = await annoncer(T, 0, 1);
+  const a2 = await annoncer(T, 0, 16.7);
+  ok(a1.announced && a2.announced, `annonces acceptées (maximum affiché avant la 2e : ${(a2.preview.match(/maximum encore permis ce semestre : ([^ ]+ M\$)/) || [])[1] || '?'})`);
+  T.setup(0, `A.stockPrice = ${98.23 * US};`);
+  const m1 = T.money();
+  const holders0 = T.eng.json(`state.players.map(p=>p.cash)`), cash0 = T.eng.run(`${T.co(0)}.cash`);
+  closeSemester(T);
+  const id = T.eng.run(`${T.co(0)}.id`);
+  const alice = T.eng.run(`state.players[0].cash`) - holders0[0]; // Alice : 60 000 parts
+  ok(near(T.price(0), 10 * US, 1e-12), `cours final ${fmt$(T.price(0))} (sur la garde, ni refusé ni rogné)`);
+  ok(near(alice, 60000 * (1.5 + 5 + 81.73) * US, 1e-6), `Alice (60 000 parts) reçoit 1,50 + 5 + 81,73 $ par action = ${alice.toFixed(4)} M$`);
+  ok(T.eng.json(`__logs`).some(l=>/✂️/.test(l) && /réduit de 16\.70 M\$ à 16\.35 M\$/.test(l) && /354 K\$ rendu/.test(l)), 'journal : « réduit de 16,70 M$ à 16,35 M$ … 354 K$ rendu »');
+  ok(near(T.eng.run(`dividendPaidInSemester(${JSON.stringify(id)}, 2)`), 0.3 + 1 + 16.346, 1e-6), `déclarés au semestre : 0,3 (récurrent) + 1 + 16,346 = ${T.eng.run(`dividendPaidInSemester(${JSON.stringify(id)}, 2)`).toFixed(4)} M$`);
+  if(o.engine === 'new') ok(near(T.eng.json(`__realBNR(${T.co(0)}, 3)`).ordinaryPaid, 17.646, 1e-6), 'BNR du semestre suivant : 17,646 M$ de dividendes déduits (le montant réduit, pas 18 M$)');
+  ok(near(m1, T.money(), 1e-9), 'monnaie conservée');
+  void cash0;
 });
 
 scenario('S18', 'Momentum : la baisse du versement n’est pas lue comme un semestre perdu (sonde p6)', 'fail', async (o, ok) => {
@@ -648,6 +754,34 @@ scenario('S18', 'Momentum : la baisse du versement n’est pas lue comme un seme
   }
   ok(near(out[1.2].p, 94 * US, 1e-12) && out[1.2].dir === 'up' && out[1.2].streak === out[0].streak && JSON.stringify(out[1.2].tr) === JSON.stringify(out[0].tr),
     `6 $ de dividende sans BNR : cours 100 -> ${fmt$(out[1.2].p)}, tendance ${out[1.2].dir} ${out[1.2].streak} (sans dividende : ${out[0].dir} ${out[0].streak}), sac type identique ${JSON.stringify(out[1.2].tr)}`);
+});
+
+scenario('S22', 'sonde p4 du réviseur : acheteur et vendeur de puts, avec ou sans l’annonce de 18 M$ (volatilité fixée)', 'pass', async (o, ok) => { // moteur d'avant : ni baisse ni ajustement, donc rien à comparer (« pass »)
+  // 50 puts K = 100 $ achetés ou vendus juste après l'annonce, revendus ou rachetés après la clôture (cours 100 -> 10 $).
+  // Volatilité fixée à 15 % (elle dépend aussi de la taille de l'entreprise, que l'annonce change : effet à part).
+  const pct = {};
+  for(const side of ['long', 'short']){
+    for(const avec of [false, true]){
+      const T = await partie(o, ['garp', 'garp', 'garp']);
+      prep(T, 0, { bnr: 0 });
+      T.eng.run(`companyAnnualSigma = function(){ return 0.15; };`);
+      const m0 = T.money();
+      if(avec) pushAnnouncement(T, 0, 18);
+      const bob = `state.players[1]`;
+      const c0 = T.eng.run(`${bob}.cash - (${bob}.cumDividendsReceived||0)`);
+      const open = T.eng.json(`(function(){ const r = openOptionPosition(${T.co(0)}, ${bob}, 'put', ${JSON.stringify(side)}, 100e-6, 12, 50); return r.ok || r.error; })()`);
+      const prime = Math.abs(c0 - T.eng.run(`${bob}.cash - (${bob}.cumDividendsReceived||0)`));
+      closeSemester(T);
+      const pos = T.eng.json(`${bob}.optionPositions.map(x=>({id:x.id, shares:x.shares}))`);
+      const close = T.eng.json(`(function(){ const r = closeOptionPosition(${bob}, ${JSON.stringify(pos[0].id)}, ${pos[0].shares}); return r.ok || r.error; })()`);
+      const net = T.eng.run(`${bob}.cash - (${bob}.cumDividendsReceived||0)`) - c0;
+      pct[side + avec] = net / prime;
+      if(o.verbose) console.log(`    ${side === 'long' ? 'acheteur' : 'vendeur '} ${avec ? 'avec annonce' : 'sans annonce'} : ouverture ${open}, prime ${prime.toFixed(5)} M$, cours ${fmt$(T.price(0))}, rachat ${close}, résultat net ${net.toFixed(5)} M$ (${(net / prime * 100).toFixed(1)} % de la prime)`);
+      ok(open === true && close === true && near(m0, T.money(), 1e-9), `${side === 'long' ? 'acheteur' : 'vendeur'} ${avec ? 'avec' : 'sans'} annonce : ouverture et rachat faits, monnaie conservée`);
+    }
+  }
+  ok(Math.abs(pct.longtrue - pct.longfalse) < 0.01, `acheteur : ${(pct.longtrue * 100).toFixed(1)} % de la prime avec l'annonce, ${(pct.longfalse * 100).toFixed(1)} % sans (avant, ajustement additif : −94 %)`);
+  ok(pct.shorttrue <= pct.shortfalse + 0.01, `vendeur : ${(pct.shorttrue * 100).toFixed(1)} % de la prime avec l'annonce, ${(pct.shortfalse * 100).toFixed(1)} % sans (son gain ne dépasse pas celui sans annonce)`);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -686,9 +820,18 @@ const MUTATIONS = [
   ['atterrir sur la garde refusé', sub('  return d <= max*(1+1e-9) + 1e-15;', '  return d < max*(1-1e-9);'), ['S7']],
   ['forme fermée sans racine', sub('  return m>=b ? m : Math.sqrt(m*b);', '  return m;'), ['S7']],
   ['fenêtre du récurrent muette sur le non-versement', sub('  else if(opts.recurrentWindow && !pv.recurrentFits){', '  else if(false){'), ['S7']],
-  ['strikes des options non abaissés', sub('  adjustOptionStrikesForDividend(co, d.appliedDrop); // Section 321', '  // Section 321'), ['S17']],
-  ['seuls les puts ajustés', sub("      if(pos.companyId!==co.id || !(pos.shares>1e-9)) return;\n      const before = pos.strike;", "      if(pos.companyId!==co.id || !(pos.shares>1e-9) || pos.type!=='put') return;\n      const before = pos.strike;"), ['S17']],
-  ['variation du portefeuille au strike abaissé', sub('const strikePrev = (pos.dividendStrikeAdjust && pos.dividendStrikeAdjust.roll===rollNow) ? pos.dividendStrikeAdjust.before : pos.strike;', 'const strikePrev = pos.strike;'), ['S17']],
+  ['options non ajustées', sub('  adjustOptionsForDividend(co, d.priceBefore, d.priceAfter); // Section 321', '  // Section 321'), ['S17', 'S22']],
+  ['seuls les puts ajustés', sub("      if(pos.companyId!==co.id || !(pos.shares>1e-9)) return;\n      const same = ", "      if(pos.companyId!==co.id || !(pos.shares>1e-9) || pos.type!=='put') return;\n      const same = "), ['S17', 'S19']],
+  ['f oublié sur les contrats', sub('      pos.shares = pos.shares / f;\n', ''), ['S19']],
+  ['f oublié sur la prime d’ouverture', sub("      if(typeof pos.premiumAtOpen==='number') pos.premiumAtOpen = pos.premiumAtOpen * f;\n", ''), ['S19']],
+  ['f inversé', sub('  const f = priceAfter/priceBefore;', '  const f = priceBefore/priceAfter;'), ['S19', 'S22']],
+  ['variation du portefeuille aux contrats d’après', sub("const sharesPrev = (adj && typeof adj.sharesBefore==='number') ? adj.sharesBefore : pos.shares;", 'const sharesPrev = pos.shares;'), ['S17']],
+  ['réduction oubliée pour les découverts', sub('      const dividendPerShare = perShare; // Section 307', '      const dividendPerShare = ((dividendGuard.reduced.get(ann.id)||{}).original||ann.amount)/(co.sharesIssued || ann.totalSharesAtAnnouncement || totalRecordShares); // Section 307'), ['S20']],
+  ['retour au mauvais semestre', sub("logFin(co.id, 'dividend_cancelled_return', returned, ann.announcedAtRoll||0);", "logFin(co.id, 'dividend_cancelled_return', returned, state.gameClock.rollCount);"), ['S7', 'S21']],
+  ['ordre des annonces inversé', sub('((x.ann.announcedAtRoll||0) - (y.ann.announcedAtRoll||0)) || (x.order - y.order)', '((y.ann.announcedAtRoll||0) - (x.ann.announcedAtRoll||0)) || (y.order - x.order)'), ['S21']],
+  ['annonce réduite annulée en entier', sub('      const keep = room>1e-15 ? room*denom : 0;', '      const keep = 0;'), ['S7', 'S21']],
+  ['récurrent jugé après les annonces', sub("      if(fits(e.recPerShare, room)) room = Math.max(0, room - e.recPerShare);\n      else recurrentBlocked.add(co.id);", "      recurrentBlocked.add(co.id);"), ['S21']],
+  ['variation du portefeuille au strike d’après', sub('const strikePrev = adj ? adj.before : pos.strike;', 'const strikePrev = pos.strike;'), ['S17']],
   ['référence Momentum non abaissée', sub("  if(typeof co.momentumRefPrice==='number') co.momentumRefPrice = Math.max(0, co.momentumRefPrice - d.appliedDrop);", ''), ['S18']],
   ['aperçu toujours en alerte', sub('  const alarm = addsCube || bigDrop || blocked;', '  const alarm = true;'), ['S11']],
   ['ratio non plafonné', sub('const priceRatio = noReserve ? 1 : Math.min(1, ratio);', 'const priceRatio = noReserve ? 1 : ratio;'), ['S1']],

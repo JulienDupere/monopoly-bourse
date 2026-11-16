@@ -210,6 +210,11 @@ async function auto({ label, names = ['Alice', 'Bob', 'Carol'], buys = [], short
     console.log(`\n3. Puts écrits assignés — ${mode === 'auto' ? 'auto-versement de 300 K$' : 'dividende annoncé de 1 M$'}`);
     const g = await setup(['Alice', 'Bob', 'Carl'], ['dividende']);
     g.eng.run(`__A().dividendBenchmarkPerShare = 1.5e-6; __A().dividendAutoPay = ${mode === 'auto'};`);
+    // Section 321 (lot B) : le versement du lancer 3 fait baisser le cours et ajuste les options comme un fractionnement
+    // (contrats ÷ f) AVANT leur échéance au même lancer : l'assignation livrerait 100 000 / f parts. Ce test porte sur la
+    // section 307 (la banque paie sa position négative) avec 100 000 parts livrées : la baisse au versement est mise hors
+    // jeu ici (marqueur de partie en cours), elle est testée dans tests/section321-versement.test.js.
+    g.eng.run(`state.dividendPriceDropFromSemester = 1e9;`);
     const strike = g.eng.run(`__A().stockPrice`);
     for(const who of ['Bob', 'Carl']){
       // Section 314 — 1 000 puts dépassent le plafond de 15 % des options écrites (300 contrats) : position héritée,

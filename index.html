@@ -1587,7 +1587,7 @@ function migrateState(s){
     
     
     if(!p.optionPositions) p.optionPositions = [];
-    p.optionPositions.forEach(pos=>{ if(pos && pos.dividendStrikeAdjust===undefined) pos.dividendStrikeAdjust = null; }); // Section 321 — strike d'avant une baisse de versement (aucune)
+    p.optionPositions.forEach(pos=>{ if(pos && pos.dividendStrikeAdjust===undefined) pos.dividendStrikeAdjust = null; }); // Section 321 — strike et contrats d'avant un ajustement de versement (aucun)
     if(p.goAdvancesUsed===undefined) p.goAdvancesUsed = 0;
     if(p.inJail===undefined) p.inJail = false;
     if(p.jailTurnsLeft===undefined) p.jailTurnsLeft = 0;
@@ -11316,24 +11316,31 @@ function closeAnnouncedDividendPayoutPenalty(co, semesterIdx, perSharePaid){
   }
   return added;
 }
-// Section 321 — retouche de la revue (constat 1) : à la clôture du semestre `semesterIdx`, AVANT les versements, par
-// entreprise, avec le cours du moment et les BNR définitifs du semestre clos (ils ne dépendent pas des versements de
-// cette clôture) : si annonces échues + récurrent passent ensemble, tout est versé ; sinon les annonces échues sont
-// ANNULÉES (montant rendu à la trésorerie, écriture dividend_cancelled_return au semestre de l'annonce, personne ne
-// reçoit rien, ni les découverts), puis le récurrent est versé s'il passe seul, sinon il n'est pas versé (comme un
-// semestre sans versement récurrent : sac type à 20 rouges par la règle existante). Rend {cancelled, recurrentBlocked}.
+// Section 321 — retouche de la revue (constat 1), puis dernière ronde (« la garde à la clôture est trop brutale ») : à
+// la clôture du semestre `semesterIdx`, AVANT les versements, par entreprise, avec le cours du moment et les BNR
+// définitifs du semestre clos (ils ne dépendent pas des versements de cette clôture), le maximum par action que le cours
+// absorbe (dividendMaxAbsorbablePerShare) est réparti ainsi :
+//   1. le récurrent d'abord, en tout ou rien : versé s'il tient seul dans le maximum, sinon non versé (comme un semestre
+//      sans versement récurrent : sac type à 20 rouges par la règle existante) ;
+//   2. puis les annonces échues, dans l'ordre où elles ont été faites : chacune reçoit ce qui reste ; si elle tient,
+//      versée en entier ; sinon RÉDUITE à ce qui reste (ann.amount ramené au montant réduit : versement par part,
+//      découverts, part de la banque, baisse du cours et cubes rejugés lisent ce montant), la part non versée revenant à
+//      la trésorerie par dividend_cancelled_return au semestre de l'annonce ; s'il ne reste rien, ANNULÉE en entier
+//      (écriture marquée dividendFullyCancelled, pour companyAverageDividendAnnounced).
+// Rend {cancelled, reduced, recurrentBlocked}.
 function applyDividendCloseGuard(dueDividends, semesterIdx, preferredArrearsBlocked){
-  const cancelled = new Set(), recurrentBlocked = new Set();
-  if(!dividendPriceDropActive(semesterIdx)) return {cancelled, recurrentBlocked};
+  const cancelled = new Set(), reduced = new Map(), recurrentBlocked = new Set();
+  if(!dividendPriceDropActive(semesterIdx)) return {cancelled, reduced, recurrentBlocked};
   const byCo = {};
   const entry = co => byCo[co.id] || (byCo[co.id] = {co, anns:[], annPerShare:0, recPerShare:0});
-  dueDividends.forEach(ann=>{
+  dueDividends.forEach((ann, order)=>{
     const co = companyById(ann.companyId);
     const totalRecordShares = (ann.recordHolders||[]).reduce((t,h)=>t+h.shares, 0);
     if(!co || totalRecordShares<=0) return;
     const e = entry(co);
-    e.anns.push(ann);
-    e.annPerShare += ann.amount/(co.sharesIssued || ann.totalSharesAtAnnouncement || totalRecordShares);
+    const denom = co.sharesIssued || ann.totalSharesAtAnnouncement || totalRecordShares; // même diviseur que le versement
+    e.anns.push({ann, order, denom});
+    e.annPerShare += ann.amount/denom;
   });
   activeCompanies().forEach(co=>{
     if(!(co.type==='dividende' && co.dividendAutoPay && co.dividendBenchmarkPerShare>0)) return;
@@ -11347,15 +11354,33 @@ function applyDividendCloseGuard(dueDividends, semesterIdx, preferredArrearsBloc
     const guard = dividendPriceDropGuard(co);
     if(dividendAbsorbable(e.annPerShare + e.recPerShare, co.stockPrice, guard, bnr)) return;
     const max = dividendMaxAbsorbablePerShare(co.stockPrice, guard, bnr);
-    e.anns.forEach(ann=>{
-      co.cash += ann.amount;
-      logFin(co.id, 'dividend_cancelled_return', ann.amount, Math.max(0, state.gameClock.rollCount-1));
-      cancelled.add(ann.id);
-      log(`🚫 ${co.name} : le dividende annoncé de ${fmt(ann.amount)} (lancer #${ann.announcedAtRoll}) est ANNULÉ — le cours (${fmtPrice(co.stockPrice)}) ne peut pas l'absorber : avec ${fmtPrice(bnr)} de bénéfices non répartis par action, il descendrait sous ${fmtPrice(guard)}, deux fois le cours plancher (au plus ${fmtPrice(max)} par action ce semestre). Personne ne le reçoit ; le montant est rendu à la trésorerie.`);
+    const fits = (d, room) => !(d>1e-15) || d <= room*(1+1e-9) + 1e-15; // même tolérance que dividendAbsorbable
+    let room = max;
+    if(e.recPerShare>0){
+      if(fits(e.recPerShare, room)) room = Math.max(0, room - e.recPerShare);
+      else recurrentBlocked.add(co.id);
+    }
+    e.anns.slice().sort((x, y)=>((x.ann.announcedAtRoll||0) - (y.ann.announcedAtRoll||0)) || (x.order - y.order)).forEach(({ann, denom})=>{
+      const perShare = ann.amount/denom;
+      if(fits(perShare, room)){ room = Math.max(0, room - perShare); return; }
+      const keep = room>1e-15 ? room*denom : 0;
+      const returned = ann.amount - keep;
+      co.cash += returned;
+      logFin(co.id, 'dividend_cancelled_return', returned, ann.announcedAtRoll||0);
+      if(!(keep>1e-12)){
+        state.finLedger[state.finLedger.length-1].dividendFullyCancelled = true;
+        cancelled.add(ann.id);
+        log(`🚫 ${co.name} : le dividende annoncé de ${fmt(ann.amount)} (lancer #${ann.announcedAtRoll}) est ANNULÉ — le cours (${fmtPrice(co.stockPrice)}) ne peut pas l'absorber : avec ${fmtPrice(bnr)} de bénéfices non répartis par action, il descendrait sous ${fmtPrice(guard)}, deux fois le cours plancher (au plus ${fmtPrice(max)} par action ce semestre${e.recPerShare>0 && !recurrentBlocked.has(co.id) ? ', dividende récurrent compris' : ''}). Personne ne le reçoit ; le montant est rendu à la trésorerie.`);
+      } else {
+        const original = ann.amount;
+        ann.amount = keep;
+        reduced.set(ann.id, {original, kept: keep, returned});
+        log(`✂️ ${co.name} : le dividende annoncé (lancer #${ann.announcedAtRoll}) est réduit de ${fmt(original)} à ${fmt(keep)} (${fmtPrice(original/denom)} → ${fmtPrice(keep/denom)} par action) — le cours (${fmtPrice(co.stockPrice)}) ne peut pas absorber davantage sans descendre sous ${fmtPrice(guard)}, deux fois le cours plancher ; ${fmt(returned)} rendu à la trésorerie.`);
+      }
+      room = 0;
     });
-    if(e.recPerShare>0 && !dividendAbsorbable(e.recPerShare, co.stockPrice, guard, bnr)) recurrentBlocked.add(co.id);
   });
-  return {cancelled, recurrentBlocked};
+  return {cancelled, reduced, recurrentBlocked};
 }
 // Section 321 — à la clôture du semestre `semesterIdx`, APRÈS les versements (annonces échues et récurrent) et AVANT les
 // déclencheurs du sac fondamental et le tirage des cubes : baisse du cours de l'entreprise qui vient de verser
@@ -11384,35 +11409,39 @@ function applyDividendPayoutPriceDrop(co, semesterIdx, perShareTotal){
   // Section 321 — retouche de la revue (constat 3) : la référence de tendance d'une Momentum baisse d'autant (la baisse
   // du versement n'est pas un semestre perdu).
   if(typeof co.momentumRefPrice==='number') co.momentumRefPrice = Math.max(0, co.momentumRefPrice - d.appliedDrop);
-  adjustOptionStrikesForDividend(co, d.appliedDrop); // Section 321 — retouche de la revue (constat 2)
+  adjustOptionsForDividend(co, d.priceBefore, d.priceAfter); // Section 321 — retouche de la revue (constat 2)
   return d;
 }
-// Section 321 — retouche de la revue (constat 2), comme sur les vrais marchés pour un dividende exceptionnel : après la
-// baisse du versement, le strike de TOUTES les positions d'options ouvertes sur l'entreprise (tous joueurs, calls et
-// puts, achetées et vendues, jambes de stratégies comprises) baisse du même montant, plancher strictement positif
-// (OPTION_STRIKE_DIVIDEND_FLOOR ; un strike déjà plus bas ne remonte pas). L'écart entre les jambes d'une stratégie est
-// conservé (sauf jambe arrêtée au plancher). L'ancien strike est retenu pour le lancer en cours
-// (pos.dividendStrikeAdjust), pour que la variation du portefeuille (computePlayerPortfolioDeltas) compare le cours
-// d'avant la baisse au strike d'avant. Rend le nombre de positions ajustées.
-const OPTION_STRIKE_DIVIDEND_FLOOR = 0.01e-6; // 0,01 $
-function adjustOptionStrikesForDividend(co, drop){
-  if(!co || !(drop>1e-15)) return 0;
+// Section 321 — retouche de la revue (constat 2), puis décision de la dernière ronde : ajustement PROPORTIONNEL, comme
+// pour un fractionnement d'action. Black-Scholes est homogène de degré 1 en (cours, strike) : avec f = cours après ÷
+// cours avant la baisse (0 < f ≤ 1), strike × f, nombre de contrats ÷ f et prime d'ouverture × f laissent INCHANGÉES la
+// valeur de marché de chaque position (contrats × 100 × prime), son coût d'ouverture et sa valeur à l'échéance. Même f
+// pour TOUTES les positions ouvertes sur l'entreprise (tous joueurs, calls et puts, achetées et vendues, jambes de
+// stratégies comprises : largeur d'un spread × contrats conservée). Avant (additif) : la valeur-temps était écrasée par
+// une grosse baisse (un put à la monnaie à 10 $ vaut le dixième de celui à 100 $). Le strike et les contrats d'avant
+// sont retenus pour le lancer en cours (pos.dividendStrikeAdjust), pour que la variation du portefeuille
+// (computePlayerPortfolioDeltas) compare la valeur d'avant à la valeur d'après. Rend le nombre de positions ajustées.
+function adjustOptionsForDividend(co, priceBefore, priceAfter){
+  if(!co || !(priceBefore>0) || !(priceAfter>0) || !(priceAfter < priceBefore*(1-1e-12))) return 0;
+  const f = priceAfter/priceBefore;
   const roll = state.gameClock.rollCount;
-  let n = 0;
+  let n = 0, example = null;
   state.players.forEach(pl=>{
     (pl.optionPositions||[]).forEach(pos=>{
       if(pos.companyId!==co.id || !(pos.shares>1e-9)) return;
-      const before = pos.strike;
-      const target = before - drop;
-      const after = target>OPTION_STRIKE_DIVIDEND_FLOOR ? target : Math.min(before, OPTION_STRIKE_DIVIDEND_FLOOR);
-      if(!(Math.abs(after-before)>1e-15)) return;
-      const prev = (pos.dividendStrikeAdjust && pos.dividendStrikeAdjust.roll===roll) ? pos.dividendStrikeAdjust.before : before;
-      pos.dividendStrikeAdjust = {roll, before: prev};
-      pos.strike = after;
+      const same = pos.dividendStrikeAdjust && pos.dividendStrikeAdjust.roll===roll;
+      pos.dividendStrikeAdjust = {roll, before: same ? pos.dividendStrikeAdjust.before : pos.strike, sharesBefore: same ? pos.dividendStrikeAdjust.sharesBefore : pos.shares};
+      if(!example) example = {strike: pos.strike, shares: pos.shares};
+      pos.strike = pos.strike * f;
+      pos.shares = pos.shares / f;
+      if(typeof pos.premiumAtOpen==='number') pos.premiumAtOpen = pos.premiumAtOpen * f;
       n++;
     });
   });
-  if(n>0) log(`🔧 ${co.name} : les prix d'exercice (strikes) des ${n} position${n>1?'s':''} d'options ouvertes sur ${co.name} baissent de ${fmtPrice(drop)}, comme le cours au versement du dividende (calls et puts, achetées et vendues, stratégies comprises).`);
+  if(n>0){
+    const num = x => String(+x.toFixed(2)).replace('.', ',');
+    log(`🔧 ${co.name} : les ${n} position${n>1?'s':''} d'options ouvertes sur ${co.name} sont ajustées comme pour un fractionnement, dans la proportion de la baisse du cours au versement du dividende (× ${String(+f.toFixed(4)).replace('.', ',')}) : strikes × cette proportion, nombre de contrats ÷ cette proportion — la valeur de chaque position ne change pas (par exemple : strike ${fmtPrice(example.strike)} → ${fmtPrice(example.strike*f)}, ${num(example.shares)} contrat${example.shares>1?'s':''} → ${num(example.shares/f)}).`);
+  }
   return n;
 }
 // Section 321 — aperçu (fonction PURE) des fenêtres « Annoncer un dividende » (amount > 0) et « Dividende récurrent »
@@ -11465,11 +11494,12 @@ function dividendLossSemesterCount(company, maxCount){
 
 function companyAverageDividendAnnounced(companyId){
   const entries = state.finLedger.filter(e=>e.companyId===companyId && e.category==='dividend_payout');
-  // Section 321 — les annonces annulées à la clôture ne comptent ni dans le total ni dans le nombre.
-  const cancelled = state.finLedger.filter(e=>e.companyId===companyId && e.category==='dividend_cancelled_return');
-  const n = entries.length - cancelled.length;
+  // Section 321 — les annonces annulées ou réduites à la clôture : leur part rendue est retranchée du total ; une annonce
+  // annulée en entier (dividendFullyCancelled) ne compte pas non plus dans le nombre.
+  const returns = state.finLedger.filter(e=>e.companyId===companyId && e.category==='dividend_cancelled_return');
+  const n = entries.length - returns.filter(e=>e.dividendFullyCancelled).length;
   if(n<=0) return 0;
-  return (entries.reduce((s,e)=>s+(-e.amount), 0) - cancelled.reduce((s,e)=>s+e.amount, 0)) / n;
+  return (entries.reduce((s,e)=>s+(-e.amount), 0) - returns.reduce((s,e)=>s+e.amount, 0)) / n;
 }
 
 function companyLiabilitiesForStatements(company){
@@ -14985,10 +15015,14 @@ function computePlayerPortfolioDeltas(snap){
         const premiumNow = optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll, false);
         const sigma = companyAnnualSigma(co); 
         const Tprev = Math.max(0, (pos.expiryRoll-(rollNow-1))/6);
-        const strikePrev = (pos.dividendStrikeAdjust && pos.dividendStrikeAdjust.roll===rollNow) ? pos.dividendStrikeAdjust.before : pos.strike; // Section 321 — strike d'avant la baisse du versement
+        // Section 321 — options ajustées au versement d'un dividende ce lancer : valeur d'avant = contrats d'avant × prime au
+        // cours d'avant et au strike d'avant ; valeur d'après = contrats d'après × prime d'après.
+        const adj = (pos.dividendStrikeAdjust && pos.dividendStrikeAdjust.roll===rollNow) ? pos.dividendStrikeAdjust : null;
+        const strikePrev = adj ? adj.before : pos.strike;
+        const sharesPrev = (adj && typeof adj.sharesBefore==='number') ? adj.sharesBefore : pos.shares;
         const premiumPrev = blackScholesPremium(pricePrev, strikePrev, Tprev, r, sigma, pos.type);
         const sign = pos.side==='long' ? 1 : -1;
-        optionVar += sign * (premiumNow-premiumPrev) * OPTION_CONTRACT_MULTIPLIER * pos.shares;
+        optionVar += sign * (premiumNow*pos.shares - premiumPrev*sharesPrev) * OPTION_CONTRACT_MULTIPLIER;
       });
     });
     const bondBefore = (snap.bondBalanceByPlayer && snap.bondBalanceByPlayer[pl.id]) || 0;
@@ -22236,7 +22270,7 @@ function dividendPayoutPreview(co, amount, opts){
   let blocked = false;
   if(!pv.active) dropTxt = 'pas de baisse du cours ce semestre (la règle commence au semestre suivant pour cette partie)';
   else if(opts.recurrentWindow && !pv.recurrentFits){ blocked = true; dropTxt = `<b>ce dividende récurrent ne sera pas versé à la clôture si le cours ne remonte pas</b> : au cours actuel, le cours ne peut pas l'absorber (au plus ${fmtPrice(pv.maxPerShare)} par action ce semestre, sans descendre sous ${fmtPrice(pv.guard)})`; }
-  else if(opts.recurrentWindow && pv.refused){ blocked = true; dropTxt = `<b>le dividende annoncé ce semestre sera annulé à la clôture si le cours ne remonte pas</b> (avec ce récurrent, au plus ${fmtPrice(pv.maxPerShare)} par action ce semestre)`; }
+  else if(opts.recurrentWindow && pv.refused){ blocked = true; dropTxt = `<b>le dividende annoncé ce semestre sera réduit ou annulé à la clôture si le cours ne remonte pas</b> (avec ce récurrent, au plus ${fmtPrice(pv.maxPerShare)} par action ce semestre)`; }
   else if(pv.refused){ blocked = true; dropTxt = `<b>refusé</b> : le cours ne peut pas absorber ce dividende — au plus ${fmtPrice(pv.maxPerShare)} par action ce semestre, soit au plus <b>${fmt(pv.maxNewAmount)}</b> pour cette annonce`; }
   else if(drop.appliedDrop>1e-15) dropTxt = `le cours baissera d'environ <b>${fmtPrice(drop.appliedDrop)} par action</b>, soit ${dividendPercentText(drop.appliedDrop/(drop.priceBefore||1))} (de ${fmtPrice(drop.priceBefore)} à environ ${fmtPrice(drop.priceAfter)})`;
   else dropTxt = 'le cours ne baissera pas';

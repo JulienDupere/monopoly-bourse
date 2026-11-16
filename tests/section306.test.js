@@ -1,5 +1,5 @@
 // Test — section 306 : emprunt sans cube rouge, baisse du dividende récurrent = 20 rouges,
-// ratio de distribution > 1 = 5 cubes rougis (blancs d'abord, puis verts).
+// ratio de distribution > 1 = 5 cubes rougis — règle retirée par la section 321 (le scénario 3 prouve qu'aucun cube ne rougit).
 // Charge TOUT le script d'index.html dans un vm avec un faux DOM et un window.storage en mémoire
 // (aucun accès Firebase : la branche window.storage est prise en priorité).
 const fs = require('fs'), path = require('path'), vm = require('vm');
@@ -115,7 +115,7 @@ const run = (code) => vm.runInContext(code, sandbox);
   assert.strictEqual(r.tier, 7); assert.deepStrictEqual(r.tp, {green:20, red:0, white:0});
   ok('hausse maximale : +12 verts, plafonné à 20');
 
-  // ---------- 3. Ratio de distribution > 1 à la clôture du semestre ----------
+  // ---------- 3. Ratio de distribution > 1 à la clôture du semestre : plus aucun cube rougi (section 321) ----------
   console.log('3. Ratio de distribution à la clôture du semestre');
   run(`globalThis.__realIS = incomeStatementFor; globalThis.__realDiv = dividendPaidInSemester;
        globalThis.__ovIS = {}; globalThis.__ovDiv = {};
@@ -141,32 +141,29 @@ const run = (code) => vm.runInContext(code, sandbox);
       msg: msgs.filter(m=>/ratio de distribution/.test(m))});
   })()`));
 
-  let c = closeSemester(1.0, 1.2, {green:6, red:1, white:3}, 1.0, 1.2, {green:6, red:1, white:3});
-  assert.deepStrictEqual(c.A, {green:4, red:6, white:0}, 'Dividendes ratio 120 % : ' + JSON.stringify(c.A));
-  assert.ok(c.msg.length === 1 && /Alpha Div/.test(c.msg[0]), 'un seul message, pour la Dividendes : ' + JSON.stringify(c.msg));
-  // La GARP est rephotographiée chaque semestre : son sac doit être identique avec ou sans versement excessif.
-  const cNoDiv = closeSemester(1.0, 1.2, {green:6, red:1, white:3}, 1.0, 0, {green:6, red:1, white:3});
-  assert.deepStrictEqual(c.B, cNoDiv.B, 'GARP : même sac avec ratio 120 % ou sans dividende');
-  ok('ratio 120 % : 6V/1R/3B -> 4V/6R/0B (3 blancs puis 2 verts) ; la GARP n’est pas touchée par la règle (sac ' + JSON.stringify(c.B) + ' dans les deux cas)');
-  ok('journal : « ' + c.msg[0].slice(0, 110) + '… »');
+  // Section 321 — décision de Julien : la règle « dividendes versés > bénéfice du semestre = 5 cubes du sac type rougis »
+  // (sections 306 et 315) est retirée (« pour ne pas pénaliser 2 fois la même chose dans le sac TYPE du Dividende ») :
+  // quel que soit le ratio, un versement récurrent laisse le sac type intact. Avant : 120 % -> 4V/6R/0B, etc.
+  const cas = [
+    ['ratio 120 %', 1.0, 1.2, {green:6, red:1, white:3}],
+    ['ratio 80 %', 1.0, 0.8, {green:6, red:1, white:3}],
+    ['ratio exactement 100 %', 1.0, 1.0, {green:6, red:1, white:3}],
+    ['bénéfice négatif avec versement', -0.5, 0.3, {green:10, red:0, white:2}],
+    ['ratio 500 %', 1.0, 5.0, {green:2, red:15, white:1}],
+  ];
+  for(const [label, net, div, startA] of cas){
+    const c = closeSemester(net, div, startA, 1.0, div, {green:6, red:1, white:3});
+    assert.deepStrictEqual(c.A, startA, label + ' : ' + JSON.stringify(c.A));
+    assert.ok(c.msg.length === 0, 'aucun message « ratio de distribution » : ' + JSON.stringify(c.msg));
+    ok(label + ' : sac type de la Dividendes inchangé ' + JSON.stringify(startA) + ' (section 321 : règle des 5 cubes retirée), aucun message');
+  }
+  // La GARP : même sac avec ou sans versement (elle n'a jamais été touchée par cette règle).
+  const g1 = closeSemester(1.0, 1.2, {green:6, red:1, white:3}, 1.0, 1.2, {green:6, red:1, white:3});
+  const g0 = closeSemester(1.0, 1.2, {green:6, red:1, white:3}, 1.0, 0, {green:6, red:1, white:3});
+  assert.deepStrictEqual(g1.B, g0.B, 'GARP : même sac avec ratio 120 % ou sans dividende');
+  ok('GARP : même sac avec ou sans versement (' + JSON.stringify(g1.B) + ')');
 
-  c = closeSemester(1.0, 0.8, {green:6, red:1, white:3}, 1.0, 0, {green:0, red:0, white:20});
-  assert.deepStrictEqual(c.A, {green:6, red:1, white:3});
-  ok('ratio 80 % : sac type inchangé');
-
-  c = closeSemester(1.0, 1.0, {green:6, red:1, white:3}, 1.0, 0, {green:0, red:0, white:20});
-  assert.deepStrictEqual(c.A, {green:6, red:1, white:3});
-  ok('ratio exactement 100 % : inchangé (la règle exige strictement plus que 1)');
-
-  c = closeSemester(-0.5, 0.3, {green:10, red:0, white:2}, 1.0, 0, {green:0, red:0, white:20});
-  assert.deepStrictEqual(c.A, {green:7, red:5, white:0});
-  ok('bénéfice négatif avec versement : traité comme ratio > 1 -> 2 blancs puis 3 verts rougis');
-
-  c = closeSemester(1.0, 5.0, {green:2, red:15, white:1}, 1.0, 0, {green:0, red:0, white:20});
-  assert.deepStrictEqual(c.A, {green:0, red:18, white:0});
-  ok('moins de 5 cubes disponibles : seuls 1 blanc et 2 verts rougissent, rien n’est inventé');
-
-  c = closeSemester(1.0, 0, {green:6, red:1, white:3}, 1.0, 0, {green:0, red:0, white:20});
+  const c = closeSemester(1.0, 0, {green:6, red:1, white:3}, 1.0, 0, {green:0, red:0, white:20});
   assert.deepStrictEqual(c.A, {green:0, red:20, white:0});
   ok('aucun versement : règle existante inchangée, sac type à 20 rouges');
 

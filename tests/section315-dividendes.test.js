@@ -2,7 +2,9 @@
 //  25. Le sac type d'une Dividendes ne réagit QU'AU dividende récurrent : s'il n'est pas versé, 20 rouges, même avec un
 //      dividende manuel (avant : un dividende manuel de 1 $ évitait le choc).
 //  Décisions de Julien (section 306) : le ratio de distribution > 1 compte TOUS les dividendes réellement versés
-//      (récurrent et manuels), HORS part de la banque.
+//      (récurrent et manuels), HORS part de la banque. Section 321 : cette règle des 5 cubes du sac type est RETIRÉE
+//      (décision de Julien) ; R1 et R2 prouvent maintenant qu'aucun cube ne rougit, et R1c que l'ancienne règle, remise,
+//      fait échouer R1.
 //  27. Un arriérage de dividende privilégié bloque aussi l'auto-versement du dividende récurrent (trace au journal).
 // Partie : Alice dirige Alpha (Dividendes, référence 0,0000015 M$/part × 200 000 parts = 0,3 M$ par semestre ; la banque
 // détient 70 % des parts : 0,21 M$ de la référence ne sont jamais versés), Bob dirige Beta (GARP).
@@ -31,7 +33,8 @@ async function contre(title, transform, fn){
 
 // Anciens codes (contre-épreuves).
 const ANCIEN_25 = s => s.replace("if(co.type==='dividende' && co.dividendBenchmarkPerShare>0 && !recurrentDividendPaidIds.has(co.id)){", "if(co.type==='dividende' && co.dividendBenchmarkPerShare>0 && !(dividendPaidInSemester(co.id, semesterBefore)>0)){");
-const ANCIEN_RATIO = s => s.replace('const paidForRatio = dividendNetPaidInSemester(co.id, semesterBefore);', 'const paidForRatio = dividendPaidInSemester(co.id, semesterBefore);');
+// Section 321 — ancienne règle des 5 cubes du sac type (sections 306 et 315, part de la banque comptée), remise exprès.
+const ANCIEN_RATIO = s => s.replace("      // fondamental (announcedDividendPayoutPenalty).\n", "      // fondamental (announcedDividendPayoutPenalty).\n      { const paidForRatio = dividendPaidInSemester(co.id, semesterBefore); if(co.type==='dividende' && paidForRatio>1e-9 && (is.netIncome<=1e-9 || paidForRatio/is.netIncome>1)){ const tp = co.typeReserve; const w = Math.min(5, tp.white); tp.white -= w; tp.red += w; const g = Math.min(5-w, tp.green); tp.green -= g; tp.red += g; } }\n");
 const ANCIEN_27 = s => s.replace('if(co.preferredDividendArrears>0 && preferredArrearsBeforeYearEnd.has(co.id)){', 'if(false){');
 // Retouches de la revue : drapeau « suspendu » posé même case cochée et jamais remis à zéro ; arriérage jugé après processYearEnd.
 const ANCIEN_DRAPEAU = s => s.replace('if(!co.dividendAutoPay) co.dividendRecurrentNeedsReset = true;', 'co.dividendRecurrentNeedsReset = true;')
@@ -96,12 +99,12 @@ async function partie(transform){
     E.cloture();
     ok(near(E.run('dividendNetPaidInSemester(A.id, 0)'), 0.09) && near(E.run('dividendPaidInSemester(A.id, 0)'), 0.3), 'semestre 0 : 0,3 débité, 0,21 (part de la banque) rendu → 0,09 réellement versé');
     const tp = E.json('A.typeReserve');
-    ok(JSON.stringify(tp) === '{"green":6,"red":1,"white":3}', `bénéfice 0,2 : ratio réel 45 % → sac type inchangé 6V/1R/3B — obtenu ${JSON.stringify(tp)} (avant : ratio 150 % avec la part de la banque → 4V/6R/0B)`);
+    ok(JSON.stringify(tp) === '{"green":6,"red":1,"white":3}', `bénéfice 0,2 : sac type inchangé 6V/1R/3B — obtenu ${JSON.stringify(tp)} (section 321 : plus de règle des 5 cubes ; avec la part de la banque comptée, l'ancienne règle donnait 4V/6R/0B)`);
   };
-  await scenario('R1 — ratio de distribution sans la part de la banque (0,09 versé pour 0,2 de bénéfice)', () => sBanque());
-  await contre('R1c — contre-épreuve (part de la banque comptée)', ANCIEN_RATIO, sBanque);
+  await scenario('R1 — 0,09 versé (0,3 avec la part de la banque) pour 0,2 de bénéfice : aucun cube du sac type rougi', () => sBanque());
+  await contre('R1c — contre-épreuve (ancienne règle des 5 cubes remise, part de la banque comptée)', ANCIEN_RATIO, sBanque);
 
-  await scenario('R2 — ratio sur TOUS les dividendes réellement versés : récurrent 0,09 + manuel 0,15 > bénéfice 0,2', async () => {
+  await scenario('R2 — récurrent 0,09 + manuel 0,15 > bénéfice 0,2 : plus aucun cube du sac type rougi (section 321)', async () => {
     const E = await partie();
     E.run(`state.gameClock.rollCount = 1; A.dividendAutoPay = true; A.typeReserve = {green:6, red:1, white:3}; __net[A.id] = 0.2;`);
     const c0 = E.eng.cashTotal();
@@ -110,12 +113,12 @@ async function partie(transform){
     E.cloture();
     ok(near(E.run('dividendNetPaidInSemester(A.id, 0)'), 0.24), `réellement versé au semestre 0 : 0,09 (récurrent) + 0,15 (manuel, 30 % de 0,5) = ${f4(E.run('dividendNetPaidInSemester(A.id, 0)'))}`);
     const tp = E.json('A.typeReserve');
-    ok(JSON.stringify(tp) === '{"green":4,"red":6,"white":0}', `ratio 120 % → 5 cubes rougis (3 blancs puis 2 verts) : 4V/6R/0B — obtenu ${JSON.stringify(tp)}`);
-    ok(/ratio de distribution : 120 %/.test(JSON.stringify(E.json('state.log.slice(0, 40)'))), 'journal : « ratio de distribution : 120 % »');
+    ok(JSON.stringify(tp) === '{"green":6,"red":1,"white":3}', `ratio 120 % : sac type inchangé 6V/1R/3B — obtenu ${JSON.stringify(tp)} (avant la section 321 : 4V/6R/0B)`);
+    ok(!/ratio de distribution : 120 %/.test(JSON.stringify(E.json('state.log.slice(0, 40)'))), 'journal : plus de ligne « ratio de distribution » au sac type');
     ok(near(E.eng.cashTotal(), c0), 'monnaie conservée');
   });
 
-  await scenario('R3 — dividende manuel seul de 0,5 (0,15 réellement versé) pour 0,1 de bénéfice : 5 cubes rougis… puis 20 rouges (aucun récurrent)', async () => {
+  await scenario('R3 — dividende manuel seul de 0,5 (0,15 réellement versé) pour 0,1 de bénéfice : 20 rouges (aucun récurrent)', async () => {
     const E = await partie();
     E.run(`state.gameClock.rollCount = 1; A.dividendAutoPay = false; A.typeReserve = {green:6, red:1, white:3}; __net[A.id] = 0.1;`);
     await E.annoncer(0.5);

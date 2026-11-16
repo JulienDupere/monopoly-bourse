@@ -21944,7 +21944,7 @@ function modalAnnounceDividend(){
     <div class="small" style="margin-bottom:8px;">Trésorerie actuelle: <b>${fmt(myCo.cash)}</b>${inGracePeriod?` &nbsp;|&nbsp; Maximum autorisé pendant le délai de grâce: <b>${fmt(graceDividendCap)}</b>`:''}</div>
     <label>Montant total à annoncer (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" min="0" max="${Math.min(myCo.cash, graceDividendCap)}" id="mDividendAmount" value="0">
-    <div class="small" style="margin-bottom:6px;color:var(--muted);">Sac fondamental (section 320) : ratio de distribution = dividendes annoncés ce semestre${myCo.type==='dividende' && myCo.dividendAutoPay && myCo.dividendBenchmarkPerShare>0 ? ' + dividende récurrent' : ''}, hors part de la banque, ÷ bénéfice du dernier semestre clos. Jusqu'à 80 % : aucun effet. Au-delà : 1 à 2 cubes rouges (jusqu'à 100 %), 3 à 5 (jusqu'à 150 %), 6 à 8 (plus de 150 %, ou sans bénéfice). Plusieurs annonces du même semestre comptent ensemble.</div>
+    <div class="small" style="margin-bottom:6px;color:var(--muted);">Sac fondamental : ratio de distribution = dividendes annoncés ce semestre${myCo.type==='dividende' && myCo.dividendAutoPay && myCo.dividendBenchmarkPerShare>0 ? ' + dividende récurrent' : ''}, hors part de la banque, ÷ bénéfice du dernier semestre clos. Jusqu'à 80 % : aucun effet. Au-delà : 1 à 2 cubes rouges (jusqu'à 100 %), 3 à 5 (jusqu'à 150 %), 6 à 8 (plus de 150 %, ou sans bénéfice). Plusieurs annonces du même semestre comptent ensemble.</div>
     <div class="small" id="mDividendPayoutPreview" style="margin-bottom:8px;"></div>
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">

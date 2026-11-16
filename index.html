@@ -1588,6 +1588,7 @@ function migrateState(s){
     
     if(!p.optionPositions) p.optionPositions = [];
     p.optionPositions.forEach(pos=>{ if(pos && pos.dividendStrikeAdjust===undefined) pos.dividendStrikeAdjust = null; }); // Section 321 — strike et contrats d'avant un ajustement de versement (aucun)
+    p.optionPositions.forEach(pos=>{ if(pos && pos.dividendAdjustFactor===undefined) pos.dividendAdjustFactor = 1; }); // Section 321 — facteur cumulé d'ajustement (plafonds en contrats d'origine)
     if(p.goAdvancesUsed===undefined) p.goAdvancesUsed = 0;
     if(p.inJail===undefined) p.inJail = false;
     if(p.jailTurnsLeft===undefined) p.jailTurnsLeft = 0;
@@ -11432,6 +11433,7 @@ function adjustOptionsForDividend(co, priceBefore, priceAfter){
       const same = pos.dividendStrikeAdjust && pos.dividendStrikeAdjust.roll===roll;
       pos.dividendStrikeAdjust = {roll, before: same ? pos.dividendStrikeAdjust.before : pos.strike, sharesBefore: same ? pos.dividendStrikeAdjust.sharesBefore : pos.shares};
       if(!example) example = {strike: pos.strike, shares: pos.shares};
+      pos.dividendAdjustFactor = (Number(pos.dividendAdjustFactor)||1) * f; // Section 321 — plafonds en contrats d'origine
       pos.strike = pos.strike * f;
       pos.shares = pos.shares / f;
       if(typeof pos.premiumAtOpen==='number') pos.premiumAtOpen = pos.premiumAtOpen * f;
@@ -12430,8 +12432,14 @@ function optionNotional(contracts, premium){
 
 const OPTION_LONG_CALL_CAP_PCT = 0.15;
 
+// Section 321 — retouche de la relecture de contrôle : les PLAFONDS se comptent en contrats d'ORIGINE (contrats ×
+// pos.dividendAdjustFactor, produit des ajustements au versement d'un dividende) ; un ajustement seul ne mange plus le
+// plafond. La marge exigée, elle, lit les vrais contrats (exposition réelle).
+function optionOriginContracts(pos){
+  return pos.shares * (Number(pos.dividendAdjustFactor)||1);
+}
 function playerLongCallContracts(player, companyId){
-  return (player.optionPositions||[]).filter(p=>p.companyId===companyId && p.type==='call' && p.side==='long').reduce((sum,p)=>sum+p.shares, 0);
+  return (player.optionPositions||[]).filter(p=>p.companyId===companyId && p.type==='call' && p.side==='long').reduce((sum,p)=>sum+optionOriginContracts(p), 0); // Section 321
 }
 
 function optionLongCallCapContracts(company){
@@ -12493,9 +12501,12 @@ function writtenOptionCoverage(player, companyId, extraPositions, override){
   });
   return out;
 }
+// Section 321 — sert les PLAFONDS : la couverture (parts, jambe achetée) se calcule en vrais contrats
+// (writtenOptionCoverage, partagée avec la marge), puis la part nue de chaque position est convertie en contrats
+// d'origine (× pos.dividendAdjustFactor).
 function playerNakedWrittenContracts(player, companyId, extraPositions, override){
   let naked = 0;
-  writtenOptionCoverage(player, companyId, extraPositions, override).forEach(c=>{ naked += c.naked; }); // Section 314 — décision de Julien (2026-10-25) : override
+  writtenOptionCoverage(player, companyId, extraPositions, override).forEach((c, pos)=>{ naked += c.naked * (Number(pos.dividendAdjustFactor)||1); }); // Section 314 — décision de Julien (2026-10-25) : override ; section 321 : contrats d'origine
   return naked;
 }
 // Section 314 — décision de Julien (2026-10-25), verbatim : « […] et refus des opérations qui portent les options nues
@@ -12901,7 +12912,11 @@ function cancelAsk(player, askId){
 }
 
 function fillPendingBid(player, company, bid){
-  const price = bid.price;
+  // Section 321 — retouche de la relecture de contrôle : un vrai ordre à cours limité, exécuté au cours s'il est plus bas
+  // que la limite (jamais au-dessus). Avant : toujours à la limite, si bien qu'une baisse au versement d'un dividende
+  // (100 $ -> 10 $) faisait payer 95 $ des parts qui en valaient 10. Quantité abordable, bons vendus, montant et
+  // executeShareTrade lisent ce prix d'exécution.
+  const price = (company && company.stockPrice>0) ? Math.min(bid.price, company.stockPrice) : bid.price;
   if(!(price>0)) return {filled:0};
   // Section 314 — bogue 36 : l'encaisse compte pour sa valeur réelle, même négative. Avant, max(0, encaisse) : avec
   // −0,5 M$ d'encaisse, les bons ne couvraient que le prix, l'encaisse restait sous le montant et executeShareTrade
@@ -12938,7 +12953,7 @@ function fillPendingBid(player, company, bid){
   bid.qty -= qtyToFill;
   // Section 317 — bogue 87 : bons vendus pour payer ce bid = échange bons contre actions, pas une perte du portefeuille (non sauvegardé : lu par computePlayerPortfolioDeltas)
   if(bondsNeeded>1e-9) bidBondsSoldThisRoll[player.id] = (bidBondsSoldThisRoll[player.id]||0) + bondsNeeded;
-  return {filled:qtyToFill, entries:r.entries, amount, qty:qtyToFill};
+  return {filled:qtyToFill, entries:r.entries, amount, qty:qtyToFill, price}; // Section 321 — prix d'exécution
 }
 
 function fillPendingAsk(player, company, ask){
@@ -12971,7 +12986,7 @@ function checkPendingOrders(company){
         if(price>b.price+1e-9) return true; 
         const r = fillPendingBid(pl, company, b);
         if(r.filled>1e-9){
-          log(`🎯 Bid déclenché — ${pl.name} achète ${r.qty.toFixed(4)} part(s) de ${company.name} à ${fmtPrice(b.price)}/part (${fmt(r.amount)}).`, r.entries);
+          log(`🎯 Bid déclenché — ${pl.name} achète ${r.qty.toFixed(4)} part(s) de ${company.name}, exécuté à ${fmtPrice(r.price)}/part (limite ${fmtPrice(b.price)}) (${fmt(r.amount)}).`, r.entries); // Section 321 — prix d'exécution
         }
         return b.qty>1e-9; 
       });
@@ -14292,10 +14307,12 @@ function openOptionPosition(company, player, type, side, strike, expiryRoll, sha
     
     const oldNotional = optionNotional(existing.shares, existing.premiumAtOpen);
     existing.premiumAtOpen = (oldNotional+notional)/OPTION_CONTRACT_MULTIPLIER/(existing.shares+shares);
+    // Section 321 — fusion avec une position ajustée : facteur moyen pondéré par les contrats (contrats d'origine exacts).
+    existing.dividendAdjustFactor = (existing.shares*(Number(existing.dividendAdjustFactor)||1) + shares)/(existing.shares+shares);
     existing.shares += shares;
     
   } else {
-    player.optionPositions.push({id:uid(), companyId:company.id, type, side, strike, expiryRoll, shares, openedRoll: state.gameClock.rollCount, premiumAtOpen: premium});
+    player.optionPositions.push({id:uid(), companyId:company.id, type, side, strike, expiryRoll, shares, openedRoll: state.gameClock.rollCount, premiumAtOpen: premium, dividendAdjustFactor: 1}); // Section 321 — facteur d'ajustement
   }
   return {ok:true, entries, qty:shares};
 }
@@ -22920,7 +22937,7 @@ function modalPlaceBidOrder(){
     <label>Entreprise</label>
     <select id="mBidCompany">${options}</select>
     <div class="small" id="mBidInfo" style="margin-bottom:8px;"></div>
-    <label>Prix limite (en $/part) — achat déclenché quand le cours descend à ce niveau ou en dessous</label>
+    <label>Prix limite (en $/part) — achat déclenché quand le cours descend à ce niveau ou en dessous, exécuté au cours du moment (jamais au-dessus de votre limite)</label><!-- Section 321 -->
     <input type="number" step="0.01" min="0" id="mBidPrice" value="0">
     <label>Unité</label>
     <select id="mBidUnit">

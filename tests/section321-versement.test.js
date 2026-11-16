@@ -784,6 +784,109 @@ scenario('S22', 'sonde p4 du réviseur : acheteur et vendeur de puts, avec ou sa
   ok(pct.shorttrue <= pct.shortfalse + 0.01, `vendeur : ${(pct.shorttrue * 100).toFixed(1)} % de la prime avec l'annonce, ${(pct.shortfalse * 100).toFixed(1)} % sans (son gain ne dépasse pas celui sans annonce)`);
 });
 
+scenario('S23', 'ordre d’achat à cours limité : exécuté au cours s’il est plus bas que la limite (sonde p9)', 'fail', async (o, ok) => {
+  // a) Sonde p9 : Chloé a un ordre d'achat de 10 000 parts à 95 $ ; le versement de 18 M$ fait tomber le cours à 10 $.
+  {
+    const T = await partie(o, ['garp', 'garp', 'garp']);
+    prep(T, 0, { bnr: 0 });
+    const m0 = T.money();
+    const placed = T.eng.json(`placeBid(state.players[2], ${T.co(0)}, 95e-6, 10000)`);
+    pushAnnouncement(T, 0, 18);
+    const c0 = T.eng.run(`state.players[2].cash`);
+    closeSemester(T);
+    const st = T.eng.json(`(function(){ const co=${T.co(0)}; const e = co.shareholders.find(s=>s.playerId===state.players[2].id); return {shares: e?e.shares:0, price: co.stockPrice}; })()`);
+    const cost = c0 - T.eng.run(`state.players[2].cash`);
+    ok(placed.ok && near(st.price, 10 * US, 1e-12) && near(st.shares, 10000, 1e-6) && near(cost, 0.1, 1e-9), `p9 : ordre à 95 $ exécuté au cours de 10 $ : 10 000 parts payées ${cost.toFixed(3)} M$ (avant : 0,950 M$)`);
+    ok(T.eng.json(`__logs`).some(l => /Bid déclenché/.test(l) && /exécuté à 10\.00 \$\/part \(limite 95\.00 \$\)/.test(l)), 'journal : « exécuté à 10,00 $/part (limite 95,00 $) »');
+    ok(near(m0, T.money(), 1e-9), 'monnaie conservée');
+  }
+  // b) Cas ordinaire : les cubes font passer le cours sous la limite (97 $ pour une limite de 99 $) : exécuté à 97 $ ;
+  //    au-dessus de la limite (101 $), rien.
+  {
+    const T = await partie(o, ['garp', 'garp', 'garp']);
+    prep(T, 0, { bnr: 50 });
+    const m0 = T.money();
+    T.eng.json(`placeBid(state.players[2], ${T.co(0)}, 99e-6, 1000)`);
+    T.setup(0, `A.stockPrice = ${101 * US}; checkPendingOrders(A);`);
+    const left = T.eng.run(`state.players[2].pendingBids.length`);
+    const c0 = T.eng.run(`state.players[2].cash`);
+    T.setup(0, `A.stockPrice = ${97 * US}; checkPendingOrders(A);`);
+    const cost = c0 - T.eng.run(`state.players[2].cash`);
+    ok(left === 1 && near(cost, 1000 * 97 * US, 1e-12) && T.eng.run(`state.players[2].pendingBids.length`) === 0, `cours à 101 $ : rien ; cours à 97 $ : 1 000 parts à 97 $ (${cost.toFixed(4)} M$), jamais au-dessus de la limite de 99 $`);
+    ok(near(m0, T.money(), 1e-9), 'monnaie conservée');
+  }
+});
+
+scenario('S24', 'plafonds d’options en contrats d’origine (sonde p10) ; la marge lit les vrais contrats', 'fail', async (o, ok) => {
+  // a) Sonde p10 : Bob, 30 000 parts, 300 calls écrits couverts ; versement de 10 M$ sans BNR : f = 0,5, 600 contrats dont
+  //    300 nus en vrais contrats, 150 en contrats d'origine ; la vente de 1 000 parts passe.
+  {
+    const T = await partie(o, ['garp', 'garp', 'garp']);
+    prep(T, 0, { bnr: 0 });
+    const A = T.co(0);
+    const w = T.eng.json(`(function(){ const co=${A}; const bob=state.players[1]; tradeCompanyShares(co, bob, 'buy', 30000*co.stockPrice); const r = openOptionPosition(co, bob, 'call', 'short', 110e-6, 18, 300); return r.ok || r.error; })()`);
+    pushAnnouncement(T, 0, 10);
+    closeSemester(T);
+    const st = T.eng.json(`(function(){ const co=${A}; const bob=state.players[1]; const pos = bob.optionPositions[0];
+      return {n: pos.shares, f: pos.dividendAdjustFactor, naked: playerNakedWrittenContracts(bob, co.id), margin: requiredMaintenanceMargin(bob), price: co.stockPrice}; })()`);
+    ok(w === true && near(st.f, 0.5, 1e-12) && near(st.n, 600, 1e-9) && near(st.naked, 150, 1e-9), `f = 0,5 : ${st.n} contrats, facteur ${st.f}, contrats nus comptés au plafond ${st.naked} (contrats d'origine)`);
+    ok(near(st.margin, 0.3 * 300 * 100 * st.price, 1e-12), `la marge lit les vrais contrats : 30 % × 300 nus × 100 × ${fmt$(st.price)} = ${st.margin.toFixed(3)} M$`);
+    const sell = T.eng.json(`(function(){ const co=${A}; const r = tradeCompanyShares(co, state.players[1], 'sell', 1000*co.stockPrice); return r.ok || r.error; })()`);
+    ok(sell === true, `vente de 1 000 parts par Bob : acceptée (${sell})`);
+  }
+  // b) Au plafond AVANT l'ajustement (300 puts nus) : pas « au-delà » après ; une NOUVELLE vente qui dépasse reste refusée.
+  //    c) Fermeture partielle et fusion : facteur cohérent. d) Calls achetés : plafond en contrats d'origine.
+  {
+    const T = await partie(o, ['garp', 'garp', 'garp']);
+    prep(T, 0, { bnr: 0 });
+    const A = T.co(0);
+    const w = T.eng.json(`(function(){ const co=${A}; const r1 = openOptionPosition(co, state.players[2], 'put', 'short', 90e-6, 18, 300); const r2 = openOptionPosition(co, state.players[1], 'call', 'long', 120e-6, 18, 200); return [r1.ok || r1.error, r2.ok || r2.error]; })()`);
+    pushAnnouncement(T, 0, 10);
+    closeSemester(T);
+    const naked = T.eng.run(`playerNakedWrittenContracts(state.players[2], ${A}.id)`);
+    const real = T.eng.run(`state.players[2].optionPositions[0].shares`);
+    ok(w[0] === true && w[1] === true && near(naked, 300, 1e-9) && near(real, 600, 1e-9), `Chloé au plafond avant (300 puts nus) : ${real} vrais contrats, ${naked} au plafond — pas au-delà`);
+    const k = T.eng.run(`state.players[2].optionPositions[0].strike`);
+    const more = T.eng.json(`(function(){ const r = openOptionPosition(${A}, state.players[2], 'put', 'short', ${k}, 18, 1); return r.ok || r.error; })()`);
+    ok(more !== true && /Plafond d'options écrites/.test(String(more)), 'une NOUVELLE vente d\'un contrat de plus : refusée (plafond vraiment dépassé)');
+    const closeHalf = T.eng.json(`(function(){ const pl=state.players[2]; const pos = pl.optionPositions[0]; const r = closeOptionPosition(pl, pos.id, pos.shares/2); return {ok: r.ok, f: pos.dividendAdjustFactor, n: pos.shares}; })()`);
+    ok(closeHalf.ok && near(closeHalf.f, 0.5, 1e-12) && near(T.eng.run(`playerNakedWrittenContracts(state.players[2], ${A}.id)`), 150, 1e-9), `fermeture de la moitié : facteur inchangé (${closeHalf.f}), ${closeHalf.n} contrats = 150 d'origine`);
+    const merge = T.eng.json(`(function(){ const pl=state.players[2]; const r = openOptionPosition(${A}, pl, 'put', 'short', ${k}, 18, 10); const pos = pl.optionPositions[0]; return {ok: r.ok || r.error, len: pl.optionPositions.length, n: pos.shares, f: pos.dividendAdjustFactor}; })()`);
+    ok(merge.ok === true && merge.len === 1 && near(merge.n * merge.f, 160, 1e-9), `fusion de 10 nouveaux contrats au même strike : ${merge.n} contrats, facteur ${merge.f.toFixed(4)} = 160 contrats d'origine`);
+    const lc = T.eng.json(`(function(){ const r = openOptionPosition(${A}, state.players[1], 'call', 'long', 120e-6*0.5, 18, 50); return {ok: r.ok || r.error, n: playerLongCallContracts(state.players[1], ${A}.id)}; })()`);
+    ok(lc.ok === true && near(lc.n, 250, 1e-9), `calls achetés : 200 d'origine (400 vrais) + 50 nouveaux acceptés sous le plafond de 300 (${lc.n} d'origine)`);
+  }
+});
+
+scenario('S25', 'vendeur de calls couverts PROCHE de sa limite de marge : ce que fait l’ajustement (constat)', 'fail', async (o, ok) => {
+  // Bob : 30 000 parts, 300 calls couverts (marge 0), et un découvert sur l'entreprise de Chloé qui l'amène à 0,2 M$ de sa
+  // marge de maintien. Versement de 10 M$ sans BNR (f = 0,5) : sa valeur nette ne change pas (dividende reçu = baisse
+  // de ses parts), mais 300 calls deviennent nus : marge exigée + 0,45 M$. Constat attendu : appel de marge.
+  const T = await partie(o, ['garp', 'garp', 'garp']);
+  prep(T, 0, { bnr: 0 });
+  const A = T.co(0), C = T.co(2);
+  T.setup(2, `A.stockPrice = ${100 * US}; A.stockPriceFounding = ${100 * US};`);
+  const setup = T.eng.json(`(function(){ const co=${A}, chloeCo=${C}; const bob=state.players[1];
+    tradeCompanyShares(co, bob, 'buy', 30000*co.stockPrice);
+    const r1 = openOptionPosition(co, bob, 'call', 'short', 110e-6, 18, 300);
+    const r2 = openShortPosition(chloeCo, bob, 10);
+    const req = requiredMaintenanceMargin(bob), nw = marginableNetWorth(bob);
+    bob.cash -= (nw - req - 0.2); state.bank.cash += (nw - req - 0.2);
+    return {r1: r1.ok || r1.error, r2: r2.ok || r2.error, req, room: marginableNetWorth(bob) - requiredMaintenanceMargin(bob)}; })()`);
+  const m0 = T.money();
+  pushAnnouncement(T, 0, 10);
+  const nw0 = T.eng.run(`netWorth(state.players[1])`);
+  T.eng.run(`accrueShortBorrowFees = function(){}; __logs.length = 0;`);
+  closeSemester(T);
+  const calls = T.eng.json(`__logs`).filter(l => /Appel de marge/i.test(l));
+  const after = T.eng.json(`(function(){ const bob=state.players[1]; return {opts: bob.optionPositions.length, short: !!(bob.shortPositions[${C}.id] && bob.shortPositions[${C}.id].shares>1e-9), nw: netWorth(bob), room: marginableNetWorth(bob) - requiredMaintenanceMargin(bob)}; })()`);
+  if(o.verbose) console.log(`    constat : marge libre avant ${setup.room.toFixed(3)} M$ ; ${calls.length} appel(s) de marge à la clôture ; après : ${after.opts} position(s) d'options, découvert ${after.short ? 'ouvert' : 'fermé'}, marge libre ${after.room.toFixed(3)} M$`);
+  if(o.verbose && calls.length) console.log(`    « ${calls[0].slice(0, 200)}… »`);
+  ok(setup.r1 === true && setup.r2 === true && near(setup.room, 0.2, 1e-9), `mise en place : 300 calls couverts, découvert de 10 M$, marge libre 0,2 M$ (${JSON.stringify(setup)})`);
+  ok(calls.length >= 1 && after.room >= -1e-9, `constat : l'ajustement seul (valeur nette ${nw0.toFixed(3)} -> ${after.nw.toFixed(3)} avant frais) déclenche ${calls.length} appel(s) de marge, jusqu'à revenir dans la marge`);
+  ok(near(m0, T.money(), 1e-9), 'monnaie conservée');
+});
+
 // ---------------------------------------------------------------------------------------------------------------
 let baseSrcCache;
 function baseEngineSource(){
@@ -824,6 +927,15 @@ const MUTATIONS = [
   ['seuls les puts ajustés', sub("      if(pos.companyId!==co.id || !(pos.shares>1e-9)) return;\n      const same = ", "      if(pos.companyId!==co.id || !(pos.shares>1e-9) || pos.type!=='put') return;\n      const same = "), ['S17', 'S19']],
   ['f oublié sur les contrats', sub('      pos.shares = pos.shares / f;\n', ''), ['S19']],
   ['f oublié sur la prime d’ouverture', sub("      if(typeof pos.premiumAtOpen==='number') pos.premiumAtOpen = pos.premiumAtOpen * f;\n", ''), ['S19']],
+  ['ordre d’achat exécuté à sa limite', sub('  const price = (company && company.stockPrice>0) ? Math.min(bid.price, company.stockPrice) : bid.price;', '  const price = bid.price;'), ['S23']],
+  ['facteur oublié dans le plafond des options écrites', sub('naked += c.naked * (Number(pos.dividendAdjustFactor)||1);', 'naked += c.naked;'), ['S24']],
+  ['facteur oublié dans le plafond des calls achetés', sub('.reduce((sum,p)=>sum+optionOriginContracts(p), 0);', '.reduce((sum,p)=>sum+p.shares, 0);'), ['S24']],
+  ['facteur appliqué à la marge', sub('requiredMargin += SHORT_MARGIN_MAINTENANCE_PCT * cov.naked * OPTION_CONTRACT_MULTIPLIER', 'requiredMargin += SHORT_MARGIN_MAINTENANCE_PCT * cov.naked * (Number(pos.dividendAdjustFactor)||1) * OPTION_CONTRACT_MULTIPLIER'), ['S24']],
+  ['facteur non cumulé à l’ajustement', sub('      pos.dividendAdjustFactor = (Number(pos.dividendAdjustFactor)||1) * f;', '      pos.dividendAdjustFactor = 1;'), ['S24']],
+  ['fusion sans facteur moyen', sub("    existing.dividendAdjustFactor = (existing.shares*(Number(existing.dividendAdjustFactor)||1) + shares)/(existing.shares+shares);\n", ''), ['S24']],
+  ['moyenne des annonces : annulation complète comptée', sub('  const n = entries.length - returns.filter(e=>e.dividendFullyCancelled).length;', '  const n = entries.length;'), ['S7']],
+  ['moyenne des annonces : annonce réduite retirée du nombre', sub('  const n = entries.length - returns.filter(e=>e.dividendFullyCancelled).length;', '  const n = entries.length - returns.length;'), ['S7']],
+  ['moyenne des annonces : part rendue non retranchée', sub('  return (entries.reduce((s,e)=>s+(-e.amount), 0) - returns.reduce((s,e)=>s+e.amount, 0)) / n;', '  return entries.reduce((s,e)=>s+(-e.amount), 0) / n;'), ['S7']],
   ['f inversé', sub('  const f = priceAfter/priceBefore;', '  const f = priceBefore/priceAfter;'), ['S19', 'S22']],
   ['variation du portefeuille aux contrats d’après', sub("const sharesPrev = (adj && typeof adj.sharesBefore==='number') ? adj.sharesBefore : pos.shares;", 'const sharesPrev = pos.shares;'), ['S17']],
   ['réduction oubliée pour les découverts', sub('      const dividendPerShare = perShare; // Section 307', '      const dividendPerShare = ((dividendGuard.reduced.get(ann.id)||{}).original||ann.amount)/(co.sharesIssued || ann.totalSharesAtAnnouncement || totalRecordShares); // Section 307'), ['S20']],

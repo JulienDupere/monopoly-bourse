@@ -6393,6 +6393,7 @@ const PRODUCTS_MATRIX = [
       `Terrains verrouillés : ni vente de part, ni hypothèque, ni nouveau swap dessus.`,
       `Annulée d'office si aucun souscripteur senior ne se présente.`,
       `Vous n'avez plus intérêt à construire sur un terrain dont vous avez cédé le revenu.`,
+      `Les loyers cédés sont inscrits en intérêts sur titrisation : ils comptent dans la couverture des intérêts, comme ceux d'une hypothèque.`, // Section 321 (lot A)
       `Publication et résolution dans le même semestre — une émission ratée est à refaire en entier.`,
     ], facts:[
       `Un terrain hypothéqué ne peut pas être titrisé`,
@@ -6459,6 +6460,7 @@ const PRODUCTS_MATRIX = [
       `Le taux le plus élevé du jeu — 35 %, ajusté à la hausse si votre cote est mauvaise.`,
       `La part hypothéquée cesse de rapporter du loyer.`,
       `Compte dans votre dette, donc dégrade votre cote et renchérit tout le reste.`,
+      `Ses intérêts comptent dans la couverture des intérêts : un bénéfice avant intérêts sous 2 fois les intérêts ajoute des cubes rouges en bourse.`, // Section 321 (lot A)
       `Hypothéquer un terrain sous swap ou sous titrisation est bloqué.`,
     ], facts:[
       `Quotité de 50 %`,
@@ -10404,9 +10406,15 @@ function advanceGameClock(){
       
       const bsThis = balanceSheetFor(co.id, semesterBefore);
       const bookPerShare0 = (bsThis && co.totalShares>0) ? bsThis.equity/co.totalShares : null;
+      // Section 321 (lot A, décision de Julien) : cours contre valeur comptable par action, avec une tolérance de 10 %.
+      // Cours sous 90 % de la valeur comptable : 1 à 2 verts ; au-dessus de 110 % : 1 à 2 rouges ; entre les deux (bornes
+      // comprises) : rien. Valeur comptable nulle ou négative : le cours est au-dessus, donc rouges (comme avant).
+      // Avant : le moindre écart ajoutait 1 à 2 cubes.
       if(co.type!=='croissance' && bookPerShare0!==null){
-        if(bookPerShare0 > co.stockPrice) injectStockCube(co, 'green', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
-        else if(bookPerShare0 < co.stockPrice) injectStockCube(co, 'red', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
+        if(bookPerShare0 > 1e-9){
+          if(co.stockPrice < bookPerShare0*(1-STOCK_BOOK_VALUE_TOLERANCE_PCT)) injectStockCube(co, 'green', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
+          else if(co.stockPrice > bookPerShare0*(1+STOCK_BOOK_VALUE_TOLERANCE_PCT)) injectStockCube(co, 'red', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
+        } else if(bookPerShare0 < co.stockPrice) injectStockCube(co, 'red', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
         
       }
       
@@ -10491,20 +10499,21 @@ function advanceGameClock(){
       if(co.type==='croissance'){
         if(netMargin > STOCK_CROISSANCE_BIG_BEAT_MARGIN) injectStockCube(co, 'green', 5, 9);
         else if(netMargin < STOCK_CROISSANCE_BIG_MISS_MARGIN) injectStockCube(co, 'red', 5, 8);
-        else if(is.totalRevenue > is.totalExpense) injectStockCube(co, 'green', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
-        else if(is.totalRevenue < is.totalExpense) injectStockCube(co, 'red', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
+        // Section 321 (lot A) : semestre rentable ou déficitaire = 3 à 5 cubes (avant : 1 à 2). C'est maintenant le seul
+        // endroit où « l'entreprise a gagné de l'argent » compte (équité, croissance des revenus et cube de la case
+        // Départ retirés). Grosses marges des Croissance ci-dessus inchangées.
+        else if(is.totalRevenue > is.totalExpense) injectStockCube(co, 'green', STOCK_TRIGGER_PROFIT_MIN, STOCK_TRIGGER_PROFIT_MAX);
+        else if(is.totalRevenue < is.totalExpense) injectStockCube(co, 'red', STOCK_TRIGGER_PROFIT_MIN, STOCK_TRIGGER_PROFIT_MAX);
       } else {
-        if(is.totalRevenue > is.totalExpense) injectStockCube(co, 'green', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
-        else if(is.totalRevenue < is.totalExpense) injectStockCube(co, 'red', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
+        if(is.totalRevenue > is.totalExpense) injectStockCube(co, 'green', STOCK_TRIGGER_PROFIT_MIN, STOCK_TRIGGER_PROFIT_MAX); // Section 321 (lot A)
+        else if(is.totalRevenue < is.totalExpense) injectStockCube(co, 'red', STOCK_TRIGGER_PROFIT_MIN, STOCK_TRIGGER_PROFIT_MAX); // Section 321 (lot A)
       }
       
       
       
-      const bsPrev = balanceSheetFor(co.id, semesterBefore-1);
-      if(bsThis && bsPrev){
-        if(bsThis.equity > bsPrev.equity) injectStockCube(co, 'green', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
-        else if(bsThis.equity < bsPrev.equity) injectStockCube(co, 'red', STOCK_TRIGGER_LEVEL_MIN, STOCK_TRIGGER_LEVEL_MAX);
-      }
+      // Section 321 (lot A, décision de Julien) : plus de cubes pour une équité en hausse ou en baisse d'un semestre à
+      // l'autre (avant : 1 à 2). Redite du bénéfice, et elle punissait tout dividende supérieur au bénéfice, contre la
+      // section 320.
       
       
       
@@ -10532,12 +10541,8 @@ function advanceGameClock(){
       
       
       
-      const earliestSemForGrowth = Math.max(Math.floor((co.createdAtRoll||0)/3), Math.floor((state.finLedgerStartedAtRoll||0)/3));
-      if((semesterBefore-1) >= earliestSemForGrowth){
-        const isPrevForGrowth = incomeStatementFor(co.id, semesterBefore-1);
-        if(is.totalRevenue > isPrevForGrowth.totalRevenue) injectStockCube(co, 'green', STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN, STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MAX);
-        else if(is.totalRevenue < isPrevForGrowth.totalRevenue) injectStockCube(co, 'red', STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN, STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MAX);
-      }
+      // Section 321 (lot A, décision de Julien) : plus de cubes pour des revenus en hausse ou en baisse par rapport au
+      // semestre précédent (avant : 0 à 1). Redite du bénéfice.
       
       
       
@@ -10552,12 +10557,16 @@ function advanceGameClock(){
       
       
       
-      const mortgageInterestExpense = is.expenses['mortgage_interest_expense']||0;
-      if(mortgageInterestExpense>1e-9){
-        const ebitEquivalent = is.netIncome + mortgageInterestExpense;
-        const interestCoverage = ebitEquivalent/mortgageInterestExpense;
-        if(interestCoverage > STOCK_INTEREST_COVERAGE_THRESHOLD) injectStockCube(co, 'green', STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN, STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MAX);
-        else if(interestCoverage < STOCK_INTEREST_COVERAGE_THRESHOLD) injectStockCube(co, 'red', STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN, STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MAX);
+      // Section 321 (lot A, décision de Julien) : couverture des intérêts = (bénéfice net + intérêts) ÷ intérêts, avec
+      // TOUTES les dépenses d'intérêts du semestre (hypothèques et titrisation ABS, semesterInterestExpense), seulement
+      // s'il y en a. Sous 1 : 3 à 5 rouges ; de 1 à 2 (exclu) : 1 à 2 rouges ; 2 ou plus : 0 à 1 vert. Avant : seuls les
+      // intérêts hypothécaires, 0 à 1 cube de part et d'autre de 1.
+      const interestExpense = semesterInterestExpense(is);
+      if(interestExpense>1e-9){
+        const interestCoverage = (is.netIncome + interestExpense)/interestExpense;
+        if(interestCoverage < STOCK_INTEREST_COVERAGE_WEAK - 1e-9) injectStockCube(co, 'red', STOCK_INTEREST_COVERAGE_UNCOVERED_RED_MIN, STOCK_INTEREST_COVERAGE_UNCOVERED_RED_MAX);
+        else if(interestCoverage < STOCK_INTEREST_COVERAGE_STRONG - 1e-9) injectStockCube(co, 'red', STOCK_INTEREST_COVERAGE_WEAK_RED_MIN, STOCK_INTEREST_COVERAGE_WEAK_RED_MAX);
+        else injectStockCube(co, 'green', STOCK_INTEREST_COVERAGE_STRONG_GREEN_MIN, STOCK_INTEREST_COVERAGE_STRONG_GREEN_MAX);
       }
       
       
@@ -11422,6 +11431,12 @@ function incomeStatementFor(companyId, semesterIndex){
   return {companyId, semesterIndex, revenues, expenses, totalRevenue, totalExpense, netIncome: totalRevenue-totalExpense};
 }
 
+// Section 321 (lot A) : total des dépenses d'intérêts d'un compte de résultat (incomeStatementFor), toutes catégories
+// d'intérêts comprises (STOCK_INTEREST_EXPENSE_CATEGORIES). Sert à la couverture des intérêts du sac fondamental.
+function semesterInterestExpense(is){
+  if(!is || !is.expenses) return 0;
+  return STOCK_INTEREST_EXPENSE_CATEGORIES.reduce((s, k)=>s + (is.expenses[k]||0), 0);
+}
 function companyExpectedNetIncome(company, uptoSemesterExclusive){
   const earliestSem = Math.max(Math.floor((company.createdAtRoll||0)/3), Math.floor((state.finLedgerStartedAtRoll||0)/3));
   if(uptoSemesterExclusive<earliestSem) return null; 
@@ -12044,12 +12059,27 @@ const STOCK_TRIGGER_LEVEL_MIN = 1, STOCK_TRIGGER_LEVEL_MAX = 2;
 
 
 
-const STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN = 0, STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MAX = 1;
+// Section 321 (lot A, décisions de Julien) : sac fondamental à la clôture de semestre.
+//   - semestre rentable ou déficitaire : 3 à 5 cubes (avant : STOCK_TRIGGER_LEVEL_MIN/MAX, 1 à 2) ;
+//   - cours contre valeur comptable par action : rien entre 90 % et 110 % ;
+//   - couverture des intérêts : paliers à 1 et 2 (STOCK_INTEREST_EXPENSE_CATEGORIES : intérêts comptés).
+// Retirés : STOCK_TRIGGER_FUNDAMENTAL_EXTRA_MIN/MAX (croissance des revenus et ancienne couverture, 0 à 1),
+// STOCK_INTEREST_COVERAGE_THRESHOLD (seuil unique 1,0) et STOCK_TRIGGER_GO_SALARY_GREEN_MIN/MAX (case Départ).
+const STOCK_TRIGGER_PROFIT_MIN = 3, STOCK_TRIGGER_PROFIT_MAX = 5;
+const STOCK_BOOK_VALUE_TOLERANCE_PCT = 0.10;
 
 
 
 
-const STOCK_INTEREST_COVERAGE_THRESHOLD = 1.0;
+const STOCK_INTEREST_COVERAGE_WEAK = 1, STOCK_INTEREST_COVERAGE_STRONG = 2; // Section 321 (lot A)
+const STOCK_INTEREST_COVERAGE_UNCOVERED_RED_MIN = 3, STOCK_INTEREST_COVERAGE_UNCOVERED_RED_MAX = 5; // Section 321 : couverture < 1
+const STOCK_INTEREST_COVERAGE_WEAK_RED_MIN = 1, STOCK_INTEREST_COVERAGE_WEAK_RED_MAX = 2; // Section 321 : 1 ≤ couverture < 2
+const STOCK_INTEREST_COVERAGE_STRONG_GREEN_MIN = 0, STOCK_INTEREST_COVERAGE_STRONG_GREEN_MAX = 1; // Section 321 : couverture ≥ 2
+// Section 321 (lot A) : dépenses d'intérêts du compte de résultat (inventaire de FIN_CATEGORIES). Les prêts entre
+// entreprises (obligations d'entreprise, prêt de dernier recours) n'ont pas de dépense d'intérêts : tout le
+// remboursement, multiple compris, est inscrit en financement (loan_repayment_via_rent) ; l'intérêt d'un accord de
+// compensation de loyer est fondu dans rent_compensation_expense ; les bons gouvernementaux sont aux joueurs.
+const STOCK_INTEREST_EXPENSE_CATEGORIES = ['mortgage_interest_expense', 'abs_interest_expense'];
 
 
 
@@ -12058,7 +12088,6 @@ const STOCK_INTEREST_COVERAGE_THRESHOLD = 1.0;
 // Section 306 — une demande d'emprunt acceptée (issueLoan) n'injecte plus AUCUN cube rouge (avant : 0 à 1).
 const STOCK_TRIGGER_MORTGAGE_RED_MIN = 1, STOCK_TRIGGER_MORTGAGE_RED_MAX = 2; 
 const STOCK_TRIGGER_AMF_RED_MIN = 2, STOCK_TRIGGER_AMF_RED_MAX = 3; 
-const STOCK_TRIGGER_GO_SALARY_GREEN_MIN = 1, STOCK_TRIGGER_GO_SALARY_GREEN_MAX = 2; 
 const STOCK_TRIGGER_GO_ADVANCE_RED_MIN = 1, STOCK_TRIGGER_GO_ADVANCE_RED_MAX = 2; 
 
 
@@ -14645,7 +14674,9 @@ function applyPassGoEffect(co){
     
     
     
-    injectStockCube(co, 'green', STOCK_TRIGGER_GO_SALARY_GREEN_MIN, STOCK_TRIGGER_GO_SALARY_GREEN_MAX);
+    // Section 321 (lot A, décision de Julien) : plus de cube vert au passage sur la case Départ, ni ici (avance
+    // remboursée) ni au salaire ci-dessous (avant : 1 à 2, donnés même dans un mauvais semestre, ce qui faisait monter
+    // tous les cours avec le temps). Le salaire perçu compte déjà dans le bénéfice du semestre (go_salary_revenue).
     entries = [];
     log(`${co.name} passe par GO — rembourse une avance (${co.goAdvancesOwed} restante(s)), aucun salaire perçu cette fois.`);
   } else {
@@ -14653,7 +14684,7 @@ function applyPassGoEffect(co){
     logFin(co.id, 'go_salary_revenue', 2);
     
     
-    injectStockCube(co, 'green', STOCK_TRIGGER_GO_SALARY_GREEN_MIN, STOCK_TRIGGER_GO_SALARY_GREEN_MAX);
+    // Section 321 (lot A) : plus de cube vert (voir plus haut).
     entries = [{label:`${co.name} (salaire GO)`, amount:2}, {label:'Banque', amount:-2}];
     log(`${co.name} passe par GO et collecte 2.00 M$.`, entries);
   }

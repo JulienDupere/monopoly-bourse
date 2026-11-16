@@ -25,7 +25,10 @@ async function scenario(title, fn){
 // Lignes (1 = première ligne du script) qui encadrent le bloc des dividendes de la clôture de semestre.
 function dividendBlockRange(){
   const lines = engineSource().split('\n');
-  const i = lines.findIndex(l => l.includes("const mortgageInterestExpense = is.expenses['mortgage_interest_expense']"));
+  // Section 321 (lot A) : la couverture des intérêts lit toutes les dépenses d'intérêts (semesterInterestExpense) ;
+  // ancien repère « const mortgageInterestExpense = is.expenses['mortgage_interest_expense'] » gardé en repli.
+  let i = lines.findIndex(l => l.includes('const interestExpense = semesterInterestExpense(is);'));
+  if(i < 0) i = lines.findIndex(l => l.includes("const mortgageInterestExpense = is.expenses['mortgage_interest_expense']"));
   let j = i; while(j < lines.length && lines[j].trim() !== '}') j++;
   const k = lines.findIndex(l => l.includes("Section 315 — bogue 25 (décision de Julien) : le sac type d'une Dividendes"));
   if(i < 0 || k < 0 || !(j < k)) throw new Error('bloc des dividendes introuvable dans advanceGameClock');

@@ -1587,6 +1587,7 @@ function migrateState(s){
     
     
     if(!p.optionPositions) p.optionPositions = [];
+    p.optionPositions.forEach(pos=>{ if(pos && pos.dividendStrikeAdjust===undefined) pos.dividendStrikeAdjust = null; }); // Section 321 — strike d'avant une baisse de versement (aucune)
     if(p.goAdvancesUsed===undefined) p.goAdvancesUsed = 0;
     if(p.inJail===undefined) p.inJail = false;
     if(p.jailTurnsLeft===undefined) p.jailTurnsLeft = 0;
@@ -1913,11 +1914,7 @@ function migrateState(s){
       }
     }
     if(co.dividendPenaltyRefNetIncome===undefined) co.dividendPenaltyRefNetIncome = null; // Section 320 — bénéfice de référence mémorisé à l'annonce (section 321 : repris)
-    // Section 321 — dividendes ordinaires par action versés aux clôtures passées (BNR par action) : reconstitués depuis le
-    // grand livre pour une partie d'avant (dividendPerShareFromLedger ; exact si les parts émises n'ont pas changé).
-    if(!co.dividendPerShareBySemester || typeof co.dividendPerShareBySemester!=='object'){
-      co.dividendPerShareBySemester = dividendPerShareFromLedger(co, Math.floor(((s.gameClock && s.gameClock.rollCount)||0)/3), s.finLedger);
-    }
+    // Section 321 — dividendPerShareBySemester (cumul par action d'une version précédente du lot) n'est plus lu (ignoré s'il existe).
     if(co.dividendRecurrentChangedSemesterIdx===undefined) co.dividendRecurrentChangedSemesterIdx = -1; // Section 320 — un changement de niveau du récurrent par semestre
     if(co.dividendPenaltyTier===undefined) co.dividendPenaltyTier = 0;
     if(co.dividendPenaltyRedAdded===undefined) co.dividendPenaltyRedAdded = 0;
@@ -3320,7 +3317,6 @@ async function createCompany(playerId, name, description, type, dividendPromised
   company.dividendPenaltyRedAdded = 0;
   company.dividendRecurrentChangedSemesterIdx = -1; // Section 320 — semestre du dernier changement de niveau du récurrent
   company.dividendPenaltyRefNetIncome = null; // Section 320 — bénéfice de référence mémorisé à l'annonce (section 321 : repris)
-  company.dividendPerShareBySemester = {}; // Section 321 — dividende ordinaire par action versé à chaque clôture (BNR par action)
   
   
   
@@ -10244,7 +10240,10 @@ function advanceGameClock(){
     
     const dueDividends = state.dividendAnnouncements.filter(a=>a.payAtRoll<=state.gameClock.rollCount);
     const dividendPerSharePaidById = {}; // Section 321 — dividende total par action versé à cette clôture, par entreprise
+    // Section 321 — retouche de la revue (constat 1) : un dividende que le cours ne peut pas absorber n'est pas versé.
+    const dividendGuard = applyDividendCloseGuard(dueDividends, semesterBefore, preferredArrearsBeforeYearEnd);
     dueDividends.forEach(ann=>{
+      if(dividendGuard.cancelled.has(ann.id)) return; // Section 321 — annonce annulée : montant déjà rendu, rien versé
       const co = companyById(ann.companyId);
       const totalRecordShares = ann.recordHolders.reduce((s,h)=>s+h.shares,0);
       if(!co || totalRecordShares<=0) return; 
@@ -10325,6 +10324,11 @@ function advanceGameClock(){
         // manuelle) ; trace au journal. Le dividende récurrent n'étant pas versé, le sac type passe à 20 rouges (bogue 25).
         if(co.preferredDividendArrears>0 && preferredArrearsBeforeYearEnd.has(co.id)){ // Section 315 — retouche de la revue : arriérage antérieur à la fin d'année
           log(`${co.name}: dividende récurrent automatique NON versé ce semestre — arriérage de dividende préférentiel de ${fmt(co.preferredDividendArrears)} à régler d'abord (bouton « Payer l'arriérage » dans Mon Entreprise). Sans dividende récurrent, le sac type passe à 20 cubes rouges.`);
+          return;
+        }
+        // Section 321 — retouche de la revue (constat 1) : récurrent que le cours ne peut pas absorber, même seul.
+        if(dividendGuard.recurrentBlocked.has(co.id)){
+          log(`🚫 ${co.name}: dividende récurrent automatique NON versé ce semestre — le cours (${fmtPrice(co.stockPrice)}) ne peut pas l'absorber sans descendre sous deux fois le cours plancher (${fmtPrice(dividendPriceDropGuard(co))}), vu les bénéfices non répartis. Sans dividende récurrent, le sac type passe à 20 cubes rouges.`);
           return;
         }
         const autoAmount = co.dividendBenchmarkPerShare * co.sharesIssued;
@@ -11058,6 +11062,7 @@ const FIN_CATEGORIES = {
   
   
   dividend_forfeited_return:   {bucket:null, cf:'financing', label:'Dividende non réclamé — retour trésorerie'},
+  dividend_cancelled_return:   {bucket:null, cf:'financing', label:'Dividende annoncé annulé (le cours ne pouvait pas l’absorber) — retour trésorerie'}, // Section 321
   
   
   
@@ -11083,8 +11088,10 @@ function logFin(companyId, category, amount, roll){
   if(state.finLedger.length>10000) state.finLedger.shift(); 
 }
 
+// Section 321 — une annonce ANNULÉE à la clôture (dividend_cancelled_return) n'est pas un dividende versé : elle est
+// retranchée ici, comme dans dividendNetPaidInSemester, les BNR et companyAverageDividendAnnounced.
 function dividendPaidInSemester(companyId, semesterIndex){
-  return state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex && e.category==='dividend_payout')
+  return state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex && (e.category==='dividend_payout' || e.category==='dividend_cancelled_return'))
     .reduce((s,e)=>s+(-e.amount), 0);
 }
 // Section 315 — décisions de Julien (ratio de distribution > 1, section 306) : dividendes ordinaires RÉELLEMENT versés
@@ -11092,7 +11099,7 @@ function dividendPaidInSemester(companyId, semesterIndex){
 // (dividend_forfeited_return : part de la banque, parts vendues depuis l'annonce). Ce que la banque paie au titre
 // d'une position négative ne sort pas de l'entreprise et n'y figure pas.
 function dividendNetPaidInSemester(companyId, semesterIndex){
-  return state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex && (e.category==='dividend_payout' || e.category==='dividend_forfeited_return'))
+  return state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex && (e.category==='dividend_payout' || e.category==='dividend_forfeited_return' || e.category==='dividend_cancelled_return'))
     .reduce((s,e)=>s+(-e.amount), 0);
 }
 // Section 321 — décisions de Julien (lot B) : deux mesures, TOUT PAR ACTION (la part de la banque ne change rien).
@@ -11111,54 +11118,36 @@ function dividendPayoutRefSemesterIdx(co, curSemesterIdx){
   const firstSem = companyFirstLedgerSemester(co);
   return curSemesterIdx>firstSem ? curSemesterIdx-1 : curSemesterIdx;
 }
-// Section 321 — dividende ordinaire PAR ACTION versé à chaque clôture (co.dividendPerShareBySemester, clé = semestre
-// clos), tenu à la clôture par recordDividendPerShare. Une partie d'avant le reconstitue dans migrateState
-// (dividendPerShareFromLedger).
-function recordDividendPerShare(co, semesterIdx, perShare){
-  if(!co || !(perShare>0)) return;
-  if(!co.dividendPerShareBySemester || typeof co.dividendPerShareBySemester!=='object') co.dividendPerShareBySemester = {};
-  co.dividendPerShareBySemester[semesterIdx] = (Number(co.dividendPerShareBySemester[semesterIdx])||0) + perShare;
-}
-// Section 321 — reconstitution pour une partie d'avant : dividendes ordinaires DÉBITÉS par semestre (dividend_payout,
-// part de la banque comprise : c'est le montant par action reçu par chaque action) ÷ parts émises ACTUELLES, pour les
-// semestres déjà clos. Exact tant que le nombre de parts n'a pas changé depuis ces versements.
-function dividendPerShareFromLedger(co, beforeSemesterIdx, ledger){
-  const out = {};
-  const issued = co.sharesIssued||0;
-  if(!(issued>0)) return out;
-  (ledger||[]).forEach(e=>{
-    if(e.companyId!==co.id || e.category!=='dividend_payout' || !(e.semesterIndex<beforeSemesterIdx)) return;
-    out[e.semesterIndex] = (out[e.semesterIndex]||0) + (-e.amount)/issued;
-  });
-  return out;
-}
+// Section 321 — retouche de la revue (constat 4) : plus de cumul de dividendes par action dans l'état (une IPO tardive
+// change les parts émises : un dividende d'avant, gardé en $ par action aux parts de l'époque, comptait 3,3 fois trop).
+// Les BNR se relisent en DOLLARS dans le grand livre, puis se divisent par les parts émises actuelles.
 // Section 321 — fonction PURE : BNR PAR ACTION de l'entreprise tels qu'ils se lisent au semestre `semesterIdx` (à la
-// clôture de ce semestre, juste avant ses versements ordinaires ; pendant le semestre, ce qui est connu à ce jour) :
-//   + somme des bénéfices nets (incomeStatementFor) ÷ parts émises, du premier semestre jusqu'à `semesterIdx` INCLUS ;
-//   − somme des dividendes ordinaires PAR ACTION versés aux clôtures des semestres AVANT `semesterIdx`
-//     (co.dividendPerShareBySemester) — ceux du semestre lui-même sont le dividende jugé ;
+// clôture de ce semestre, juste avant ses versements ordinaires ; pendant le semestre, ce qui est connu à ce jour) =
+//   ( Σ bénéfices nets (incomeStatementFor), du premier semestre jusqu'à `semesterIdx` INCLUS
+//   − Σ dividendes ordinaires DÉCLARÉS BRUTS des semestres AVANT `semesterIdx` (dividend_payout, part de la banque
+//     comprise : chaque action a reçu ce montant par action), moins les annonces annulées (dividend_cancelled_return) ;
+//     ceux du semestre `semesterIdx` lui-même sont le dividende jugé
 //   − dividendes privilégiés réellement versés jusqu'à `semesterIdx` inclus (preferred_dividend_payout et
-//     preferred_dividend_arrears_paid, moins preferred_dividend_unclaimed_return) ÷ parts émises.
-// Parts émises = celles d'aujourd'hui. « BNR ajustés » (équivalent en dollars pour les joueurs) = BNR par action ×
-// parts des actionnaires réels (au plus les parts émises).
+//     preferred_dividend_arrears_paid, moins preferred_dividend_unclaimed_return) ) ÷ parts émises actuelles.
+// « BNR ajustés » (équivalent en dollars pour les joueurs) = BNR par action × parts des actionnaires réels (au plus
+// les parts émises).
 function dividendRetainedEarnings(co, semesterIdx){
   const first = companyFirstLedgerSemester(co);
   const issued = co.sharesIssued||0;
-  let netIncome = 0, preferredPaid = 0, ordinaryPerShare = 0;
+  let netIncome = 0, preferredPaid = 0, ordinaryPaid = 0;
   for(let sem=first; sem<=semesterIdx; sem++) netIncome += incomeStatementFor(co.id, sem).netIncome;
   (state.finLedger||[]).forEach(e=>{
     if(e.companyId!==co.id || !(e.semesterIndex>=first) || e.semesterIndex>semesterIdx) return;
-    if(e.category==='preferred_dividend_payout' || e.category==='preferred_dividend_arrears_paid' || e.category==='preferred_dividend_unclaimed_return'){
+    if(e.category==='dividend_payout' || e.category==='dividend_cancelled_return'){
+      if(e.semesterIndex<semesterIdx) ordinaryPaid += -e.amount;
+    } else if(e.category==='preferred_dividend_payout' || e.category==='preferred_dividend_arrears_paid' || e.category==='preferred_dividend_unclaimed_return'){
       preferredPaid += -e.amount;
     }
   });
-  const hist = co.dividendPerShareBySemester || {};
-  Object.keys(hist).forEach(k=>{ const sem = Number(k); if(sem>=first && sem<semesterIdx) ordinaryPerShare += Number(hist[k])||0; });
-  const netIncomePerShare = issued>0 ? netIncome/issued : 0;
-  const preferredPerShare = issued>0 ? preferredPaid/issued : 0;
-  const perShare = netIncomePerShare - ordinaryPerShare - preferredPerShare;
+  const retainedEarnings = netIncome - ordinaryPaid - preferredPaid;
+  const perShare = issued>0 ? retainedEarnings/issued : 0;
   const realShares = Math.min(issued, (co.shareholders||[]).filter(h=>h.playerId!=='BANK' && h.shares>1e-9).reduce((t,h)=>t+h.shares, 0));
-  return {perShare, adjusted: perShare*realShares, realShares, issued, netIncome, netIncomePerShare, ordinaryPerShare, preferredPaid, preferredPerShare, firstSemesterIdx:first, semesterIdx};
+  return {perShare, retainedEarnings, adjusted: perShare*realShares, realShares, issued, netIncome, ordinaryPaid, preferredPaid, firstSemesterIdx:first, semesterIdx};
 }
 // Section 321 — fonction PURE : dividende par action `perShare` comparé aux BNR par action. `ratio` brut (null sans
 // réserves) ; `priceRatio` = ratio plafonné à 1 (1 sans réserves).
@@ -11175,8 +11164,29 @@ const DIVIDEND_PRICE_DROP_GUARD_MULTIPLE = 2;
 function dividendPriceDropGuard(co){
   return (Number(co.stockPriceFounding)||0) * STOCK_FOUNDING_FLOOR_PCT * DIVIDEND_PRICE_DROP_GUARD_MULTIPLE;
 }
-// Section 321 — fonction PURE : baisse du cours par action = dividende par action × ratio plafonné. Le cours ne passe
-// jamais sous `guardPrice` ; déjà à la garde ou dessous, il ne bouge pas. Rendement = dividende par action ÷ cours.
+// Section 321 — retouche de la revue (constat 1) : un dividende ordinaire que le cours ne peut pas absorber n'est pas
+// versé (refusé à l'annonce, annulé ou non versé à la clôture). Fonction PURE : dividende par action maximal du
+// semestre que le cours `price` absorbe sans passer sous la garde `guardPrice`, aux BNR par action `bnrPerShare`.
+// Marge m = cours − garde ; m ≤ 0 : 0 ; BNR ≤ 0 (baisse = d) : m ; m ≥ BNR (baisse = d pour d ≥ BNR) : m ; sinon
+// (baisse = d² ÷ BNR) : √(m × BNR).
+function dividendMaxAbsorbablePerShare(price, guardPrice, bnrPerShare){
+  const m = (Number(price)||0) - (Number(guardPrice)||0);
+  if(!(m>0)) return 0;
+  const b = Number(bnrPerShare)||0;
+  if(!(b>1e-15)) return m;
+  return m>=b ? m : Math.sqrt(m*b);
+}
+// Section 321 — le dividende par action `perShare` passe-t-il ? Tolérance des calculs en M$ : atterrir exactement sur la
+// garde est permis.
+function dividendAbsorbable(perShare, price, guardPrice, bnrPerShare){
+  const d = Number(perShare)||0;
+  if(!(d>1e-15)) return true;
+  const max = dividendMaxAbsorbablePerShare(price, guardPrice, bnrPerShare);
+  return d <= max*(1+1e-9) + 1e-15;
+}
+// Section 321 — fonction PURE : baisse du cours par action = dividende par action × ratio plafonné. La garde n'est plus
+// qu'une ceinture (un dividende qui la franchirait n'est pas versé : dividendAbsorbable). Rendement = dividende par
+// action ÷ cours.
 function dividendReservePriceDrop(perShare, bnrPerShare, price, guardPrice){
   const r = dividendReserveRatio(perShare, bnrPerShare);
   const dropPerShare = r.perShare * r.priceRatio;
@@ -11306,18 +11316,58 @@ function closeAnnouncedDividendPayoutPenalty(co, semesterIdx, perSharePaid){
   }
   return added;
 }
+// Section 321 — retouche de la revue (constat 1) : à la clôture du semestre `semesterIdx`, AVANT les versements, par
+// entreprise, avec le cours du moment et les BNR définitifs du semestre clos (ils ne dépendent pas des versements de
+// cette clôture) : si annonces échues + récurrent passent ensemble, tout est versé ; sinon les annonces échues sont
+// ANNULÉES (montant rendu à la trésorerie, écriture dividend_cancelled_return au semestre de l'annonce, personne ne
+// reçoit rien, ni les découverts), puis le récurrent est versé s'il passe seul, sinon il n'est pas versé (comme un
+// semestre sans versement récurrent : sac type à 20 rouges par la règle existante). Rend {cancelled, recurrentBlocked}.
+function applyDividendCloseGuard(dueDividends, semesterIdx, preferredArrearsBlocked){
+  const cancelled = new Set(), recurrentBlocked = new Set();
+  if(!dividendPriceDropActive(semesterIdx)) return {cancelled, recurrentBlocked};
+  const byCo = {};
+  const entry = co => byCo[co.id] || (byCo[co.id] = {co, anns:[], annPerShare:0, recPerShare:0});
+  dueDividends.forEach(ann=>{
+    const co = companyById(ann.companyId);
+    const totalRecordShares = (ann.recordHolders||[]).reduce((t,h)=>t+h.shares, 0);
+    if(!co || totalRecordShares<=0) return;
+    const e = entry(co);
+    e.anns.push(ann);
+    e.annPerShare += ann.amount/(co.sharesIssued || ann.totalSharesAtAnnouncement || totalRecordShares);
+  });
+  activeCompanies().forEach(co=>{
+    if(!(co.type==='dividende' && co.dividendAutoPay && co.dividendBenchmarkPerShare>0)) return;
+    if(co.preferredDividendArrears>0 && preferredArrearsBlocked && preferredArrearsBlocked.has(co.id)) return;
+    if(!(co.dividendBenchmarkPerShare*co.sharesIssued>1e-9)) return;
+    entry(co).recPerShare = co.dividendBenchmarkPerShare;
+  });
+  Object.keys(byCo).forEach(id=>{
+    const e = byCo[id], co = e.co;
+    const bnr = dividendRetainedEarnings(co, semesterIdx).perShare;
+    const guard = dividendPriceDropGuard(co);
+    if(dividendAbsorbable(e.annPerShare + e.recPerShare, co.stockPrice, guard, bnr)) return;
+    const max = dividendMaxAbsorbablePerShare(co.stockPrice, guard, bnr);
+    e.anns.forEach(ann=>{
+      co.cash += ann.amount;
+      logFin(co.id, 'dividend_cancelled_return', ann.amount, Math.max(0, state.gameClock.rollCount-1));
+      cancelled.add(ann.id);
+      log(`🚫 ${co.name} : le dividende annoncé de ${fmt(ann.amount)} (lancer #${ann.announcedAtRoll}) est ANNULÉ — le cours (${fmtPrice(co.stockPrice)}) ne peut pas l'absorber : avec ${fmtPrice(bnr)} de bénéfices non répartis par action, il descendrait sous ${fmtPrice(guard)}, deux fois le cours plancher (au plus ${fmtPrice(max)} par action ce semestre). Personne ne le reçoit ; le montant est rendu à la trésorerie.`);
+    });
+    if(e.recPerShare>0 && !dividendAbsorbable(e.recPerShare, co.stockPrice, guard, bnr)) recurrentBlocked.add(co.id);
+  });
+  return {cancelled, recurrentBlocked};
+}
 // Section 321 — à la clôture du semestre `semesterIdx`, APRÈS les versements (annonces échues et récurrent) et AVANT les
 // déclencheurs du sac fondamental et le tirage des cubes : baisse du cours de l'entreprise qui vient de verser
 // `perShareTotal` par action (tous dividendes ordinaires de cette clôture), selon ses BNR par action définitifs
-// (dividendRetainedEarnings) : dividendReservePriceDrop. Puis le dividende par action de cette clôture est retenu
-// (recordDividendPerShare) pour les BNR des semestres suivants. Historique et journal tenus ; ne déclenche JAMAIS la fin
-// de partie (garde au double du plancher). Sans baisse pour le semestre en cours au moment de la mise à jour.
+// (dividendRetainedEarnings) : dividendReservePriceDrop, jamais rognée (un dividende que le cours ne peut pas absorber
+// a été annulé avant les versements : applyDividendCloseGuard). Puis la référence Momentum et les strikes des options
+// baissent d'autant. Historique et journal tenus ; ne déclenche JAMAIS la fin de partie. Sans baisse pour le semestre
+// en cours au moment de la mise à jour.
 function applyDividendPayoutPriceDrop(co, semesterIdx, perShareTotal){
   if(!co || !(perShareTotal>1e-15)) return null;
-  const active = dividendPriceDropActive(semesterIdx);
-  const bnr = active ? dividendRetainedEarnings(co, semesterIdx) : null;
-  recordDividendPerShare(co, semesterIdx, perShareTotal);
-  if(!active) return null;
+  if(!dividendPriceDropActive(semesterIdx)) return null;
+  const bnr = dividendRetainedEarnings(co, semesterIdx);
   const d = dividendReservePriceDrop(perShareTotal, bnr.perShare, co.stockPrice, dividendPriceDropGuard(co));
   if(!(d.appliedDrop>1e-15)) return d;
   co.stockPrice = d.priceAfter;
@@ -11331,17 +11381,62 @@ function applyDividendPayoutPriceDrop(co, semesterIdx, perShareTotal){
     ? `sans bénéfices non répartis (${fmtPrice(bnr.perShare)} par action) : tout le dividende sort du cours`
     : `pour des bénéfices non répartis de ${fmtPrice(bnr.perShare)} par action (${fmt(bnr.adjusted)} pour les actionnaires) : le dividende en représente ${dividendPercentText(d.ratio)}${d.ratio>1?' (compté 100 %)':''}, cette part du dividende sort du cours`;
   log(`📉 ${co.name} : le cours baisse de ${fmtPrice(d.appliedDrop)} par action (${fmtPrice(d.priceBefore)} → ${fmtPrice(d.priceAfter)}) au versement de ses dividendes. Dividende versé : ${fmtPrice(d.perShare)} par action${yieldTxt}, ${why}${d.atGuard?` ; la baisse s'arrête à ${fmtPrice(d.guardPrice)} (deux fois le cours plancher)`:''}.`);
+  // Section 321 — retouche de la revue (constat 3) : la référence de tendance d'une Momentum baisse d'autant (la baisse
+  // du versement n'est pas un semestre perdu).
+  if(typeof co.momentumRefPrice==='number') co.momentumRefPrice = Math.max(0, co.momentumRefPrice - d.appliedDrop);
+  adjustOptionStrikesForDividend(co, d.appliedDrop); // Section 321 — retouche de la revue (constat 2)
   return d;
 }
+// Section 321 — retouche de la revue (constat 2), comme sur les vrais marchés pour un dividende exceptionnel : après la
+// baisse du versement, le strike de TOUTES les positions d'options ouvertes sur l'entreprise (tous joueurs, calls et
+// puts, achetées et vendues, jambes de stratégies comprises) baisse du même montant, plancher strictement positif
+// (OPTION_STRIKE_DIVIDEND_FLOOR ; un strike déjà plus bas ne remonte pas). L'écart entre les jambes d'une stratégie est
+// conservé (sauf jambe arrêtée au plancher). L'ancien strike est retenu pour le lancer en cours
+// (pos.dividendStrikeAdjust), pour que la variation du portefeuille (computePlayerPortfolioDeltas) compare le cours
+// d'avant la baisse au strike d'avant. Rend le nombre de positions ajustées.
+const OPTION_STRIKE_DIVIDEND_FLOOR = 0.01e-6; // 0,01 $
+function adjustOptionStrikesForDividend(co, drop){
+  if(!co || !(drop>1e-15)) return 0;
+  const roll = state.gameClock.rollCount;
+  let n = 0;
+  state.players.forEach(pl=>{
+    (pl.optionPositions||[]).forEach(pos=>{
+      if(pos.companyId!==co.id || !(pos.shares>1e-9)) return;
+      const before = pos.strike;
+      const target = before - drop;
+      const after = target>OPTION_STRIKE_DIVIDEND_FLOOR ? target : Math.min(before, OPTION_STRIKE_DIVIDEND_FLOOR);
+      if(!(Math.abs(after-before)>1e-15)) return;
+      const prev = (pos.dividendStrikeAdjust && pos.dividendStrikeAdjust.roll===roll) ? pos.dividendStrikeAdjust.before : before;
+      pos.dividendStrikeAdjust = {roll, before: prev};
+      pos.strike = after;
+      n++;
+    });
+  });
+  if(n>0) log(`🔧 ${co.name} : les prix d'exercice (strikes) des ${n} position${n>1?'s':''} d'options ouvertes sur ${co.name} baissent de ${fmtPrice(drop)}, comme le cours au versement du dividende (calls et puts, achetées et vendues, stratégies comprises).`);
+  return n;
+}
 // Section 321 — aperçu (fonction PURE) des fenêtres « Annoncer un dividende » (amount > 0) et « Dividende récurrent »
-// (amount = 0, opts.recurrentPerShare) : cubes (announcedDividendPayoutPenalty) et baisse du cours prévue à la clôture
-// (dividendReservePriceDrop sur les BNR par action connus à ce jour) si rien ne change d'ici là. Estimation.
+// (amount = 0, opts.recurrentPerShare) : cubes (announcedDividendPayoutPenalty), baisse du cours prévue à la clôture
+// (dividendReservePriceDrop sur les BNR par action connus à ce jour) et garde (dividendAbsorbable) : `refused` = le total
+// du semestre ne passe pas (annonce refusée ; à la clôture, les annonces seraient annulées) ; `recurrentFits` = le
+// récurrent passe seul ; `maxNewAmount` = montant encore permis pour une annonce. Estimation.
 function dividendPayoutPreviewInfo(co, amount, opts){
   const info = announcedDividendPayoutPenalty(co, amount, opts);
   const active = dividendPriceDropActive(info.curSemesterIdx);
   const bnr = dividendRetainedEarnings(co, info.curSemesterIdx);
-  const drop = dividendReservePriceDrop(active ? info.perShare : 0, bnr.perShare, co.stockPrice, dividendPriceDropGuard(co));
-  return {info, bnr, drop, active};
+  const guard = dividendPriceDropGuard(co);
+  const drop = dividendReservePriceDrop(active ? info.perShare : 0, bnr.perShare, co.stockPrice, guard);
+  const maxPerShare = dividendMaxAbsorbablePerShare(co.stockPrice, guard, bnr.perShare);
+  const committedPerShare = Math.max(0, info.perShare - info.newPerShare);
+  const maxNewPerShare = Math.max(0, maxPerShare - committedPerShare);
+  const issued = co.sharesIssued||0;
+  const refused = active && !dividendAbsorbable(info.perShare, co.stockPrice, guard, bnr.perShare);
+  const recurrentFits = !active || dividendAbsorbable(info.recurrentPerShare, co.stockPrice, guard, bnr.perShare);
+  return {info, bnr, drop, active, guard, maxPerShare, committedPerShare, maxNewPerShare, maxNewAmount: maxNewPerShare*issued, refused, recurrentFits};
+}
+// Section 321 — message de refus d'une annonce que le cours ne peut pas absorber (fenêtre et action).
+function dividendGuardRefusalMessage(co, pv){
+  return `Le cours de ${co.name} ne peut pas absorber ce dividende : ce semestre, les dividendes ne peuvent pas dépasser ${fmtPrice(pv.maxPerShare)} par action (cours ${fmtPrice(co.stockPrice)}, bénéfices non répartis ${fmtPrice(pv.bnr.perShare)} par action, sans descendre sous ${fmtPrice(pv.guard)}, deux fois le cours plancher). Déjà engagé ce semestre : ${fmtPrice(pv.committedPerShare)} par action ; cette annonce peut aller jusqu'à ${fmt(pv.maxNewAmount)} (${fmtPrice(pv.maxNewPerShare)} par action).`;
 }
 // Section 321 — pourcentage en texte (« 40 % », « 80,5 % »).
 function dividendPercentText(x){
@@ -11370,8 +11465,11 @@ function dividendLossSemesterCount(company, maxCount){
 
 function companyAverageDividendAnnounced(companyId){
   const entries = state.finLedger.filter(e=>e.companyId===companyId && e.category==='dividend_payout');
-  if(entries.length===0) return 0;
-  return entries.reduce((s,e)=>s+(-e.amount), 0) / entries.length;
+  // Section 321 — les annonces annulées à la clôture ne comptent ni dans le total ni dans le nombre.
+  const cancelled = state.finLedger.filter(e=>e.companyId===companyId && e.category==='dividend_cancelled_return');
+  const n = entries.length - cancelled.length;
+  if(n<=0) return 0;
+  return (entries.reduce((s,e)=>s+(-e.amount), 0) - cancelled.reduce((s,e)=>s+e.amount, 0)) / n;
 }
 
 function companyLiabilitiesForStatements(company){
@@ -14887,7 +14985,8 @@ function computePlayerPortfolioDeltas(snap){
         const premiumNow = optionPremiumFor(co, pos.type, pos.strike, pos.expiryRoll, false);
         const sigma = companyAnnualSigma(co); 
         const Tprev = Math.max(0, (pos.expiryRoll-(rollNow-1))/6);
-        const premiumPrev = blackScholesPremium(pricePrev, pos.strike, Tprev, r, sigma, pos.type);
+        const strikePrev = (pos.dividendStrikeAdjust && pos.dividendStrikeAdjust.roll===rollNow) ? pos.dividendStrikeAdjust.before : pos.strike; // Section 321 — strike d'avant la baisse du versement
+        const premiumPrev = blackScholesPremium(pricePrev, strikePrev, Tprev, r, sigma, pos.type);
         const sign = pos.side==='long' ? 1 : -1;
         optionVar += sign * (premiumNow-premiumPrev) * OPTION_CONTRACT_MULTIPLIER * pos.shares;
       });
@@ -22114,26 +22213,34 @@ async function confirmInsuranceBundle(companyId, keys, claimMode, term, deductib
 
 // Section 320, refaite par la section 321 — aperçu des fenêtres « Annoncer un dividende » et « Dividende récurrent » :
 // dividende par action et rendement, BNR par action (et ajustés aux actionnaires), ratio, baisse du cours prévue à la
-// clôture et, s'il y a une annonce ce semestre, ratio de distribution et cubes rouges ; tout par
+// clôture, maximum encore permis et, s'il y a une annonce ce semestre, ratio de distribution et cubes rouges ; tout par
 // dividendPayoutPreviewInfo (mêmes fonctions que la clôture). Rend aussi `info` (semestre et palier affichés : une
-// annonce dont l'aperçu est périmé est refusée, section 320).
+// annonce dont l'aperçu est périmé est refusée, section 320) et `pv`.
+// Section 321 — retouche de la revue (constat 5) : rouge et ⚠️ seulement si un cube rouge serait ajouté, si la baisse
+// dépasse 2 % du cours (DIVIDEND_PREVIEW_ALARM_DROP_PCT), ou si le dividende serait refusé ou non versé ; sinon neutre.
+// opts.recurrentWindow : fenêtre du récurrent (le récurrent jugé seul, les annonces annulées d'abord).
+const DIVIDEND_PREVIEW_ALARM_DROP_PCT = 0.02;
 function dividendPayoutPreview(co, amount, opts){
   opts = opts || {};
   const pv = dividendPayoutPreviewInfo(co, amount, opts);
   const info = pv.info, drop = pv.drop, bnr = pv.bnr;
   const lead = opts.lead || 'Après cette annonce';
   if(!(info.perShare>1e-15)){
-    return {info, drop, html:`<span style="color:var(--muted);" data-payout-tier="0" data-price-drop="0">${lead} : aucun dividende ce semestre — ni baisse du cours, ni cube.</span>`};
+    return {info, drop, pv, html:`<span data-payout-tier="0" data-price-drop="0" data-refused="0">${lead} : aucun dividende ce semestre — ni baisse du cours, ni cube.</span>`};
   }
   const yieldTxt = drop.yieldRatio!==null ? `, rendement <b>${dividendPercentText(drop.yieldRatio)}</b> au cours actuel` : '';
   const bnrTxt = drop.noReserve
     ? `BNR <b>nuls ou négatifs</b> (${fmtPrice(bnr.perShare)} par action) : ratio compté 100 %`
     : `BNR ${fmtPrice(bnr.perShare)} par action (${fmt(bnr.adjusted)} pour les actionnaires) : ratio <b>${dividendPercentText(drop.ratio)}</b>${drop.ratio>1?' (compté 100 %)':''}`;
   let dropTxt;
+  let blocked = false;
   if(!pv.active) dropTxt = 'pas de baisse du cours ce semestre (la règle commence au semestre suivant pour cette partie)';
-  else if(drop.appliedDrop>1e-15) dropTxt = `le cours baissera d'environ <b>${fmtPrice(drop.appliedDrop)} par action</b>, soit ${dividendPercentText(drop.appliedDrop/(drop.priceBefore||1))} (de ${fmtPrice(drop.priceBefore)} à environ ${fmtPrice(drop.priceAfter)}${drop.atGuard?', arrêté à deux fois le cours plancher':''})`;
-  else if(drop.dropPerShare>1e-15) dropTxt = 'le cours ne baissera pas (déjà à deux fois le cours plancher)';
+  else if(opts.recurrentWindow && !pv.recurrentFits){ blocked = true; dropTxt = `<b>ce dividende récurrent ne sera pas versé à la clôture si le cours ne remonte pas</b> : au cours actuel, le cours ne peut pas l'absorber (au plus ${fmtPrice(pv.maxPerShare)} par action ce semestre, sans descendre sous ${fmtPrice(pv.guard)})`; }
+  else if(opts.recurrentWindow && pv.refused){ blocked = true; dropTxt = `<b>le dividende annoncé ce semestre sera annulé à la clôture si le cours ne remonte pas</b> (avec ce récurrent, au plus ${fmtPrice(pv.maxPerShare)} par action ce semestre)`; }
+  else if(pv.refused){ blocked = true; dropTxt = `<b>refusé</b> : le cours ne peut pas absorber ce dividende — au plus ${fmtPrice(pv.maxPerShare)} par action ce semestre, soit au plus <b>${fmt(pv.maxNewAmount)}</b> pour cette annonce`; }
+  else if(drop.appliedDrop>1e-15) dropTxt = `le cours baissera d'environ <b>${fmtPrice(drop.appliedDrop)} par action</b>, soit ${dividendPercentText(drop.appliedDrop/(drop.priceBefore||1))} (de ${fmtPrice(drop.priceBefore)} à environ ${fmtPrice(drop.priceAfter)})`;
   else dropTxt = 'le cours ne baissera pas';
+  const maxTxt = (pv.active && !blocked && !opts.recurrentWindow) ? ` ; maximum encore permis ce semestre : ${fmt(pv.maxNewAmount)} (${fmtPrice(pv.maxNewPerShare)} par action)` : '';
   let cost = '';
   if(info.hasAnnouncement){
     const refLabel = info.refSemesterIdx===info.curSemesterIdx ? 'du semestre en cours (premier semestre de l’entreprise)' : 'du dernier semestre clos';
@@ -22146,9 +22253,11 @@ function dividendPayoutPreview(co, amount, opts){
     else c = `<b>${info.qtyMax} cube${info.qtyMax>1?'s':''} rouge${info.qtyMax>1?'s':''}</b>`;
     cost = ` Sac fondamental : ${ratioTxt} — ${c}.`;
   }
-  const over = info.tier>0 || drop.appliedDrop>1e-15;
-  const color = over ? 'var(--brick,#C0392B)' : 'var(--muted)';
-  return {info, drop, html:`<span style="color:${color};" data-payout-tier="${info.tier}" data-price-drop="${drop.appliedDrop}">${over?'⚠️ ':''}${lead} : dividende de ce semestre <b>${fmtPrice(info.perShare)} par action</b>${yieldTxt} ; ${bnrTxt} ; ${dropTxt} (estimation).${cost}</span>`};
+  const addsCube = info.hasAnnouncement && info.raises && info.extraMax>0;
+  const bigDrop = drop.priceBefore>0 && drop.appliedDrop > DIVIDEND_PREVIEW_ALARM_DROP_PCT*drop.priceBefore;
+  const alarm = addsCube || bigDrop || blocked;
+  const style = alarm ? ' style="color:var(--brick,#C0392B);"' : '';
+  return {info, drop, pv, html:`<span${style} data-payout-tier="${info.tier}" data-price-drop="${blocked?0:drop.appliedDrop}" data-refused="${blocked?1:0}" data-alarm="${alarm?1:0}">${alarm?'⚠️ ':''}${lead} : dividende de ce semestre <b>${fmtPrice(info.perShare)} par action</b>${yieldTxt} ; ${bnrTxt} ; ${dropTxt}${maxTxt} (estimation).${cost}</span>`};
 }
 function dividendPayoutPreviewHtml(co, amount, opts){
   return dividendPayoutPreview(co, amount, opts).html;
@@ -22206,7 +22315,7 @@ function modalAnnounceDividend(){
     <div class="small" style="margin-bottom:8px;">Trésorerie actuelle: <b>${fmt(myCo.cash)}</b>${inGracePeriod?` &nbsp;|&nbsp; Maximum autorisé pendant le délai de grâce: <b>${fmt(graceDividendCap)}</b>`:''}</div>
     <label>Montant total à annoncer (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" min="0" max="${Math.min(myCo.cash, graceDividendCap)}" id="mDividendAmount" value="0">
-    <div class="small" style="margin-bottom:6px;color:var(--muted);">Un dividende se paie avec vos réserves, les bénéfices non répartis (BNR), comptés par action. Au versement, le cours baisse d'une part du dividende par action : le dividende comparé aux BNR par action (petit dividende sur de grosses réserves : presque rien ; dividende égal ou supérieur aux réserves, ou sans réserves : tout le dividende). Et, par principe, un dividende annoncé qui dépasse 80 % du bénéfice par action du dernier semestre clos ajoute 1 cube rouge au sac fondamental, 2 si ce bénéfice est négatif. Les dividendes du semestre comptent ensemble${myCo.type==='dividende' && myCo.dividendAutoPay && myCo.dividendBenchmarkPerShare>0 ? ', dividende récurrent compris' : ''}.</div><!-- Section 321 -->
+    <div class="small" style="margin-bottom:6px;color:var(--muted);">Au versement, le cours baisse d'une part du dividende par action d'autant plus grande que ce dividende pèse lourd face aux bénéfices non répartis (BNR) par action, et un dividende que le cours ne peut pas absorber est refusé. Par principe, un dividende annoncé ajoute aussi au sac fondamental 0, 1 ou 2 cubes rouges selon son ratio de distribution (au-delà de 80 % du bénéfice par action du dernier semestre clos : 1 ; ce bénéfice négatif : 2).</div><!-- Section 321 — retouche de la revue (constat 5) : deux phrases -->
     <div class="small" id="mDividendPayoutPreview" style="margin-bottom:8px;"></div>
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
@@ -22276,6 +22385,13 @@ function modalAnnounceDividend(){
       if(shown && (payoutInfo.curSemesterIdx!==shown.semesterIdx || payoutInfo.tier>shown.tier)){
         stalePayout = true;
         return {ok:false, error:'Le ratio de distribution a changé depuis l’affichage de l’aperçu (nouveau semestre ou nouvelles annonces) — rien n’a été fait. Vérifiez le nouvel aperçu, puis cliquez à nouveau sur « Annoncer ».'}; // Section 321 — texte
+      }
+      // Section 321 — retouche de la revue (constat 1) : un dividende que le cours ne peut pas absorber est refusé, jugé
+      // ici sur l'état frais (annonces déjà faites + celle-ci + récurrent, cours et BNR connus à ce jour).
+      const guardPv = dividendPayoutPreviewInfo(co, amount);
+      if(guardPv.refused){
+        stalePayout = true;
+        return {ok:false, error:dividendGuardRefusalMessage(co, guardPv)};
       }
       
       
@@ -22399,7 +22515,7 @@ function modalDividendRecurrentSettings(){
     const tierNow = parseInt(tierInput.value, 10) || 3;
     const checked = !!document.getElementById('mDivAutoPayChk').checked;
     const perShareNow = baseBenchmark * DIVIDEND_RECURRENT_TIER_PCT[tierNow-1];
-    payoutWarn.innerHTML = dividendPayoutPreviewHtml(coNow, 0, {recurrentPerShare: checked ? perShareNow : 0,
+    payoutWarn.innerHTML = dividendPayoutPreviewHtml(coNow, 0, {recurrentPerShare: checked ? perShareNow : 0, recurrentWindow:true, // Section 321
       lead: hasAnnouncementThisSemester ? 'Avec ce réglage et le dividende annoncé ce semestre (jugés ensemble dès la confirmation)' : 'Avec ce réglage'});
   }
   tierInput.addEventListener('input', updatePreview);

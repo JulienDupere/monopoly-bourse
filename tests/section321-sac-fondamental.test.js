@@ -312,6 +312,8 @@ const MUTATIONS = [
   ['couverture 2 pile comptée sous 2', s => rep(s, 'STOCK_INTEREST_COVERAGE_STRONG - 1e-9', 'STOCK_INTEREST_COVERAGE_STRONG + 1e-9'), ['couverture-hypothèque seule']],
   ['couverture sans réintégrer les intérêts', s => rep(s, '(is.netIncome + interestExpense)/interestExpense', 'is.netIncome/interestExpense'), ['couverture-hypothèque seule']],
   ['cube vert du salaire de la case Départ remis', s => rep(s, '    // Section 321 (lot A) : plus de cube vert (voir plus haut).\n', "    injectStockCube(co, 'green', 1, 2);\n"), ['depart']],
+  // Section 321 (lot B, retouche de la revue) : la branche « avance remboursée » de la case Départ avait sa règle sans version cassée.
+  ['cube vert de l’avance remboursée remis', s => rep(s, '    entries = [];\n    log(`${co.name} passe par GO — rembourse une avance', "    entries = []; injectStockCube(co, 'green', 1, 2);\n    log(`${co.name} passe par GO — rembourse une avance"), ['depart']],
   ['grosse marge des Croissance à 3 à 9', s => rep(s, "injectStockCube(co, 'green', 5, 9)", "injectStockCube(co, 'green', 3, 9)"), ['inchange']],
   ['encaisse négative oubliée', s => rep(s, 'if(bsThis && bsThis.cash<0){', 'if(false){'), ['inchange']],
 ];

@@ -2349,3 +2349,76 @@ partie… », message si elle échoue) ; le bouton de secours « Lancer les dés
 plusieurs cases », la franchise tapée n'est retenue qu'à la signature et les cases restent cochées ; « Vous êtes » ne
 change pas pendant un enregistrement ; les fiches de l'onglet Produits restent ouvertes. Cahiers à relire si on les
 met à jour : cahier 0 (création, tour de jeu) et cahier 7 (assurance). Les PDF ne sont pas modifiés par cette section.
+
+## 320. Dividendes et sac fondamental : plus de séquence de dividendes, seul un dividende annoncé au-delà de 80 % du bénéfice ajoute des rouges, jauge du récurrent limitée à un changement par semestre — 2026-11-16
+
+Contexte : l'utilisateur a demandé si le bloc « Séquence de dividendes (bonus vert — voir dividendStreak) » du menu de
+départ était toujours d'actualité. Il l'était : la séquence alimentait le sac fondamental (Dividendes et GARP), à côté
+des règles du sac type. Décisions, verbatim : « Je pense qu'il ne devrait pas avoir de séquence dans le sac
+fondamental. Compagnies dividendes on garde seulement les impacts sur le sac TYPE. Pour le sac fondamentale toutes les
+compagnies = Aucun impact dans le sac fondamental, SAUF si un dividende non récurrent (Annoncer un dividende) > Que les
+bénéfices = Ajoute de cubes rouges selon la gravité. » ; « selon le dépassement "Le ratio de distribution" le but éviter
+qu'une compagnie en fin de partie verse des dividendes non raisonnable puisque la fin approche, commencer à pénalisé à
+80% (Seulement pour l'annoncer pas le récurrent) » ; « Seul les dividendes annoncer ont des effets dans le sac
+fondamentale. Donc une compagnie dividende serait pénalisé si elle verse un dividence additionnel annoncer et que
+l'ensemble des dividendes annoncer + récurrent >80% de distribution mais il doit avoir un annoncer pour déclencher le
+tout. » ; pour la jauge du récurrent : « Oui, un par semestre » ; et « Ne change pas l'aide mémoire et les PDF pour le
+moment […] juste le code ». Chaque changement du code porte le commentaire « Section 320 ».
+
+1. **Séquence de dividendes retirée** (`advanceGameClock`, clôture de semestre) — plus aucune injection liée aux
+   dividendes dans le sac fondamental à la clôture, pour les quatre types : ni la série verte des Dividendes et GARP
+   (1 à 2 verts, plus 1 par palier, jusqu'à 6 à 7), ni les rouges de série brisée, ni les 1 à 2 verts des Croissance et
+   Momentum. Compteurs `dividendStreak`, `dividendLossStreak`, `badDividendStreak` abandonnés ; réglages
+   `dividendPayoutRatioMin`, `dividendPayoutRatioFull`, `dividendLossPauseMax` retirés du menu de départ, de
+   `DEFAULT_SETTINGS`, de `migrateState` et de la validation. Une partie enregistrée qui les porte encore se charge et
+   se joue : ils sont ignorés. Les règles du sac TYPE des Dividendes sont inchangées (jauge du récurrent, 20 rouges sans
+   versement récurrent, 5 cubes rougis au-delà du bénéfice : sections 306 et 315).
+2. **Dividende annoncé : ratio de distribution** (`announcedDividendPayoutPenalty`, fonction pure partagée par l'aperçu
+   et par l'annonce ; `applyAnnouncedDividendPayoutPenalty`) — à chaque annonce, pour les quatre types : distribué =
+   annonces du semestre en cours (celle-ci comprise) + dividende récurrent du semestre pour une Dividendes, le tout hors
+   part de la banque ; ratio = distribué ÷ bénéfice net du dernier semestre clos. Jusqu'à 80 % : rien ; de 80 à 100 % :
+   1 à 2 rouges au sac fondamental ; de 100 à 150 % : 3 à 5 ; au-delà, ou bénéfice nul ou négatif : 6 à 8 (bornes dans
+   le palier du dessous). Cumul par semestre (`dividendPenaltySemesterIdx`, `dividendPenaltyTier`,
+   `dividendPenaltyRedAdded`, `dividendPenaltyRefNetIncome`) : c'est le palier du cumul qui compte, une annonce qui le
+   relève n'ajoute que la différence ; découper un dividende ne change pas le total. Le récurrent seul ne déclenche
+   jamais rien. Remplace l'ancienne règle « mal perçu » graduée par répétition (0 à 1 rouge, puis 3 à 5 et plus).
+   *Exemple (vu à l'écran)* : bénéfice 1 M$, banque à 70 %, récurrent 0,3 M$ (0,09 hors banque) ; annonce de 2,5 M$ :
+   84 %, 1 à 2 rouges ; annonce de 4 M$ : 129 %, 3 rouges ajoutés ; seconde annonce de 2,5 M$ : 204 %, 3 à 5 de plus
+   (6 à 8 au total).
+3. **Pas de contournement par le récurrent** (retouche de la revue) — le ratio est rejugé à la clôture du semestre sur
+   ce qui a réellement été versé (`closeAnnouncedDividendPayoutPenalty`, `dividendNetPaidInSemester`, même bénéfice de
+   référence, seulement s'il y a eu une annonce), et dès que le récurrent est modifié après une annonce du semestre
+   (`modalDividendRecurrentSettings`, avertissement affiché avant de confirmer). Avant : décocher le versement
+   automatique, annoncer, recocher donnait 140 % versés sans aucun rouge.
+4. **Jauge du récurrent : un changement de niveau par semestre** (décision de l'utilisateur ;
+   `dividendRecurrentChangedSemesterIdx`) — une seconde confirmation à un palier autre que « inchangé » dans le même
+   semestre est refusée ; la fenêtre le dit à l'ouverture et désactive le curseur ; la case du versement automatique
+   reste libre ; une réactivation après suspension compte comme le changement du semestre. Avant : trois hausses au
+   palier 7 multipliaient le récurrent par 8 (4,8 M$ versés pour 1 M$ de bénéfice) sans rouge au sac fondamental.
+5. **Bénéfice de référence d'une jeune entreprise** — pendant le premier semestre d'existence de l'entreprise (ou du
+   grand livre), la référence est le semestre en cours, comme au semestre 0. Avant : une entreprise fondée en cours de
+   partie était jugée sur un semestre où elle n'existait pas (bénéfice 0, donc 6 à 8 rouges pour tout montant).
+6. **Fenêtre « Annoncer un dividende »** — une ligne explique les paliers ; un aperçu mis à jour pendant la saisie donne
+   le ratio après l'annonce et son coût, en rouge au-delà de 80 % ; si le semestre a changé ou si le palier appliqué
+   serait plus haut que celui affiché, rien n'est fait et le joueur reconfirme. Texte corrigé : le versement a lieu à
+   la prochaine clôture de semestre (et non « le semestre suivant »).
+7. **Cote de crédit** (badge affiché, hors calcul) — elle lisait `dividendLossStreak` ; elle relit maintenant le même
+   fait dans les états (`dividendLossSemesterCount` : semestres clos consécutifs avec dividende versé sans bénéfice).
+   Effet de bord : une Croissance ou une Momentum qui verse un dividende en perdant de l'argent voit sa cote baisser.
+8. **Partie chargée en plein semestre** — les annonces faites sous l'ancienne règle ne sont pas rejugées : ce
+   semestre-là est marqué comme déjà jugé (`migrateState`).
+
+**Limites connues** : chaque semestre est jugé seul (une annonce au dernier lancer d'un semestre et une autre au
+premier lancer du suivant sont comptées séparément) ; la pénalité est plafonnée à 6 à 8 rouges, quel que soit le
+dépassement ; le cours ne baisse pas du montant du dividende au versement. Une refonte plus large du sac fondamental
+(double comptage des bons semestres, équité, case Départ, couverture des intérêts) a été proposée à l'utilisateur et
+reste à décider.
+
+**Documents joueurs NON mis à jour, à la demande de l'utilisateur** : aide-mémoire (trois lignes : « Un dividende versé
+au-dessus du seuil de distribution », « Un dividende annoncé sur un semestre déficitaire, ou au-delà de son bénéfice »,
+ligne « Dividende annoncé » de la fiche 6), cahier 6 (p. 5 et 13–14, série de dividendes) et cahier 7 (p. 25).
+
+**Tests** : `tests/section320-dividendes.test.js` (18 scénarios, 89 vérifications, contre-épreuves sur l'ancien code et
+15 versions cassées exprès attrapées) ; `tests/section317a-creation.test.js` perd deux refus de réglages disparus.
+Revue du lot par un réviseur (2 sérieux corrigés : points 3 et 5 ; la faille du point 4 tranchée par l'utilisateur).
+Vérifié à l'écran en mode local : menu de départ, aperçu et annonce, avertissement et verrou de la jauge.

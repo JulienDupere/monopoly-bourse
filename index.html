@@ -22181,8 +22181,8 @@ function modalDividendRecurrentSettings(){
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><input type="checkbox" id="mDivAutoPayChk" ${myCo.dividendAutoPay?'checked':''}> Verser automatiquement chaque semestre</label>
     <label>Niveau (<span id="mDivTierLabel">${esc(tierLabel(3))}</span>)</label>
     <input type="range" id="mDivTier" min="1" max="7" step="1" value="3" style="width:100%;"${levelLocked?' disabled':''}>
-    ${hasAnnouncementThisSemester ? `<div class="small" id="mDivPayoutWarning" style="margin-top:8px;"></div>` : ''}<!-- Section 320 — retouche de la revue (constat 1b) -->
     <div class="small" style="display:flex;justify-content:space-between;margin-top:2px;"><span>◀ Diminuer</span><span>Augmenter ▶</span></div>
+    ${hasAnnouncementThisSemester ? `<div class="small" id="mDivPayoutWarning" style="margin-top:8px;"></div>` : ''}<!-- Section 320 — retouche de la revue (constat 1b) -->
     <div class="small" style="margin-top:10px;padding:8px 10px;background:var(--bg-alt,rgba(127,127,127,0.08));border-radius:6px;">
       Dividende par part: <b id="mDivPerShare">${fmtPrice(baseBenchmark)}</b>/part<br>
       Coût total par semestre (hors part de la banque, rendue à la trésorerie): <b id="mDivTotalCost">${fmt(baseBenchmark*dividendPaidShares)}</b>

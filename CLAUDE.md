@@ -77,6 +77,9 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 - Rendu : `render()` → `renderTab()` → `renderPortefeuille`, `renderEntreprise`, `renderDevenirAssureur`,
   `renderProduitsMatrice`, `renderAdmin`… ; liste des onglets dans `visibleTabs()`.
 - Tour de jeu : `rollDiceAndMove`, `performRollForAllCompanies`, `advanceGameClock`, `processYearEnd`.
+- Dividendes (section 320) : plus de séquence dans le sac fondamental ; `announcedDividendPayoutPenalty` (ratio de
+  distribution d'un dividende annoncé, rouges à partir de 80 %), `closeAnnouncedDividendPayoutPenalty` (rejugé à la
+  clôture), jauge du récurrent limitée à un changement par semestre. Aide-mémoire et cahiers 6 et 7 pas encore à jour.
 - Marché : `executeShareTrade`, `placeBid` / `placeAsk` / `checkPendingOrders`, `drawStockCubes`, options
   (`blackScholesPremium`, `openOptionPosition`…), `enforceMarginCalls`.
 
@@ -96,8 +99,8 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 
 ## Tests
 
-- `node tests/run-all.js` lance tous les `tests/*.test.js` (81 fichiers, 3 333 vérifications et 53 cas
-  multi-appareils au 2026-11-11, après la section 319). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
+- `node tests/run-all.js` lance tous les `tests/*.test.js` (82 fichiers, 3 420 vérifications et 53 cas
+  multi-appareils au 2026-11-16, après la section 320). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
   `tests/helpers/fake-firebase.js`, mini-DOM `tests/helpers/fake-dom.js` ; `SYNC_SEEDS=40` pour un passage long). Il charge
   tout le script d'`index.html`, donc une erreur de syntaxe le fait échouer. Tout doit passer avant un push.
 - Syntaxe seule : `node -e "new (require('vm').Script)(require('./tests/helpers/engine').engineSource())"`.

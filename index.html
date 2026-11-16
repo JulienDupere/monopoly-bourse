@@ -1897,7 +1897,20 @@ function migrateState(s){
     
     // Section 320 — dividendStreak, dividendLossStreak et badDividendStreak ne servent plus (ignorés s'ils existent).
     // Mémoire de la pénalité des dividendes annoncés (announcedDividendPayoutPenalty) : semestre, palier, rouges ajoutés.
-    if(co.dividendPenaltySemesterIdx===undefined) co.dividendPenaltySemesterIdx = -1;
+    if(co.dividendPenaltySemesterIdx===undefined){
+      co.dividendPenaltySemesterIdx = -1;
+      // Section 320 — retouche de la revue (constat 4) : partie chargée en plein semestre avec une annonce faite sous
+      // l'ancienne règle (« mal perçu ») : ce semestre est considéré comme déjà jugé (palier maximal, aucun rouge de
+      // plus), pour ne pas pénaliser deux fois ; les semestres suivants suivent la nouvelle règle.
+      const curSemMig = Math.floor(((s.gameClock && s.gameClock.rollCount)||0)/3);
+      if((s.dividendAnnouncements||[]).some(a=>a.companyId===co.id && Math.floor((a.announcedAtRoll||0)/3)===curSemMig)){
+        co.dividendPenaltySemesterIdx = curSemMig;
+        co.dividendPenaltyTier = DIVIDEND_PAYOUT_PENALTY_TIERS.length-1;
+        co.dividendPenaltyRedAdded = 0;
+      }
+    }
+    if(co.dividendPenaltyRefNetIncome===undefined) co.dividendPenaltyRefNetIncome = null; // Section 320 — retouche de la revue (constat 1a)
+    if(co.dividendRecurrentChangedSemesterIdx===undefined) co.dividendRecurrentChangedSemesterIdx = -1; // Section 320 — un changement de niveau du récurrent par semestre
     if(co.dividendPenaltyTier===undefined) co.dividendPenaltyTier = 0;
     if(co.dividendPenaltyRedAdded===undefined) co.dividendPenaltyRedAdded = 0;
     
@@ -3296,6 +3309,8 @@ async function createCompany(playerId, name, description, type, dividendPromised
   company.dividendPenaltySemesterIdx = -1;
   company.dividendPenaltyTier = 0;
   company.dividendPenaltyRedAdded = 0;
+  company.dividendPenaltyRefNetIncome = null; // Section 320 — retouche de la revue (constat 1a) : bénéfice de référence mémorisé
+  company.dividendRecurrentChangedSemesterIdx = -1; // Section 320 — semestre du dernier changement de niveau du récurrent
   
   
   
@@ -10603,6 +10618,9 @@ function advanceGameClock(){
       // Retirés : la série verte (dividendStreak) des Dividendes et GARP, ses rouges de série brisée, la pause des
       // semestres déficitaires (dividendLossStreak) et les 1 à 2 verts des Croissance et Momentum. Seul un dividende
       // ANNONCÉ agit sur ce sac, à l'annonce (announcedDividendPayoutPenalty). Les règles du sac TYPE ci-dessous restent.
+      // Section 320 — retouche de la revue (constat 1a) : si une annonce a été faite dans le semestre qui se ferme, ratio
+      // recalculé sur les dividendes réellement versés (les versements sont faits plus haut), avant les tirages du lancer.
+      closeAnnouncedDividendPayoutPenalty(co, semesterBefore);
       // Section 315 — bogue 25 (décision de Julien) : le sac type d'une Dividendes ne réagit QU'AU dividende récurrent.
       // S'il n'a pas été versé ce semestre (auto-versement décoché, ou bloqué par un arriérage), sac type à 20 rouges,
       // même si un dividende manuel a été versé. Avant : un dividende manuel de 1 $ évitait le choc.
@@ -11073,6 +11091,34 @@ function dividendRealShareFraction(realShares, issuedShares){
   if(!(issuedShares>0)) return realShares>0 ? 1 : 0;
   return Math.max(0, Math.min(1, realShares/issuedShares));
 }
+// Section 320 — retouche de la revue (constat 2) : semestre de référence du bénéfice = dernier semestre CLOS, sauf pendant
+// le premier semestre d'existence de l'entreprise (ou du grand livre), où c'est le semestre en cours, comme au semestre 0.
+// Avant : une entreprise fondée en cours de partie était jugée sur un semestre où elle n'existait pas (bénéfice 0).
+function dividendPayoutRefSemesterIdx(co, curSemesterIdx){
+  const firstSem = Math.max(Math.floor((co.createdAtRoll||0)/3), Math.floor((state.finLedgerStartedAtRoll||0)/3));
+  return curSemesterIdx>firstSem ? curSemesterIdx-1 : curSemesterIdx;
+}
+// Section 320 — palier (indice dans DIVIDEND_PAYOUT_PENALTY_TIERS) d'un montant distribué rapporté au bénéfice de
+// référence. Rend aussi le ratio (null sans bénéfice).
+function dividendPayoutTierFor(distributed, netIncome){
+  const noProfit = !(netIncome>1e-9);
+  const ratio = noProfit ? null : distributed/netIncome;
+  const tier = noProfit ? DIVIDEND_PAYOUT_PENALTY_TIERS.length-1 : DIVIDEND_PAYOUT_PENALTY_TIERS.findIndex(t=>ratio <= t.maxRatio + 1e-9);
+  return {noProfit, ratio, tier};
+}
+// Section 320 — étape du cumul : palier déjà atteint et rouges déjà ajoutés pour le semestre `semesterIdx`, et ce que
+// coûterait le palier `tier` (seule la différence avec les rouges déjà ajoutés).
+function dividendPayoutPenaltyStep(co, semesterIdx, tier){
+  const sameSemester = co.dividendPenaltySemesterIdx===semesterIdx;
+  const prevTier = sameSemester ? (co.dividendPenaltyTier||0) : 0;
+  const prevRedAdded = sameSemester ? (co.dividendPenaltyRedAdded||0) : 0;
+  const raises = tier > prevTier;
+  const t = DIVIDEND_PAYOUT_PENALTY_TIERS[tier];
+  return {
+    curSemesterIdx: semesterIdx, tier, qtyMin:t.min, qtyMax:t.max, prevTier, prevRedAdded, raises,
+    extraMin: raises ? Math.max(0, t.min-prevRedAdded) : 0, extraMax: raises ? Math.max(0, t.max-prevRedAdded) : 0,
+  };
+}
 // Section 320 — fonction PURE (ne modifie rien) : ratio de distribution du semestre en cours si l'entreprise annonce
 // `amount` maintenant, palier atteint et rouges à ajouter. Sert à la fois à l'aperçu de la fenêtre « Annoncer un
 // dividende » et à l'annonce elle-même (même calcul). Distribué = annonces du semestre en cours (celle-ci comprise),
@@ -11080,9 +11126,11 @@ function dividendRealShareFraction(realShares, issuedShares){
 // part de la banque. Le récurrent seul ne déclenche jamais rien : sans montant annoncé, aucun rouge.
 // Cumul : c'est le palier du cumul du semestre qui compte (co.dividendPenaltySemesterIdx / Tier / RedAdded) ; une
 // annonce qui relève le palier n'ajoute que la différence avec les rouges déjà ajoutés ce semestre.
-function announcedDividendPayoutPenalty(co, amount){
+// Section 320 — retouche de la revue (constat 1b) : opts.recurrentPerShare remplace le récurrent de l'entreprise (0 =
+// case décochée), pour l'aperçu de la fenêtre du dividende récurrent.
+function announcedDividendPayoutPenalty(co, amount, opts){
   const curSemesterIdx = Math.floor(state.gameClock.rollCount/3);
-  const refSemesterIdx = curSemesterIdx>0 ? curSemesterIdx-1 : curSemesterIdx;
+  const refSemesterIdx = dividendPayoutRefSemesterIdx(co, curSemesterIdx); // Section 320 — retouche de la revue (constat 2)
   const netIncome = incomeStatementFor(co.id, refSemesterIdx).netIncome;
   const issued = co.sharesIssued||0;
   const realShares = co.shareholders.filter(s=>s.playerId!=='BANK' && s.shares>1e-9).reduce((t,s)=>t+s.shares, 0);
@@ -11094,30 +11142,23 @@ function announcedDividendPayoutPenalty(co, amount){
       const recShares = (a.recordHolders||[]).reduce((u,h)=>u+(h.shares||0), 0);
       return t + (a.amount||0) * dividendRealShareFraction(recShares, a.totalSharesAtAnnouncement || issued);
     }, 0);
-  const recurrentPart = (co.type==='dividende' && co.dividendAutoPay && co.dividendBenchmarkPerShare>0)
-    ? co.dividendBenchmarkPerShare * Math.min(issued, realShares) : 0;
+  const recurrentPerShare = (opts && opts.recurrentPerShare!==undefined)
+    ? Math.max(0, Number(opts.recurrentPerShare)||0)
+    : ((co.dividendAutoPay && co.dividendBenchmarkPerShare>0) ? co.dividendBenchmarkPerShare : 0);
+  const recurrentPart = co.type==='dividende' ? recurrentPerShare * Math.min(issued, realShares) : 0;
   const distributed = announcedPart + newPart + recurrentPart;
-  const noProfit = !(netIncome>1e-9);
-  const ratio = noProfit ? null : distributed/netIncome;
-  let tier = 0;
-  if(newAmount>1e-9 || announcedPart>1e-9){
-    if(noProfit) tier = DIVIDEND_PAYOUT_PENALTY_TIERS.length-1;
-    else tier = DIVIDEND_PAYOUT_PENALTY_TIERS.findIndex(t=>ratio <= t.maxRatio + 1e-9);
-  }
-  const sameSemester = co.dividendPenaltySemesterIdx===curSemesterIdx;
-  const prevTier = sameSemester ? (co.dividendPenaltyTier||0) : 0;
-  const prevRedAdded = sameSemester ? (co.dividendPenaltyRedAdded||0) : 0;
-  const raises = tier > prevTier;
-  const t = DIVIDEND_PAYOUT_PENALTY_TIERS[tier];
-  return {
-    curSemesterIdx, refSemesterIdx, netIncome, noProfit, ratio, distributed, newPart, announcedPart, recurrentPart,
-    tier, qtyMin:t.min, qtyMax:t.max, prevTier, prevRedAdded, raises,
-    extraMin: raises ? Math.max(0, t.min-prevRedAdded) : 0, extraMax: raises ? Math.max(0, t.max-prevRedAdded) : 0,
-  };
+  const hasAnnouncement = newAmount>1e-9 || announcedPart>1e-9;
+  const judged = dividendPayoutTierFor(distributed, netIncome);
+  const tier = hasAnnouncement ? judged.tier : 0;
+  return Object.assign({
+    refSemesterIdx, netIncome, noProfit:judged.noProfit, ratio:judged.ratio, distributed, newPart, announcedPart, recurrentPart, hasAnnouncement,
+  }, dividendPayoutPenaltyStep(co, curSemesterIdx, tier));
 }
-// Section 320 — applique le résultat de announcedDividendPayoutPenalty au moment de l'annonce : tire la quantité du
-// nouveau palier, n'ajoute que la différence avec les rouges déjà ajoutés ce semestre (jamais négatif), mémorise.
-// Rend le nombre de rouges ajoutés.
+// Section 320 — applique le résultat de announcedDividendPayoutPenalty (ou de la clôture) : tire la quantité du nouveau
+// palier, n'ajoute que la différence avec les rouges déjà ajoutés ce semestre (jamais négatif), mémorise. Rend le
+// nombre de rouges ajoutés.
+// Section 320 — retouche de la revue (constat 1a) : mémorise aussi le bénéfice de référence (dividendPenaltyRefNetIncome)
+// pour le recalcul de la clôture, sauf quand info.keepRef (le recalcul de la clôture lui-même).
 function applyAnnouncedDividendPayoutPenalty(co, info){
   let added = 0;
   if(info.raises){
@@ -11128,6 +11169,32 @@ function applyAnnouncedDividendPayoutPenalty(co, info){
   co.dividendPenaltySemesterIdx = info.curSemesterIdx;
   co.dividendPenaltyTier = Math.max(info.prevTier, info.tier);
   co.dividendPenaltyRedAdded = info.prevRedAdded + added;
+  if(!info.keepRef && typeof info.netIncome==='number') co.dividendPenaltyRefNetIncome = info.netIncome;
+  return added;
+}
+// Section 320 — retouche de la revue (constat 1a) : à la clôture du semestre `semesterIdx`, APRÈS les versements (annonces
+// échues et récurrent), pour une entreprise qui a eu au moins une annonce dans ce semestre (dividendPenaltySemesterIdx) :
+// ratio recalculé sur ce qui a RÉELLEMENT été versé aux actionnaires hors part de la banque (dividendNetPaidInSemester),
+// rapporté au même bénéfice de référence qu'à l'annonce (dividendPenaltyRefNetIncome). Si le palier monte, seule la
+// différence de rouges est ajoutée ; jamais de baisse ni de remboursement. Ferme la porte au récurrent décoché pendant
+// l'annonce puis recoché, au récurrent relevé par la jauge, aux parts rachetées à la banque après l'annonce.
+function closeAnnouncedDividendPayoutPenalty(co, semesterIdx){
+  if(co.dividendPenaltySemesterIdx!==semesterIdx) return 0;
+  const refNetIncome = (typeof co.dividendPenaltyRefNetIncome==='number')
+    ? co.dividendPenaltyRefNetIncome
+    : incomeStatementFor(co.id, dividendPayoutRefSemesterIdx(co, semesterIdx)).netIncome;
+  const paid = dividendNetPaidInSemester(co.id, semesterIdx);
+  if(!(paid>1e-9)) return 0;
+  const judged = dividendPayoutTierFor(paid, refNetIncome);
+  const info = Object.assign({keepRef:true}, dividendPayoutPenaltyStep(co, semesterIdx, judged.tier));
+  const added = applyAnnouncedDividendPayoutPenalty(co, info);
+  if(added>0){
+    const ratioTxt = dividendPayoutRatioText({noProfit:judged.noProfit, ratio:judged.ratio});
+    const why = judged.noProfit
+      ? `les dividendes versés (${fmt(paid)}, hors part de la banque) l'ont été sans bénéfice de référence (${fmt(refNetIncome)})`
+      : `les dividendes versés atteignent ${ratioTxt} du bénéfice de référence (${fmt(paid)} sur ${fmt(refNetIncome)}, hors part de la banque), plus que ce qui était compté à l'annonce`;
+    log(`⚠️ ${co.name}: à la clôture du semestre, ${why} : ${added} cube${added>1?'s':''} rouge${added>1?'s':''} de plus au sac fondamental (${co.dividendPenaltyRedAdded} au total ce semestre).`);
+  }
   return added;
 }
 // Section 320 — ratio en texte (« 92 % », « 80,5 % »), ou la raison quand il n'y a pas de bénéfice.
@@ -21886,10 +21953,13 @@ async function confirmInsuranceBundle(companyId, keys, claimMode, term, deductib
 
 // Section 320 — ligne d'aperçu de la fenêtre « Annoncer un dividende » : ratio de distribution après cette annonce et
 // ce qu'elle coûtera au sac fondamental ; en rouge dès que le seuil de 80 % est dépassé.
-function dividendPayoutPreviewHtml(co, amount){
-  const info = announcedDividendPayoutPenalty(co, amount);
+// Section 320 — retouche de la revue : rend aussi `info` (semestre et palier affichés, pour refuser une annonce dont
+// l'aperçu est périmé, constat 3) ; opts.recurrentPerShare et opts.lead servent à la fenêtre du récurrent (constat 1b).
+function dividendPayoutPreview(co, amount, opts){
+  opts = opts || {};
+  const info = announcedDividendPayoutPenalty(co, amount, opts);
   const over = info.tier>0;
-  const refLabel = info.refSemesterIdx===info.curSemesterIdx ? 'du semestre en cours (aucun semestre clos encore)' : 'du dernier semestre clos';
+  const refLabel = info.refSemesterIdx===info.curSemesterIdx ? 'du semestre en cours (premier semestre de l’entreprise)' : 'du dernier semestre clos';
   const ratioHtml = info.noProfit
     ? `<b>bénéfice ${refLabel} nul ou négatif</b> (${fmt(info.netIncome)})`
     : `<b>${dividendPayoutRatioText(info)}</b> du bénéfice ${refLabel} (${fmt(info.netIncome)})`;
@@ -21900,7 +21970,20 @@ function dividendPayoutPreviewHtml(co, amount){
   else if(info.prevRedAdded>0) cost = `<b>${range(info.extraMin, info.extraMax)} cube${info.extraMax>1?'s':''} rouge${info.extraMax>1?'s':''} de plus</b> au sac fondamental (${range(info.qtyMin, info.qtyMax)} au total ce semestre, ${info.prevRedAdded} déjà ajouté${info.prevRedAdded>1?'s':''})`;
   else cost = `<b>${range(info.qtyMin, info.qtyMax)} cubes rouges</b> au sac fondamental`;
   const color = over ? 'var(--brick,#C0392B)' : 'var(--muted)';
-  return `<span style="color:${color};" data-payout-tier="${info.tier}">${over?'⚠️ ':''}Ratio de distribution après cette annonce : ${ratioHtml} — coût : ${cost}.</span>`;
+  const lead = opts.lead || 'Ratio de distribution après cette annonce';
+  return {info, html:`<span style="color:${color};" data-payout-tier="${info.tier}">${over?'⚠️ ':''}${lead} : ${ratioHtml} — coût : ${cost}.</span>`};
+}
+function dividendPayoutPreviewHtml(co, amount, opts){
+  return dividendPayoutPreview(co, amount, opts).html;
+}
+// Section 320 — ligne de journal quand une annonce (ou un changement du récurrent après une annonce) ajoute des rouges.
+function logAnnouncedDividendPayoutPenalty(co, info, added, cause){
+  if(!(added>0)) return;
+  const semesterRefLabel = info.refSemesterIdx===info.curSemesterIdx ? 'du semestre en cours (premier semestre de l’entreprise)' : 'du dernier semestre clos';
+  const why = info.noProfit
+    ? `le bénéfice ${semesterRefLabel} est nul ou négatif (${fmt(info.netIncome)})`
+    : `les dividendes du semestre atteignent ${dividendPayoutRatioText(info)} du bénéfice ${semesterRefLabel} (${fmt(info.netIncome)}), au-delà de 80 %`;
+  log(`⚠️ ${co.name}: ${cause||'dividende jugé trop généreux par le marché'} — ${why} : ${added} cube${added>1?'s':''} rouge${added>1?'s':''} ajouté${added>1?'s':''} au sac fondamental${info.prevRedAdded>0?` (${info.prevRedAdded} déjà ajouté${info.prevRedAdded>1?'s':''} plus tôt ce semestre)`:''}.`);
 }
 function modalAnnounceDividend(){
   const myCo = myCompany();
@@ -21954,16 +22037,26 @@ function modalAnnounceDividend(){
   document.getElementById('mCancel').addEventListener('click', closeModal);
   const companyId = myCo.id;
   // Section 320 — aperçu, mis à jour pendant la saisie : même calcul que l'annonce (announcedDividendPayoutPenalty).
+  // Section 320 — retouche de la revue (constat 3) : `shownPayout` garde ce que l'aperçu affiche (montant, semestre,
+  // palier) ; l'action le reçoit et refuse si le semestre a changé ou si le palier appliqué serait plus haut.
+  let shownPayout = null;
   const refreshPayoutPreview = ()=>{
     const el = document.getElementById('mDividendPayoutPreview');
     const co = companyById(companyId);
     if(!el || !co) return;
-    el.innerHTML = dividendPayoutPreviewHtml(co, parseFloat(document.getElementById('mDividendAmount').value)||0);
+    const amountNow = parseFloat(document.getElementById('mDividendAmount').value)||0;
+    const pv = dividendPayoutPreview(co, amountNow);
+    el.innerHTML = pv.html;
+    shownPayout = {amount:amountNow, semesterIdx:pv.info.curSemesterIdx, tier:pv.info.tier};
   };
   document.getElementById('mDividendAmount').addEventListener('input', refreshPayoutPreview);
   refreshPayoutPreview();
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const amount = parseFloat(document.getElementById('mDividendAmount').value)||0;
+    // Section 320 — retouche de la revue (constat 3) : aperçu vu par le joueur pour CE montant (sinon pas de contrôle :
+    // un montant posé sans saisie, sans aperçu affiché).
+    const shown = (shownPayout && Math.abs(shownPayout.amount-amount)<=1e-12) ? shownPayout : null;
+    let stalePayout = false;
     
     
     
@@ -21999,6 +22092,12 @@ function modalAnnounceDividend(){
       
       // Section 320 — ratio de distribution calculé AVANT toute écriture, par la même fonction que l'aperçu.
       const payoutInfo = announcedDividendPayoutPenalty(co, amount);
+      // Section 320 — retouche de la revue (constat 3) : semestre changé ou palier plus haut que l'aperçu affiché
+      // (clôture faite par un autre appareil pendant que la fenêtre était ouverte) : rien n'est fait, le joueur reconfirme.
+      if(shown && (payoutInfo.curSemesterIdx!==shown.semesterIdx || payoutInfo.tier>shown.tier)){
+        stalePayout = true;
+        return {ok:false, error:'Le ratio de distribution a changé depuis l’affichage de l’aperçu (nouveau semestre ou nouvelles annonces) — rien n’a été fait. Vérifiez le nouvel aperçu, puis cliquez à nouveau sur « Annoncer ».'};
+      }
       
       
       
@@ -22032,20 +22131,20 @@ function modalAnnounceDividend(){
       // Section 320 — remplace la règle « dividende mal perçu » (badDividendStreak) : rouges au sac fondamental selon le
       // palier du ratio de distribution cumulé du semestre (announcedDividendPayoutPenalty).
       const redAdded = applyAnnouncedDividendPayoutPenalty(co, payoutInfo);
-      if(redAdded>0){
-        const semesterRefLabel = payoutInfo.refSemesterIdx===payoutInfo.curSemesterIdx ? 'du semestre en cours (aucun semestre clos encore)' : 'du dernier semestre clos';
-        const why = payoutInfo.noProfit
-          ? `le bénéfice ${semesterRefLabel} est nul ou négatif (${fmt(payoutInfo.netIncome)})`
-          : `les dividendes du semestre atteignent ${dividendPayoutRatioText(payoutInfo)} du bénéfice ${semesterRefLabel} (${fmt(payoutInfo.netIncome)}), au-delà de 80 %`;
-        log(`⚠️ ${co.name}: dividende jugé trop généreux par le marché — ${why} : ${redAdded} cube${redAdded>1?'s':''} rouge${redAdded>1?'s':''} ajouté${redAdded>1?'s':''} au sac fondamental${payoutInfo.prevRedAdded>0?` (${payoutInfo.prevRedAdded} déjà ajouté${payoutInfo.prevRedAdded>1?'s':''} plus tôt ce semestre)`:''}.`);
-      }
+      logAnnouncedDividendPayoutPenalty(co, payoutInfo, redAdded); // Section 320 — retouche de la revue : texte commun
       return {ok:true, entries, coName:co.name};
     });
+    if(stalePayout) refreshPayoutPreview(); // Section 320 — retouche de la revue (constat 3) : nouvel aperçu à reconfirmer
     if(res && res.ok && res.entries) showTransactionPopup(`Dividende annoncé — ${res.coName}`, res.entries, 'montant immobilisé jusqu\'au versement, il sera distribué aux actionnaires : ce n\'est pas un écart'); // Section 317 — bogue 84 : plus d'« écart d'arrondi » pour tout le dividende
   });
 }
 
 
+// Section 320 — décision de Julien (« Oui, un par semestre ») : message du refus d'un 2e changement de niveau.
+function dividendRecurrentLockedMessage(){
+  const n = rollsUntilSemesterEnd();
+  return `Le dividende récurrent a déjà été modifié ce semestre : prochain changement de niveau possible au semestre suivant (dans ${n} lancer${n>1?'s':''}).`;
+}
 function modalDividendRecurrentSettings(){
   const myCo = myCompany();
   if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
@@ -22067,13 +22166,22 @@ function modalDividendRecurrentSettings(){
   const tierLabel = t=> ['1 — forte baisse','2 — baisse','3 — inchangé','4 — hausse','5 — forte hausse','6 — très forte hausse','7 — hausse maximale'][t-1];
   // Section 306 — avertissement affiché dans l'aperçu dès qu'un palier de baisse est sélectionné.
   const cutWarningHtml = `⚠️ Une baisse du dividende récurrent remet votre sac type à <b>20 cubes rouges</b>, d'un seul coup, dès la confirmation.`;
+  // Section 320 — décision de Julien (« Oui, un par semestre ») : un seul changement de niveau du récurrent par semestre.
+  const levelLocked = myCo.dividendRecurrentChangedSemesterIdx===Math.floor(state.gameClock.rollCount/3);
+  const levelLockedHtml = levelLocked
+    ? `<div class="small" id="mDivLevelLocked" style="margin-bottom:10px;color:var(--brick,#C0392B);">⚠️ ${esc(dividendRecurrentLockedMessage())} La case ci-dessous reste modifiable.</div>`
+    : '';
+  // Section 320 — retouche de la revue (constat 1b) : une annonce de ce semestre est rejugée dès la confirmation.
+  const hasAnnouncementThisSemester = announcedDividendPayoutPenalty(myCo, 0).hasAnnouncement;
   openModal(`
     <h3>Dividende récurrent — ${esc(myCo.name)}</h3>
     <div class="small" style="margin-bottom:10px;">Versé AUTOMATIQUEMENT chaque semestre, sans action du CEO, tant que la case ci-dessous reste cochée. Déplacez le curseur pour prévisualiser un autre niveau — rien ne change (cubes, benchmark, versement) avant d'appuyer sur Confirmer.</div>
     ${resetNoticeHtml}
+    ${levelLockedHtml}<!-- Section 320 — un changement de niveau par semestre -->
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><input type="checkbox" id="mDivAutoPayChk" ${myCo.dividendAutoPay?'checked':''}> Verser automatiquement chaque semestre</label>
     <label>Niveau (<span id="mDivTierLabel">${esc(tierLabel(3))}</span>)</label>
-    <input type="range" id="mDivTier" min="1" max="7" step="1" value="3" style="width:100%;">
+    <input type="range" id="mDivTier" min="1" max="7" step="1" value="3" style="width:100%;"${levelLocked?' disabled':''}>
+    ${hasAnnouncementThisSemester ? `<div class="small" id="mDivPayoutWarning" style="margin-top:8px;"></div>` : ''}<!-- Section 320 — retouche de la revue (constat 1b) -->
     <div class="small" style="display:flex;justify-content:space-between;margin-top:2px;"><span>◀ Diminuer</span><span>Augmenter ▶</span></div>
     <div class="small" style="margin-top:10px;padding:8px 10px;background:var(--bg-alt,rgba(127,127,127,0.08));border-radius:6px;">
       Dividende par part: <b id="mDivPerShare">${fmtPrice(baseBenchmark)}</b>/part<br>
@@ -22099,8 +22207,23 @@ function modalDividendRecurrentSettings(){
     document.getElementById('mDivTotalCost').textContent = fmt(perShare*dividendPaidShares); // Section 317 — bogue 82
     const cutWarn = document.getElementById('mDivCutWarning');
     if(cutWarn) cutWarn.style.display = tier<3 ? 'block' : 'none';
+    updatePayoutWarning(); // Section 320 — retouche de la revue (constat 1b)
   };
+  // Section 320 — retouche de la revue (constat 1b) : effet du réglage sur le ratio des dividendes de ce semestre,
+  // calculé par la même fonction que l'annonce (récurrent hypothétique ; 0 si la case est décochée).
+  function updatePayoutWarning(){
+    const payoutWarn = document.getElementById('mDivPayoutWarning');
+    const coNow = companyById(companyId);
+    if(!payoutWarn || !coNow || !hasAnnouncementThisSemester) return;
+    const tierNow = parseInt(tierInput.value, 10) || 3;
+    const checked = !!document.getElementById('mDivAutoPayChk').checked;
+    const perShareNow = baseBenchmark * DIVIDEND_RECURRENT_TIER_PCT[tierNow-1];
+    payoutWarn.innerHTML = dividendPayoutPreviewHtml(coNow, 0, {recurrentPerShare: checked ? perShareNow : 0,
+      lead:'Vous avez annoncé un dividende ce semestre : ce réglage est jugé avec lui dès la confirmation, ratio de distribution'});
+  }
   tierInput.addEventListener('input', updatePreview);
+  document.getElementById('mDivAutoPayChk').addEventListener('change', updatePayoutWarning); // Section 320 — retouche de la revue (constat 1b)
+  updatePayoutWarning(); // Section 320 — retouche de la revue (constat 1b) : avertissement visible dès l'ouverture
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const tier = parseInt(tierInput.value, 10);
     const wantsAutoPay = !!document.getElementById('mDivAutoPayChk').checked;
@@ -22113,9 +22236,19 @@ function modalDividendRecurrentSettings(){
       
       
       
-      if(wantsAutoPay && co.dividendRecurrentNeedsReset){
+      // Section 320 — décision de Julien (« Oui, un par semestre ») : un changement de niveau (palier autre que 3) n'est
+      // accepté qu'une fois par semestre, vérifié sur l'état frais. La case reste libre. La réactivation après une
+      // suspension (retour au niveau de fondation) compte comme le changement du semestre ; le palier choisi dans la même
+      // confirmation s'applique à partir du niveau de fondation (une seule confirmation, un seul changement).
+      const curSemIdx = Math.floor(state.gameClock.rollCount/3);
+      const isReactivation = wantsAutoPay && co.dividendRecurrentNeedsReset;
+      if(wantsAutoPay && tier!==3 && co.dividendRecurrentChangedSemesterIdx===curSemIdx){
+        return {ok:false, error:dividendRecurrentLockedMessage()};
+      }
+      if(isReactivation){
         co.dividendBenchmarkPerShare = co.dividendBenchmarkFounding;
         co.dividendRecurrentNeedsReset = false;
+        co.dividendRecurrentChangedSemesterIdx = curSemIdx; // Section 320 — la réactivation est le changement du semestre
       }
       co.dividendAutoPay = wantsAutoPay;
       
@@ -22127,8 +22260,16 @@ function modalDividendRecurrentSettings(){
         const amount = co.dividendBenchmarkPerShare * pct * co.sharesIssued;
         const tierReached = applyDividendGaugeTier(co, amount);
         if(tierReached!==null && tierReached!==3){
+          co.dividendRecurrentChangedSemesterIdx = curSemIdx; // Section 320 — un changement de niveau par semestre
           log(`${co.name}: dividende récurrent ajusté au palier ${tierReached}/7 (nouveau benchmark: ${fmtPrice(co.dividendBenchmarkPerShare)}/part).`);
         }
+      }
+      // Section 320 — retouche de la revue (constat 1b) : s'il y a une annonce ce semestre, le ratio est rejugé tout de
+      // suite avec le nouveau récurrent (case recochée, niveau relevé) : le CEO voit l'effet au moment où il agit.
+      const payoutInfo = announcedDividendPayoutPenalty(co, 0);
+      if(payoutInfo.hasAnnouncement){
+        const redAdded = applyAnnouncedDividendPayoutPenalty(co, payoutInfo);
+        logAnnouncedDividendPayoutPenalty(co, payoutInfo, redAdded, 'dividende récurrent modifié après une annonce de ce semestre');
       }
       return {ok:true};
     });

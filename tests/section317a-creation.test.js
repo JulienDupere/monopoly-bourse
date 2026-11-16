@@ -29,8 +29,7 @@ const nbParties = (eng) => eng.run(`typeof state !== 'undefined' && state && sta
     ['retenue de prêt maximum 150 %', { loanOfferWithholdingPctMax: 1.5 }, /loyers retenus/],
     ['multiple de prêt minimum 0,5', { loanOfferMultipleMin: 0.5 }, /au moins 1/],
     ['multiple de prêt maximum < minimum', { loanOfferMultipleMin: 2, loanOfferMultipleMax: 1.5 }, /au moins égal au minimum/],
-    ['ratios de dividende plancher > plein', { dividendPayoutRatioMin: 0.4, dividendPayoutRatioFull: 0.2 }, /plancher/],
-    ['ratio de dividende à 300 %', { dividendPayoutRatioFull: 3 }, /ratios dividende/],
+    // Section 320 — les deux cas des ratios dividende/bénéfice (plancher > plein, 300 %) sont retirés avec ces réglages.
     ['durée de partie min 5 > max 3', { maxGameYearsMin: 5, maxGameYearsMax: 3 }, /minimale dépasse/],
     ['rachat minimum de la banque à 150 %', { bankMinSellPct: 150 }, /minimum de rachat/],
   ];

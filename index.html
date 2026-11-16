@@ -1148,7 +1148,8 @@ const DEFAULT_SETTINGS = {
   preferredMaxPrincipal: 5,
   stockInitialGreen: 10, stockInitialRed: 10, stockInitialWhite: 8,
   riskFreeRateAnnual: 0.03, bondShortMax: 5, companyCeoStartPct: 0.30,
-  dividendPayoutRatioMin: 0.15, dividendPayoutRatioFull: 0.25, dividendLossPauseMax: 2,
+  // Section 320 — dividendPayoutRatioMin, dividendPayoutRatioFull et dividendLossPauseMax retirés (plus de séquence de
+  // dividendes au sac fondamental) ; une partie enregistrée qui les porte encore les garde, ils sont ignorés.
   
   
   
@@ -1284,8 +1285,7 @@ function migrateState(s){
   
   
   
-  if(s.settings.dividendPayoutRatioMin===undefined) s.settings.dividendPayoutRatioMin = DEFAULT_SETTINGS.dividendPayoutRatioMin;
-  if(s.settings.dividendPayoutRatioFull===undefined) s.settings.dividendPayoutRatioFull = DEFAULT_SETTINGS.dividendPayoutRatioFull;
+  // Section 320 — plus de défauts pour dividendPayoutRatioMin / dividendPayoutRatioFull (réglages retirés).
   
   
   
@@ -1294,7 +1294,7 @@ function migrateState(s){
   
   
   
-  if(s.settings.dividendLossPauseMax===undefined) s.settings.dividendLossPauseMax = DEFAULT_SETTINGS.dividendLossPauseMax;
+  // Section 320 — plus de défaut pour dividendLossPauseMax (réglage retiré).
   
   
   
@@ -1895,10 +1895,13 @@ function migrateState(s){
     
     
     
-    if(co.dividendStreak===undefined) co.dividendStreak = 0;
+    // Section 320 — dividendStreak, dividendLossStreak et badDividendStreak ne servent plus (ignorés s'ils existent).
+    // Mémoire de la pénalité des dividendes annoncés (announcedDividendPayoutPenalty) : semestre, palier, rouges ajoutés.
+    if(co.dividendPenaltySemesterIdx===undefined) co.dividendPenaltySemesterIdx = -1;
+    if(co.dividendPenaltyTier===undefined) co.dividendPenaltyTier = 0;
+    if(co.dividendPenaltyRedAdded===undefined) co.dividendPenaltyRedAdded = 0;
     
     
-    if(co.badDividendStreak===undefined) co.badDividendStreak = 0;
     
     
     
@@ -1980,8 +1983,7 @@ function validateNewGameInputs(names, startCash, bankCash, s){
   if(s.loanOfferWithholdingPctMin>s.loanOfferWithholdingPctMax+1e-12) return `Prêts : le % de loyers retenu minimum (${(s.loanOfferWithholdingPctMin*100).toFixed(1)} %) dépasse le maximum (${(s.loanOfferWithholdingPctMax*100).toFixed(1)} %). Un maximum laissé vide vaut 0 % : saisissez-le explicitement.`;
   if(!(num(s.loanOfferMultipleMin) && s.loanOfferMultipleMin>=1)) return 'Prêts : le multiple du capital minimum doit être d’au moins 1.';
   if(!(num(s.loanOfferMultipleMax) && s.loanOfferMultipleMax>=s.loanOfferMultipleMin-1e-12)) return 'Prêts : le multiple du capital maximum doit être au moins égal au minimum.';
-  if(!inRange(s.dividendPayoutRatioMin, 0, 1) || !inRange(s.dividendPayoutRatioFull, 0, 1)) return 'Les ratios dividende/bénéfice doivent être compris entre 0 et 100 %.';
-  if(s.dividendPayoutRatioMin>s.dividendPayoutRatioFull+1e-12) return 'Le ratio dividende/bénéfice « plancher » dépasse le ratio « plein ».';
+  // Section 320 — validations des ratios dividende/bénéfice « plancher » et « plein » retirées (réglages retirés).
   if(!(num(s.maxOwners) && s.maxOwners>=1)) return 'Le nombre maximal de copropriétaires doit être d’au moins 1.';
   if(!(num(s.housesBeforeHotel) && s.housesBeforeHotel>=1)) return 'Le nombre de maisons avant l’hôtel doit être d’au moins 1.';
   if(!(num(s.companyTotalShares) && s.companyTotalShares>=2)) return 'Le nombre de parts par entreprise doit être d’au moins 2.';
@@ -3290,13 +3292,15 @@ async function createCompany(playerId, name, description, type, dividendPromised
   
   
   
-  company.dividendStreak = 0;
+  // Section 320 — plus de séquence de dividendes : mémoire de la pénalité des dividendes annoncés (voir migrateState).
+  company.dividendPenaltySemesterIdx = -1;
+  company.dividendPenaltyTier = 0;
+  company.dividendPenaltyRedAdded = 0;
   
   
   
   
   
-  company.badDividendStreak = 0;
   
   
   
@@ -10595,105 +10599,10 @@ function advanceGameClock(){
       
       
       
-      const thisSem = dividendPaidInSemester(co.id, semesterBefore);
-      const payoutRatioMin = state.settings.dividendPayoutRatioMin!==undefined ? state.settings.dividendPayoutRatioMin : DEFAULT_SETTINGS.dividendPayoutRatioMin;
-      const payoutRatioFull = state.settings.dividendPayoutRatioFull!==undefined ? state.settings.dividendPayoutRatioFull : DEFAULT_SETTINGS.dividendPayoutRatioFull;
-      const lossPauseMax = state.settings.dividendLossPauseMax!==undefined ? state.settings.dividendLossPauseMax : DEFAULT_SETTINGS.dividendLossPauseMax;
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      function injectDividendReward(streakForBonus){
-        const bonus = Math.min(Math.max(streakForBonus-1, 0), 5);
-        const qtyMin = STOCK_TRIGGER_DIVIDEND_BASE_MIN + bonus, qtyMax = STOCK_TRIGGER_DIVIDEND_BASE_MAX + bonus;
-        injectStockCube(co, 'green', qtyMin, qtyMax);
-      }
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      function breakDividendStreak(){
-        const paliersLost = co.dividendStreak||0;
-        co.dividendStreak = 0;
-        if(paliersLost>0) injectStockCube(co, 'red', paliersLost, paliersLost);
-      }
-      if(co.type==='croissance' || co.type==='momentum'){
-        
-        if(thisSem>0 && is.netIncome>1e-9 && (thisSem/is.netIncome) >= payoutRatioMin){
-          injectStockCube(co, 'green', STOCK_TRIGGER_DIVIDEND_BASE_MIN, STOCK_TRIGGER_DIVIDEND_BASE_MAX);
-        }
-      } else if(thisSem<=0){
-        
-        
-        breakDividendStreak();
-        co.dividendLossStreak = 0;
-
-
-
-
-
-
-
-
-
-
-
-
-      } else if(is.netIncome<=1e-9){
-        
-        co.dividendLossStreak = (co.dividendLossStreak||0) + 1;
-        if(co.dividendLossStreak <= lossPauseMax){
-          
-          
-          
-          
-        } else {
-          
-          
-          breakDividendStreak();
-        }
-      } else if((thisSem/is.netIncome) < payoutRatioMin){
-        
-        
-        breakDividendStreak();
-        co.dividendLossStreak = 0; 
-      } else if((thisSem/is.netIncome) < payoutRatioFull){
-        
-        
-        
-        
-        
-        
-        
-        co.dividendLossStreak = 0; 
-        co.dividendStreak = Math.max(0, (co.dividendStreak||0) - 1);
-        injectDividendReward(co.dividendStreak);
-      } else {
-        
-        
-        co.dividendLossStreak = 0;
-        co.dividendStreak = (co.dividendStreak||0) + 1;
-        injectDividendReward(co.dividendStreak);
-      }
+      // Section 320 — décision de Julien : plus de séquence de dividendes dans le sac FONDAMENTAL, pour les quatre types.
+      // Retirés : la série verte (dividendStreak) des Dividendes et GARP, ses rouges de série brisée, la pause des
+      // semestres déficitaires (dividendLossStreak) et les 1 à 2 verts des Croissance et Momentum. Seul un dividende
+      // ANNONCÉ agit sur ce sac, à l'annonce (announcedDividendPayoutPenalty). Les règles du sac TYPE ci-dessous restent.
       // Section 315 — bogue 25 (décision de Julien) : le sac type d'une Dividendes ne réagit QU'AU dividende récurrent.
       // S'il n'a pas été versé ce semestre (auto-versement décoché, ou bloqué par un arriérage), sac type à 20 rouges,
       // même si un dividende manuel a été versé. Avant : un dividende manuel de 1 $ évitait le choc.
@@ -11147,6 +11056,98 @@ function dividendPaidInSemester(companyId, semesterIndex){
 function dividendNetPaidInSemester(companyId, semesterIndex){
   return state.finLedger.filter(e=>e.companyId===companyId && e.semesterIndex===semesterIndex && (e.category==='dividend_payout' || e.category==='dividend_forfeited_return'))
     .reduce((s,e)=>s+(-e.amount), 0);
+}
+// Section 320 — décision de Julien : seul un dividende ANNONCÉ agit sur le sac fondamental, et seulement s'il rend le
+// ratio de distribution déraisonnable (fin de partie : éviter de vider l'entreprise par dividendes). Paliers du ratio
+// (distribué ÷ bénéfice du dernier semestre clos) : ≤ 80 % rien ; ≤ 100 % 1 à 2 rouges ; ≤ 150 % 3 à 5 ; au-delà, ou
+// bénéfice nul ou négatif, 6 à 8. Bornes comprises dans le palier du dessous (80 % pile : rien ; 100 % pile : 1 à 2).
+const DIVIDEND_PAYOUT_PENALTY_TIERS = [
+  {maxRatio:0.80, min:0, max:0},
+  {maxRatio:1.00, min:1, max:2},
+  {maxRatio:1.50, min:3, max:5},
+  {maxRatio:Infinity, min:6, max:8},
+];
+// Section 320 — part qui va aux actionnaires réels (hors banque), plafonnée à 100 % comme le coût du récurrent
+// (section 317, bogue 82 : si la banque est négative, c'est elle qui paie l'excédent, pas l'entreprise).
+function dividendRealShareFraction(realShares, issuedShares){
+  if(!(issuedShares>0)) return realShares>0 ? 1 : 0;
+  return Math.max(0, Math.min(1, realShares/issuedShares));
+}
+// Section 320 — fonction PURE (ne modifie rien) : ratio de distribution du semestre en cours si l'entreprise annonce
+// `amount` maintenant, palier atteint et rouges à ajouter. Sert à la fois à l'aperçu de la fenêtre « Annoncer un
+// dividende » et à l'annonce elle-même (même calcul). Distribué = annonces du semestre en cours (celle-ci comprise),
+// chacune hors part de la banque, + pour une Dividendes à versement automatique actif, le récurrent du semestre hors
+// part de la banque. Le récurrent seul ne déclenche jamais rien : sans montant annoncé, aucun rouge.
+// Cumul : c'est le palier du cumul du semestre qui compte (co.dividendPenaltySemesterIdx / Tier / RedAdded) ; une
+// annonce qui relève le palier n'ajoute que la différence avec les rouges déjà ajoutés ce semestre.
+function announcedDividendPayoutPenalty(co, amount){
+  const curSemesterIdx = Math.floor(state.gameClock.rollCount/3);
+  const refSemesterIdx = curSemesterIdx>0 ? curSemesterIdx-1 : curSemesterIdx;
+  const netIncome = incomeStatementFor(co.id, refSemesterIdx).netIncome;
+  const issued = co.sharesIssued||0;
+  const realShares = co.shareholders.filter(s=>s.playerId!=='BANK' && s.shares>1e-9).reduce((t,s)=>t+s.shares, 0);
+  const newAmount = Math.max(0, Number(amount)||0);
+  const newPart = newAmount * dividendRealShareFraction(realShares, issued);
+  const announcedPart = (state.dividendAnnouncements||[])
+    .filter(a=>a.companyId===co.id && Math.floor((a.announcedAtRoll||0)/3)===curSemesterIdx)
+    .reduce((t,a)=>{
+      const recShares = (a.recordHolders||[]).reduce((u,h)=>u+(h.shares||0), 0);
+      return t + (a.amount||0) * dividendRealShareFraction(recShares, a.totalSharesAtAnnouncement || issued);
+    }, 0);
+  const recurrentPart = (co.type==='dividende' && co.dividendAutoPay && co.dividendBenchmarkPerShare>0)
+    ? co.dividendBenchmarkPerShare * Math.min(issued, realShares) : 0;
+  const distributed = announcedPart + newPart + recurrentPart;
+  const noProfit = !(netIncome>1e-9);
+  const ratio = noProfit ? null : distributed/netIncome;
+  let tier = 0;
+  if(newAmount>1e-9 || announcedPart>1e-9){
+    if(noProfit) tier = DIVIDEND_PAYOUT_PENALTY_TIERS.length-1;
+    else tier = DIVIDEND_PAYOUT_PENALTY_TIERS.findIndex(t=>ratio <= t.maxRatio + 1e-9);
+  }
+  const sameSemester = co.dividendPenaltySemesterIdx===curSemesterIdx;
+  const prevTier = sameSemester ? (co.dividendPenaltyTier||0) : 0;
+  const prevRedAdded = sameSemester ? (co.dividendPenaltyRedAdded||0) : 0;
+  const raises = tier > prevTier;
+  const t = DIVIDEND_PAYOUT_PENALTY_TIERS[tier];
+  return {
+    curSemesterIdx, refSemesterIdx, netIncome, noProfit, ratio, distributed, newPart, announcedPart, recurrentPart,
+    tier, qtyMin:t.min, qtyMax:t.max, prevTier, prevRedAdded, raises,
+    extraMin: raises ? Math.max(0, t.min-prevRedAdded) : 0, extraMax: raises ? Math.max(0, t.max-prevRedAdded) : 0,
+  };
+}
+// Section 320 — applique le résultat de announcedDividendPayoutPenalty au moment de l'annonce : tire la quantité du
+// nouveau palier, n'ajoute que la différence avec les rouges déjà ajoutés ce semestre (jamais négatif), mémorise.
+// Rend le nombre de rouges ajoutés.
+function applyAnnouncedDividendPayoutPenalty(co, info){
+  let added = 0;
+  if(info.raises){
+    const drawn = info.qtyMin + Math.floor(Math.random()*(info.qtyMax-info.qtyMin+1));
+    added = Math.max(0, drawn - info.prevRedAdded);
+    if(added>0) injectStockCube(co, 'red', added, added);
+  }
+  co.dividendPenaltySemesterIdx = info.curSemesterIdx;
+  co.dividendPenaltyTier = Math.max(info.prevTier, info.tier);
+  co.dividendPenaltyRedAdded = info.prevRedAdded + added;
+  return added;
+}
+// Section 320 — ratio en texte (« 92 % », « 80,5 % »), ou la raison quand il n'y a pas de bénéfice.
+function dividendPayoutRatioText(info){
+  if(info.noProfit) return 'bénéfice nul ou négatif';
+  const r = Math.round(info.ratio*1000)/10;
+  return `${String(r).replace('.', ',')} %`;
+}
+// Section 320 — remplace le compteur dividendLossStreak (tenu par la séquence de dividendes, retirée) pour la cote de crédit :
+// nombre de semestres clos CONSÉCUTIFS, les plus récents, où l'entreprise a versé un dividende sans bénéfice, relu dans
+// les états financiers (au plus `maxCount`).
+function dividendLossSemesterCount(company, maxCount){
+  const earliest = Math.max(Math.floor((company.createdAtRoll||0)/3), Math.floor((state.finLedgerStartedAtRoll||0)/3));
+  let n = 0;
+  for(let sem=Math.floor(state.gameClock.rollCount/3)-1; sem>=earliest && n<maxCount; sem--){
+    if(!(dividendPaidInSemester(company.id, sem)>0)) break;
+    if(incomeStatementFor(company.id, sem).netIncome>1e-9) break;
+    n++;
+  }
+  return n;
 }
 
 function companyAverageDividendAnnounced(companyId){
@@ -11693,7 +11694,9 @@ function companyCreditRatingInfo(company){
   } else {
     coverageBadness = coverageRatio===Infinity ? 0 : Math.max(0, Math.min(1, 1 - coverageRatio/2));
   }
-  const streak = company.dividendLossStreak||0;
+  // Section 320 — le compteur dividendLossStreak (tenu par la séquence de dividendes, retirée) est remplacé par le même
+  // fait relu dans les états : semestres clos consécutifs avec dividende versé sans bénéfice (3 suffisent : plafond 0,4).
+  const streak = dividendLossSemesterCount(company, 3);
   let defaultBadness = 0;
   if(company.lastResortLoanUsed) defaultBadness += 0.6;
   defaultBadness += Math.min(streak*0.15, 0.4);
@@ -11723,7 +11726,7 @@ function companyCreditRatingInfo(company){
   return {
     grade, cran, desc, score, insolvent, investmentGrade,
     debtRatio, debtBadness, coverageRatio, coverageBadness, defaultBadness,
-    lastResortLoanUsed: !!company.lastResortLoanUsed, dividendLossStreak: streak,
+    lastResortLoanUsed: !!company.lastResortLoanUsed, dividendLossSemesters: streak, // Section 320 — était dividendLossStreak
   };
 }
 
@@ -11907,7 +11910,7 @@ const STOCK_TRIGGER_GO_ADVANCE_RED_MIN = 1, STOCK_TRIGGER_GO_ADVANCE_RED_MAX = 2
 
 
 
-const STOCK_TRIGGER_DIVIDEND_BASE_MIN = 1, STOCK_TRIGGER_DIVIDEND_BASE_MAX = 2; 
+// Section 320 — STOCK_TRIGGER_DIVIDEND_BASE_MIN / _MAX retirés (verts de la séquence de dividendes, retirée).
 
 
 
@@ -11915,8 +11918,7 @@ const STOCK_TRIGGER_DIVIDEND_BASE_MIN = 1, STOCK_TRIGGER_DIVIDEND_BASE_MAX = 2;
 
 
 
-const STOCK_TRIGGER_BAD_DIVIDEND_FIRST_MIN = 0, STOCK_TRIGGER_BAD_DIVIDEND_FIRST_MAX = 1; 
-const STOCK_TRIGGER_BAD_DIVIDEND_REPEAT_MIN = 3, STOCK_TRIGGER_BAD_DIVIDEND_REPEAT_MAX = 5; 
+// Section 320 — STOCK_TRIGGER_BAD_DIVIDEND_* retirés (dividende « mal perçu ») : voir DIVIDEND_PAYOUT_PENALTY_TIERS.
 
 
 
@@ -21882,6 +21884,24 @@ async function confirmInsuranceBundle(companyId, keys, claimMode, term, deductib
 
 
 
+// Section 320 — ligne d'aperçu de la fenêtre « Annoncer un dividende » : ratio de distribution après cette annonce et
+// ce qu'elle coûtera au sac fondamental ; en rouge dès que le seuil de 80 % est dépassé.
+function dividendPayoutPreviewHtml(co, amount){
+  const info = announcedDividendPayoutPenalty(co, amount);
+  const over = info.tier>0;
+  const refLabel = info.refSemesterIdx===info.curSemesterIdx ? 'du semestre en cours (aucun semestre clos encore)' : 'du dernier semestre clos';
+  const ratioHtml = info.noProfit
+    ? `<b>bénéfice ${refLabel} nul ou négatif</b> (${fmt(info.netIncome)})`
+    : `<b>${dividendPayoutRatioText(info)}</b> du bénéfice ${refLabel} (${fmt(info.netIncome)})`;
+  const range = (a,b)=> a===b ? `${a}` : `${a} à ${b}`;
+  let cost;
+  if(info.tier===0) cost = 'aucun cube';
+  else if(!info.raises) cost = `aucun cube de plus (palier déjà atteint ce semestre, ${info.prevRedAdded} rouge${info.prevRedAdded>1?'s':''} déjà ajouté${info.prevRedAdded>1?'s':''})`;
+  else if(info.prevRedAdded>0) cost = `<b>${range(info.extraMin, info.extraMax)} cube${info.extraMax>1?'s':''} rouge${info.extraMax>1?'s':''} de plus</b> au sac fondamental (${range(info.qtyMin, info.qtyMax)} au total ce semestre, ${info.prevRedAdded} déjà ajouté${info.prevRedAdded>1?'s':''})`;
+  else cost = `<b>${range(info.qtyMin, info.qtyMax)} cubes rouges</b> au sac fondamental`;
+  const color = over ? 'var(--brick,#C0392B)' : 'var(--muted)';
+  return `<span style="color:${color};" data-payout-tier="${info.tier}">${over?'⚠️ ':''}Ratio de distribution après cette annonce : ${ratioHtml} — coût : ${cost}.</span>`;
+}
 function modalAnnounceDividend(){
   const myCo = myCompany();
   if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
@@ -21924,6 +21944,8 @@ function modalAnnounceDividend(){
     <div class="small" style="margin-bottom:8px;">Trésorerie actuelle: <b>${fmt(myCo.cash)}</b>${inGracePeriod?` &nbsp;|&nbsp; Maximum autorisé pendant le délai de grâce: <b>${fmt(graceDividendCap)}</b>`:''}</div>
     <label>Montant total à annoncer (en ${esc(state.unit)})</label>
     <input type="number" step="0.01" min="0" max="${Math.min(myCo.cash, graceDividendCap)}" id="mDividendAmount" value="0">
+    <div class="small" style="margin-bottom:6px;color:var(--muted);">Sac fondamental (section 320) : ratio de distribution = dividendes annoncés ce semestre${myCo.type==='dividende' && myCo.dividendAutoPay && myCo.dividendBenchmarkPerShare>0 ? ' + dividende récurrent' : ''}, hors part de la banque, ÷ bénéfice du dernier semestre clos. Jusqu'à 80 % : aucun effet. Au-delà : 1 à 2 cubes rouges (jusqu'à 100 %), 3 à 5 (jusqu'à 150 %), 6 à 8 (plus de 150 %, ou sans bénéfice). Plusieurs annonces du même semestre comptent ensemble.</div>
+    <div class="small" id="mDividendPayoutPreview" style="margin-bottom:8px;"></div>
     <div class="small" id="mRetryStatus" style="margin-bottom:8px;color:var(--muted);"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mCancel">Annuler</button>
@@ -21931,6 +21953,15 @@ function modalAnnounceDividend(){
     </div>`);
   document.getElementById('mCancel').addEventListener('click', closeModal);
   const companyId = myCo.id;
+  // Section 320 — aperçu, mis à jour pendant la saisie : même calcul que l'annonce (announcedDividendPayoutPenalty).
+  const refreshPayoutPreview = ()=>{
+    const el = document.getElementById('mDividendPayoutPreview');
+    const co = companyById(companyId);
+    if(!el || !co) return;
+    el.innerHTML = dividendPayoutPreviewHtml(co, parseFloat(document.getElementById('mDividendAmount').value)||0);
+  };
+  document.getElementById('mDividendAmount').addEventListener('input', refreshPayoutPreview);
+  refreshPayoutPreview();
   document.getElementById('mOk').addEventListener('click', async ()=>{
     const amount = parseFloat(document.getElementById('mDividendAmount').value)||0;
     
@@ -21966,10 +21997,8 @@ function modalAnnounceDividend(){
       
       
       
-      const curSemesterIdx = Math.floor(state.gameClock.rollCount/3);
-      const refSemesterIdx = curSemesterIdx>0 ? curSemesterIdx-1 : curSemesterIdx;
-      const netIncomeNow = incomeStatementFor(co.id, refSemesterIdx).netIncome;
-      const isBadDividend = netIncomeNow<0 || amount>netIncomeNow;
+      // Section 320 — ratio de distribution calculé AVANT toute écriture, par la même fonction que l'aperçu.
+      const payoutInfo = announcedDividendPayoutPenalty(co, amount);
       
       
       
@@ -22000,21 +22029,15 @@ function modalAnnounceDividend(){
       
       
       
-      if(isBadDividend){
-        co.badDividendStreak = (co.badDividendStreak||0) + 1;
-        let qtyMin, qtyMax;
-        if(co.badDividendStreak<=1){
-          qtyMin = STOCK_TRIGGER_BAD_DIVIDEND_FIRST_MIN; qtyMax = STOCK_TRIGGER_BAD_DIVIDEND_FIRST_MAX;
-        } else {
-          const bonus = Math.min(co.badDividendStreak-2, 5);
-          qtyMin = STOCK_TRIGGER_BAD_DIVIDEND_REPEAT_MIN + bonus; qtyMax = STOCK_TRIGGER_BAD_DIVIDEND_REPEAT_MAX + bonus;
-        }
-        injectStockCube(co, 'red', qtyMin, qtyMax);
-        const semesterRefLabel = refSemesterIdx===curSemesterIdx ? 'semestre en cours (aucun semestre clos encore disponible)' : 'dernier semestre clos';
-        const why = netIncomeNow<0 ? `le bénéfice du ${semesterRefLabel} est négatif (${fmt(netIncomeNow)})` : `le dividende (${fmt(amount)}) dépasse le bénéfice du ${semesterRefLabel} (${fmt(netIncomeNow)})`;
-        log(`⚠️ ${co.name}: ce dividende est mal perçu par le marché — ${why}${co.badDividendStreak>=2?` (${co.badDividendStreak}e fois consécutive, effet amplifié)`:' (1ère fois, tolérée)'}.`);
-      } else {
-        co.badDividendStreak = 0;
+      // Section 320 — remplace la règle « dividende mal perçu » (badDividendStreak) : rouges au sac fondamental selon le
+      // palier du ratio de distribution cumulé du semestre (announcedDividendPayoutPenalty).
+      const redAdded = applyAnnouncedDividendPayoutPenalty(co, payoutInfo);
+      if(redAdded>0){
+        const semesterRefLabel = payoutInfo.refSemesterIdx===payoutInfo.curSemesterIdx ? 'du semestre en cours (aucun semestre clos encore)' : 'du dernier semestre clos';
+        const why = payoutInfo.noProfit
+          ? `le bénéfice ${semesterRefLabel} est nul ou négatif (${fmt(payoutInfo.netIncome)})`
+          : `les dividendes du semestre atteignent ${dividendPayoutRatioText(payoutInfo)} du bénéfice ${semesterRefLabel} (${fmt(payoutInfo.netIncome)}), au-delà de 80 %`;
+        log(`⚠️ ${co.name}: dividende jugé trop généreux par le marché — ${why} : ${redAdded} cube${redAdded>1?'s':''} rouge${redAdded>1?'s':''} ajouté${redAdded>1?'s':''} au sac fondamental${payoutInfo.prevRedAdded>0?` (${payoutInfo.prevRedAdded} déjà ajouté${payoutInfo.prevRedAdded>1?'s':''} plus tôt ce semestre)`:''}.`);
       }
       return {ok:true, entries, coName:co.name};
     });
@@ -24150,24 +24173,8 @@ function renderSetup(){
       <label>Valorisation totale de fondation d'une entreprise (100% des parts, en M$ — fixe, identique pour toutes). Le CEO en investit sa part proportionnelle (ce montant × le % ci-dessus), la banque finance le reste via l'IPO</label>
       <input type="number" step="0.01" min="0.01" id="setupCompanyInvestment" value="20">
 
-      <!-- Section 190 (voir RESUME_ET_REGLES.md): demande explicite de l'utilisateur — un dividende
-      dérisoire mais versé chaque semestre ne doit pas, à lui seul, entretenir la séquence verte
-      (dividendStreak, voir advanceGameClock). Le ratio dividende/bénéfice du semestre écoulé détermine
-      désormais l'effet: sous le seuil plancher, la séquence est brisée; entre les deux seuils, elle est
-      gelée (ni brisée ni récompensée — « mise en pause »); à partir du seuil plein, elle croît et récompense
-      normalement. -->
-      <div class="setup-subhead">Séquence de dividendes (bonus vert — voir dividendStreak)</div>
-      <label>Ratio dividende/bénéfice — plancher (sous ce seuil, la séquence est brisée)</label>
-      <input type="number" step="1" min="0" max="100" id="setupDividendPayoutRatioMin" value="15"> %
-      <label>Ratio dividende/bénéfice — plein (à partir de ce seuil, la séquence croît et récompense normalement; entre les deux, elle est mise en pause)</label>
-      <input type="number" step="1" min="0" max="100" id="setupDividendPayoutRatioFull" value="25"> %
-      <!-- Section 190bis (voir RESUME_ET_REGLES.md): un dividende versé sur un semestre à bénéfice
-      nul/négatif (financé par l'épargne) gèle la séquence au lieu de la briser — mais seulement de façon
-      sporadique. Ce réglage plafonne le nombre de semestres CONSÉCUTIFS à bénéfice non positif tolérés en
-      pause; au-delà, la séquence est brisée (une dépendance ancrée au déficit n'est plus une "malchance
-      passagère"). -->
-      <label>Semestres déficitaires consécutifs tolérés en pause (au-delà, la séquence est brisée — pas seulement gelée)</label>
-      <input type="number" step="1" min="0" id="setupDividendLossPauseMax" value="2">
+      <!-- Section 320 : bloc « Séquence de dividendes » retiré (dividendPayoutRatioMin, dividendPayoutRatioFull,
+      dividendLossPauseMax) — plus de séquence de dividendes au sac fondamental. -->
 
       <!-- Section 192 (voir RESUME_ET_REGLES.md) — pions neutres: injectent des liquidités en tournant sur
       le plateau comme des entreprises, sans y participer autrement (pas de salaire GO, pas de taxes, pas
@@ -24276,10 +24283,7 @@ function renderSetup(){
       companyInitialInvestment: parseFloat(document.getElementById('setupCompanyInvestment').value)||0,
       
       
-      dividendPayoutRatioMin: (parseFloat(document.getElementById('setupDividendPayoutRatioMin').value)||0)/100,
-      dividendPayoutRatioFull: (parseFloat(document.getElementById('setupDividendPayoutRatioFull').value)||0)/100,
-      
-      dividendLossPauseMax: parseInt(document.getElementById('setupDividendLossPauseMax').value)||0,
+      // Section 320 — dividendPayoutRatioMin, dividendPayoutRatioFull et dividendLossPauseMax ne sont plus lus (réglages retirés).
       
       
       maxGameYearsMin: parseInt(document.getElementById('setupMaxGameYearsMin').value)||0,

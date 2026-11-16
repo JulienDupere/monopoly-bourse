@@ -3,11 +3,12 @@
 // échues et récurrent) et avant les déclencheurs du sac fondamental et le tirage des cubes :
 //   d = dividende par action versé à cette clôture ; ratio = d ÷ (BNR ÷ parts émises), plafonné à 1 (BNR ≤ 0 : 1) ;
 //   baisse = d × ratio ; jamais sous le DOUBLE du plancher de fin de partie (dessous : rien), jamais de fin de partie.
-// BNR = bénéfices nets du premier semestre de l'entreprise jusqu'au semestre qui se ferme inclus − dividendes ordinaires
-// réellement versés des semestres d'avant − dividendes privilégiés réellement versés jusqu'à ce semestre inclus.
-// Partie en cours au moment de la mise à jour : seulement à partir du semestre suivant. Aussi : cubes rouges des
-// annonces symboliques (≤ 80 % des BNR : rien ; ≤ 100 % : 0 à 1 ; au-delà ou BNR ≤ 0 : 1 à 2) et règle des 5 cubes du
-// sac type retirée.
+// BNR par action = somme des (bénéfice net ÷ parts émises) du premier semestre jusqu'au semestre qui se ferme inclus
+// − dividendes ordinaires PAR ACTION versés aux clôtures d'avant − dividendes privilégiés versés ÷ parts émises ;
+// « BNR ajustés » = BNR par action × parts des actionnaires réels. Partie en cours au moment de la mise à jour :
+// seulement à partir du semestre suivant. Aussi : cubes rouges symboliques et FIXES des annonces, sur le ratio de
+// distribution par action du semestre de référence (≤ 80 % : 0 ; au-delà, bénéfice nul compris : 1 ; bénéfice négatif :
+// 2), et règle des 5 cubes du sac type retirée.
 // Contre-épreuves : chaque scénario est rejoué sur le moteur d'AVANT la section 321 (commit 5d1bf58, lu par git), puis
 // sur des versions cassées exprès : elles doivent échouer.
 // Lancer depuis la racine du dépôt :  node tests/section321-versement.test.js
@@ -62,7 +63,7 @@ async function partie(engOpts, types, { real100 = false, realResolve = false } =
     incomeStatementFor = function(id, sem){ const r = __realIS(id, sem); const k2 = id+':'+sem;
       if(__ovIS[k2]!==undefined) r.netIncome = __ovIS[k2]; else if(__ovIS[id]!==undefined) r.netIncome = __ovIS[id]; return r; };`);
   eng.run(`globalThis.__ovBNR = {}; if(typeof dividendRetainedEarnings==='function'){ globalThis.__realBNR = dividendRetainedEarnings;
-    dividendRetainedEarnings = function(co, sem){ const r = __realBNR(co, sem); if(__ovBNR[co.id]!==undefined) r.retainedEarnings = __ovBNR[co.id]; return r; }; }`);
+    dividendRetainedEarnings = function(co, sem){ const r = __realBNR(co, sem); if(__ovBNR[co.id]!==undefined){ r.perShare = __ovBNR[co.id]/co.sharesIssued; r.adjusted = r.perShare*r.realShares; } return r; }; }`);
   if(real100) eng.run(`state.companies.forEach(c=>{ const other = state.players.find(p=>p.id!==c.ceoId); const b = c.shareholders.find(s=>s.playerId==='BANK'); if(b) b.playerId = other.id; });`);
   // Espion : cubes injectés au sac fondamental (quantité, cours vu, origine section 320, pendant advanceGameClock).
   const inj = [];
@@ -81,7 +82,8 @@ async function partie(engOpts, types, { real100 = false, realResolve = false } =
   T.reds320 = () => inj.filter(x => x.s320).reduce((s, x) => s + x.q, 0);
   return T;
 }
-// Cours 100 $, fondation 100 $ (plancher 5 $, garde 10 $), trésorerie confortable ; BNR imposés si `bnr` est donné.
+// Cours 100 $, fondation 100 $ (plancher 5 $, garde 10 $), trésorerie confortable ; BNR imposés si `bnr` est donné
+// (en M$ pour 200 000 parts, convertis en BNR par action : 6 M$ = 30 $ par action).
 function prep(T, i, { bnr, netIncome = 1, price = 100, founding = 100, cash = 40, roll = 6 } = {}){
   T.setup(i, `__ovIS[A.id] = ${netIncome}; ${bnr !== undefined ? `__ovBNR[A.id] = ${bnr};` : ''} A.stockPrice = ${price * US}; A.stockPriceFounding = ${founding * US}; A.cash = ${cash}; state.gameClock.rollCount = ${roll};`);
 }
@@ -183,16 +185,16 @@ scenario('S3', 'cas de Julien : bénéfice de 1 $ ce semestre, BNR 5 M$ (vrais),
   const p0 = T.price(0);
   closeSemester(T);
   ok(near(p0 - T.price(0), 4 * US, 1e-11), `10 $ par action, BNR 25 $ par action (ratio 0,4) : baisse de 4 $ (${fmt$(p0 - T.price(0))})`);
-  ok(r.added === 0 && T.reds320() === 0, `ratio 40 % des BNR : aucun cube rouge, même au tirage haut (${T.reds320()})`);
+  ok(r.announced, 'annonce acceptée');
   ok(near(m0, T.money(), 1e-9), 'monnaie conservée');
 });
 
-scenario('S4', 'BNR réels sur plusieurs semestres : dividendes ordinaires d’avant (hors part de la banque) et privilégiés déduits', 'fail', async (o, ok) => {
-  // Bénéfices : semestre 0 = 4, semestre 1 = 3, semestre 2 (qui se ferme) = 2 M$ -> 9 M$.
-  // Semestre 1 : annonce de 1 M$, banque à 70 % : 0,3 M$ réellement versés (0,7 M$ revenus en trésorerie).
-  // Privilégiés : 0,5 M$ versés et 0,1 M$ revenus au semestre 1, arriérage de 0,2 M$ payé au semestre 2 -> 0,6 M$.
-  // BNR à la clôture du semestre 2 = 9 − 0,3 − 0,6 = 8,1 M$ = 40,50 $ par action. Annonce de 4,05 M$ (20,25 $) : ratio
-  // 0,5, baisse 10,125 $.
+scenario('S4', 'BNR par action sur plusieurs semestres : dividende d’avant PAR ACTION (banque comprise) et privilégiés déduits', 'fail', async (o, ok) => {
+  // Bénéfices : semestre 0 = 4, semestre 1 = 3, semestre 2 (qui se ferme) = 2 M$ -> 9 M$ = 45 $ par action.
+  // Semestre 1 : annonce de 1 M$ = 5 $ par action (banque à 70 % : 0,3 M$ seulement reçus par les joueurs).
+  // Privilégiés : 0,5 M$ versés et 0,1 M$ revenus au semestre 1, arriérage de 0,2 M$ payé au semestre 2 -> 0,6 M$ = 3 $.
+  // BNR par action à la clôture du semestre 2 = 45 − 5 − 3 = 37 $ (ajustés aux joueurs : 37 $ × 60 000 = 2,22 M$).
+  // Annonce de 3,7 M$ (18,50 $) : ratio 0,5, baisse 9,25 $.
   const T = await partie(o, ['garp']);
   prep(T, 0, { roll: 3 });
   T.setup(0, `__ovIS[A.id+':0'] = 4; __ovIS[A.id+':1'] = 3; __ovIS[A.id+':2'] = 2;`);
@@ -200,12 +202,15 @@ scenario('S4', 'BNR réels sur plusieurs semestres : dividendes ordinaires d’a
   T.setup(0, `logFin(A.id, 'preferred_dividend_payout', -0.5, 4); logFin(A.id, 'preferred_dividend_unclaimed_return', 0.1, 4);`);
   closeSemester(T);
   T.setup(0, `A.stockPrice = ${100 * US}; logFin(A.id, 'preferred_dividend_arrears_paid', -0.2, 7);`);
-  if(o.engine === 'new') ok(near(T.eng.run(`__realBNR(${T.co(0)}, 2).retainedEarnings`), 8.1, 1e-9), `BNR du semestre 2 : ${T.eng.run(`__realBNR(${T.co(0)}, 2).retainedEarnings`).toFixed(4)} M$ (9 − 0,3 − 0,6)`);
+  if(o.engine === 'new'){
+    const b = T.eng.json(`__realBNR(${T.co(0)}, 2)`);
+    ok(near(b.perShare, 37 * US, 1e-12) && near(b.adjusted, 2.22, 1e-9), `BNR du semestre 2 : ${fmt$(b.perShare)} par action (45 − 5 − 3), ajustés aux joueurs ${b.adjusted.toFixed(4)} M$`);
+  }
   const m0 = T.money();
-  await annoncer(T, 0, 4.05);
+  await annoncer(T, 0, 3.7);
   const p0 = T.price(0);
   closeSemester(T);
-  ok(near(p0 - T.price(0), 10.125 * US, 1e-11), `annonce de 4,05 M$ (20,25 $ par action) sur 40,50 $ de BNR par action : baisse de 10,125 $ (${fmt$(p0 - T.price(0))})`);
+  ok(near(p0 - T.price(0), 9.25 * US, 1e-11), `annonce de 3,7 M$ (18,50 $ par action) sur 37 $ de BNR par action : baisse de 9,25 $ (${fmt$(p0 - T.price(0))})`);
   ok(near(m0, T.money(), 1e-9), 'monnaie conservée');
 });
 
@@ -329,7 +334,7 @@ scenario('S11', 'aperçus des deux fenêtres = baisse appliquée (parts constant
   const r = await annoncer(T, 0, 3);
   const txt = r.preview.replace(/<[^>]+>/g, '');
   if(o.verbose) console.log(`    aperçu : « ${txt} »`);
-  ok(/environ/.test(txt) && /15\.00 \$ par action/.test(txt) && /rendement 15 %/.test(txt) && /BNR 6\.00 M\$/.test(txt) && /30\.00 \$ par action/.test(txt) && /ratio 50 %/.test(txt) && /soit 7,5 %/.test(txt) && near(r.drop, 7.5 * US, 1e-11),
+  ok(/environ/.test(txt) && /15\.00 \$ par action/.test(txt) && /rendement 15 %/.test(txt) && /BNR 30\.00 \$ par action \(6\.00 M\$ pour les actionnaires\)/.test(txt) && /ratio 50 %/.test(txt) && /soit 7,5 %/.test(txt) && near(r.drop, 7.5 * US, 1e-11),
     `annonce : dividende par action, rendement, BNR total et par action, ratio, « environ 7.50 $ par action, soit 7,5 % » (${fmt$(r.drop)})`);
   ok(/bénéfices non répartis \(BNR\)/.test(r.html) && !/1 à 2 cubes rouges \(jusqu'à 100 %\)|6 à 8/.test(r.html), 'ligne fixe : la règle des BNR en langage de joueur, plus les anciens paliers');
   const p0 = T.price(0); closeSemester(T);
@@ -350,24 +355,54 @@ scenario('S11', 'aperçus des deux fenêtres = baisse appliquée (parts constant
   ok(/bénéfices non répartis/.test(help) && !/rougir 5 cubes/.test(help), 'aide du type Dividendes : régularité = bon sac type, verser sans BNR = le cours descend');
 });
 
-scenario('S12', 'cubes rouges des annonces : symboliques (0 à 1, puis 1 à 2), même pour un dividende énorme', 'fail', async (o, ok) => {
-  for(const mode of ['min', 'max']){
-    for(const [amount, bnr, want] of [[0.9, 1, { min: 0, max: 1 }], [1.3, 1, { min: 1, max: 2 }], [25, 1, { min: 1, max: 2 }], [1, -5, { min: 1, max: 2 }]]){
-      const T = await partie(o, ['garp'], { real100: true });
-      prep(T, 0, { bnr, cash: 40 });
-      await annoncer(T, 0, amount, mode);
-      closeMode(T, mode);
-      const reds = T.reds320();
-      ok(reds === want[mode], `[${mode}] annonce de ${amount} M$ pour ${bnr} M$ de BNR : ${reds} rouge(s) au sac fondamental (attendu ${want[mode]})`);
+scenario('S12', 'cubes rouges des annonces : symboliques et fixes, sur le ratio de distribution par action du dernier semestre clos', 'fail', async (o, ok) => {
+  // Bénéfice de référence = semestre 1 (clos) ; annonces au semestre 2. 200 000 parts.
+  const cas = [
+    ['bénéfice 1 M$ (5 $ par action), 0,8 M$ (4 $) = 80 %', 1, 0.8, 0],
+    ['bénéfice 1 M$, 0,9 M$ = 90 %', 1, 0.9, 1],
+    ['bénéfice 1 M$, 25 M$ = 2500 %', 1, 25, 1],
+    ['bénéfice de 1 $, 2 M$', 1e-6, 2, 1],
+    ['bénéfice nul, 0,1 M$', 0, 0.1, 1],
+    ['bénéfice −0,5 M$, 10 000 $', -0.5, 0.01, 2],
+  ];
+  for(const [label, ni, amount, want] of cas){
+    for(const bank of [0, 50, 70]){
+      for(const mode of ['min', 'max']){
+        const T = await partie(o, ['garp'], { real100: bank === 0 });
+        if(bank === 50) bankShare(T, 0, 50);
+        prep(T, 0, { netIncome: ni, bnr: 50, cash: 40 });
+        const r = await annoncer(T, 0, amount, mode);
+        closeMode(T, mode);
+        const reds = T.reds320();
+        if(reds !== want || r.added !== want || !r.announced) ok(false, `[banque ${bank} %, ${mode}] ${label} : ${reds} rouge(s) au sac fondamental (attendu ${want})`);
+      }
     }
+    ok(true, `${label} : ${want} cube(s) rouge(s), banque à 0 %, 50 % ou 70 %, tirage bas ou haut (quantité fixe)`);
   }
-  // Premier palier tiré à 0 puis palier relevé : total entre 1 et 2.
-  for(const [m1, m2, want] of [['min', 'min', 1], ['min', 'max', 2]]){
-    const T = await partie(o, ['garp'], { real100: true });
-    prep(T, 0, { bnr: 1 });
-    const a = await annoncer(T, 0, 0.9, m1), b = await annoncer(T, 0, 0.3, m2);
-    ok(a.added === 0 && a.added + b.added === want, `90 % (tirage ${m1}) : ${a.added}, puis 120 % (tirage ${m2}) : +${b.added} = ${want}`);
-  }
+  // Récurrent seul, même sur un bénéfice négatif : aucun cube.
+  const R = await partie(o, ['dividende'], { real100: true });
+  prep(R, 0, { netIncome: -1, bnr: 50 });
+  R.setup(0, `A.dividendBenchmarkPerShare = ${5 * US}; A.dividendAutoPay = true; A.dividendRecurrentNeedsReset = false;`);
+  closeSemester(R);
+  ok(R.reds320() === 0, 'récurrent seul sur un bénéfice négatif : aucun cube');
+  // Cumul : 50 % (0) puis 90 % (1) ; jeune entreprise : 1 puis 2 quand son bénéfice (semestre en cours) devient négatif.
+  const C = await partie(o, ['garp'], { real100: true });
+  prep(C, 0, { netIncome: 1, bnr: 50 });
+  const c1 = await annoncer(C, 0, 0.5), c2 = await annoncer(C, 0, 0.4), c3 = await annoncer(C, 0, 0.1);
+  ok(c1.added === 0 && c2.added === 1 && c3.added === 0 && C.reds320() === 1, `cumul : 50 % -> ${c1.added}, 90 % -> +${c2.added}, 100 % -> +${c3.added} (total ${C.reds320()})`);
+  const Y = await partie(o, ['garp', 'garp']);
+  Y.eng.run(`state.gameClock.rollCount = 7;`);
+  await Y.eng.run(`createCompany(${JSON.stringify(Y.ids[2])}, 'Co Chloe', '', 'garp', null, null, null)`);
+  Y.eng.run(`applyCompanyIpoFunding(${Y.co(2)});`);
+  Y.setup(2, `{ const b = A.shareholders.find(s=>s.playerId==='BANK'); if(b) b.playerId = ${JSON.stringify(Y.ids[0])}; } A.cash = 40; __ovIS[A.id+':2'] = 1;`);
+  const y1 = await annoncer(Y, 2, 0.9);
+  Y.setup(2, `__ovIS[A.id+':2'] = -1;`);
+  const y2 = await annoncer(Y, 2, 0.01);
+  ok(y1.added === 1 && y2.added === 1, `jeune entreprise (référence = semestre en cours) : 90 % -> ${y1.added} ; bénéfice devenu négatif -> +${y2.added} (total 2)`);
+  // Rejugement à la clôture sur le MÊME bénéfice de référence : versé = annoncé, rien de plus.
+  ok(C.eng.run(`${C.co(0)}.dividendPenaltyRefNetIncome`) === 1, 'bénéfice de référence mémorisé à l\'annonce (1 M$)');
+  closeSemester(C);
+  ok(C.reds320() === 1, `clôture : même palier, aucun cube de plus (${C.reds320()})`);
 });
 
 scenario('S13', 'sac type : verser plus que le bénéfice ne rougit plus rien ; hausse et baisse du récurrent inchangées', 'fail', async (o, ok) => {
@@ -398,6 +433,63 @@ scenario('S14', 'baisse appliquée AVANT les déclencheurs du sac fondamental de
   ok(trig.length > 0 && trig.every(x => near(x.price, 92.5 * US, 1e-12)), `les ${trig.length} déclencheurs de la clôture voient le cours abaissé (92,50 $ : ${trig.map(x => fmt$(x.price)).join(', ')})`);
 });
 
+scenario('S15', 'BNR par action réels, « des pommes avec des pommes » : banque à 0 %, 50 % ou 70 %, deux dividendes successifs', 'fail', async (o, ok) => {
+  const drops = {};
+  for(const bank of [0, 50, 70]){
+    // Un semestre à 2 M$ de bénéfice (semestre 0), 200 000 parts : BNR 10 $ par action (ajustés : 2 M$ × part des joueurs).
+    const T = await partie(o, ['garp'], { real100: bank === 0 });
+    if(bank === 50) bankShare(T, 0, 50);
+    prep(T, 0, { netIncome: 0, roll: 3 });
+    T.setup(0, `__ovIS[A.id+':0'] = 2;`);
+    if(o.engine === 'new'){
+      const b = T.eng.json(`__realBNR(${T.co(0)}, 1)`);
+      ok(near(b.perShare, 10 * US, 1e-12) && near(b.adjusted, 2 * (100 - bank) / 100, 1e-9), `banque ${bank} % : BNR 10 $ par action, ajustés ${b.adjusted.toFixed(2)} M$`);
+    }
+    const m0 = T.money();
+    await annoncer(T, 0, 1.0);                       // 5 $ par action : ratio 0,5, baisse 2,50 $
+    let p0 = T.price(0); closeSemester(T);
+    const d1 = p0 - T.price(0);
+    if(o.engine === 'new'){
+      const b2 = T.eng.json(`__realBNR(${T.co(0)}, 2)`);
+      ok(near(b2.perShare, 5 * US, 1e-12), `banque ${bank} % : après un dividende de 5 $ par action, il reste ${fmt$(b2.perShare)} de BNR par action`);
+    }
+    T.setup(0, `A.stockPrice = ${100 * US};`);
+    await annoncer(T, 0, 1.0);                       // 5 $ sur 5 $ : ratio 1, baisse 5 $
+    p0 = T.price(0); closeSemester(T);
+    const d2 = p0 - T.price(0);
+    ok(near(d1, 2.5 * US, 1e-11) && near(d2, 5 * US, 1e-11), `banque ${bank} % : 1er dividende de 5 $ -> baisse ${fmt$(d1)} ; 2e de 5 $ -> baisse ${fmt$(d2)}`);
+    ok(near(m0, T.money(), 1e-9), `banque ${bank} % : monnaie conservée`);
+    drops[bank] = [d1, d2];
+    // Exemple de Julien : 15 $ par action sur 10 $ de BNR par action : ratio 1,5 plafonné à 1, baisse de 15 $.
+    const J = await partie(o, ['garp'], { real100: bank === 0 });
+    if(bank === 50) bankShare(J, 0, 50);
+    prep(J, 0, { netIncome: 0, roll: 3 });
+    J.setup(0, `__ovIS[A.id+':0'] = 2;`);
+    await annoncer(J, 0, 3.0);
+    const q0 = J.price(0); closeSemester(J);
+    ok(near(q0 - J.price(0), 15 * US, 1e-11), `banque ${bank} % : 15 $ par action sur 10 $ de BNR par action : baisse de 15 $ (${fmt$(q0 - J.price(0))})`);
+  }
+  ok(near(drops[0][1], drops[50][1], 1e-15) && near(drops[0][1], drops[70][1], 1e-15), 'mêmes baisses avec la banque à 0 %, 50 % et 70 %');
+});
+
+scenario('S16', 'partie d’avant : dividendes par action passés reconstitués depuis le grand livre', 'fail', async (o, ok) => {
+  const baseSrc = baseEngineSource();
+  const B = await partie(baseSrc ? { transform: () => baseSrc } : o, ['dividende']);
+  prep(B, 0, { netIncome: 0, roll: 3 });
+  B.setup(0, `__ovIS[A.id+':0'] = 2; A.dividendBenchmarkPerShare = ${1 * US}; A.dividendAutoPay = true; A.dividendRecurrentNeedsReset = false;`);
+  await annoncer(B, 0, 1.0);                         // semestre 1 : 5 $ annoncés + 1 $ de récurrent = 6 $ par action
+  closeSemester(B);
+  if(!baseSrc) B.eng.run(`state.companies.forEach(c=>{ delete c.dividendPerShareBySemester; });`);
+  const saved = B.eng.run(`JSON.stringify(state)`);
+  const T = await partie(o, ['garp']);
+  T.eng.run(`state = JSON.parse(${JSON.stringify(saved)}); migrateState(state);`);
+  const h = T.eng.json(`state.companies[0].dividendPerShareBySemester`);
+  ok(h && near(h[1], 6 * US, 1e-12) && Object.keys(h).length === 1, `reconstitué : ${JSON.stringify(h)} (6 $ par action au semestre 1)`);
+  T.eng.run(`__ovIS[state.companies[0].id+':0'] = 2; __ovIS[state.companies[0].id] = 0;`);
+  const b = T.eng.json(`dividendRetainedEarnings(state.companies[0], 2)`);
+  ok(near(b.perShare, 4 * US, 1e-12), `BNR par action au semestre 2 : 10 − 6 = ${fmt$(b.perShare)}`);
+});
+
 // ---------------------------------------------------------------------------------------------------------------
 let baseSrcCache;
 function baseEngineSource(){
@@ -423,11 +515,13 @@ const sub = (a, b) => (src) => src.split(a).join(b);
 const CALL = "    Object.keys(dividendPerSharePaidById).forEach(id=>applyDividendPayoutPriceDrop(companyById(id), semesterBefore, dividendPerSharePaidById[id]));\n";
 const MUTATIONS = [
   ['ratio non plafonné', sub('const priceRatio = noReserve ? 1 : Math.min(1, ratio);', 'const priceRatio = noReserve ? 1 : ratio;'), ['S1']],
-  ['BNR sans les dividendes ordinaires d’avant', sub('if(e.semesterIndex<semesterIdx) ordinaryPaid += -e.amount;', 'if(false) ordinaryPaid += -e.amount;'), ['S4']],
+  ['BNR sans les dividendes ordinaires d’avant', sub('if(sem>=first && sem<semesterIdx) ordinaryPerShare +=', 'if(false) ordinaryPerShare +='), ['S4', 'S15']],
+  ['BNR d’avant avec les dividendes nets de la part de la banque', sub('  recordDividendPerShare(co, semesterIdx, perShareTotal);', '  recordDividendPerShare(co, semesterIdx, dividendNetPaidInSemester(co.id, semesterIdx)/co.sharesIssued);'), ['S4', 'S15']],
+  ['BNR ajustés pris pour des BNR par action ÷ parts émises (pommes et oranges)', sub('const d = dividendReservePriceDrop(perShareTotal, bnr.perShare,', 'const d = dividendReservePriceDrop(perShareTotal, bnr.adjusted/co.sharesIssued,'), ['S15']],
+  ['dividendes passés non reconstitués pour une partie d’avant', sub('co.dividendPerShareBySemester = dividendPerShareFromLedger(co, Math.floor(((s.gameClock && s.gameClock.rollCount)||0)/3), s.finLedger);', 'co.dividendPerShareBySemester = {};'), ['S16']],
   ['BNR sans les dividendes privilégiés', sub('      preferredPaid += -e.amount;\n', '      preferredPaid += 0;\n'), ['S4']],
   ['BNR sans le semestre qui se ferme', sub('for(let sem=first; sem<=semesterIdx; sem++) netIncome +=', 'for(let sem=first; sem<semesterIdx; sem++) netIncome +='), ['S3', 'S4']],
-  ['dividendes ordinaires comptés avec la part de la banque', sub("if(e.category==='dividend_payout' || e.category==='dividend_forfeited_return'){", "if(e.category==='dividend_payout'){"), ['S4']],
-  ['la part de la banque change la baisse', sub('const d = dividendReservePriceDrop(perShareTotal, bnr.retainedEarnings,', 'const d = dividendReservePriceDrop(dividendNetPaidInSemester(co.id, semesterIdx)/co.sharesIssued, bnr.retainedEarnings,'), ['S2']],
+  ['la part de la banque change la baisse', sub('const d = dividendReservePriceDrop(perShareTotal, bnr.perShare,', 'const d = dividendReservePriceDrop(dividendNetPaidInSemester(co.id, semesterIdx)/co.sharesIssued, bnr.perShare,'), ['S2']],
   ['garde du double plancher ignorée', sub('const priceAfter = (dropPerShare>0 && p>g) ? Math.max(g, p - dropPerShare) : p;', 'const priceAfter = dropPerShare>0 ? Math.max(0, p - dropPerShare) : p;'), ['S7']],
   ['garde au simple plancher', sub('const DIVIDEND_PRICE_DROP_GUARD_MULTIPLE = 2;', 'const DIVIDEND_PRICE_DROP_GUARD_MULTIPLE = 1;'), ['S7']],
   ['règle appliquée dès le semestre de la mise à jour', sub('s.dividendPriceDropFromSemester = Math.floor(((s.gameClock && s.gameClock.rollCount)||0)/3) + 1;', 's.dividendPriceDropFromSemester = 0;'), ['S10']],
@@ -439,8 +533,11 @@ const MUTATIONS = [
     const anchor = "        injectStockCube(co, 'red', STOCK_TRIGGER_NEGATIVE_CASH_MIN, STOCK_TRIGGER_NEGATIVE_CASH_MAX);\n      }\n    });\n";
     return s.includes(anchor) ? s.replace(anchor, anchor + CALL) : src;
   }, ['S14']],
-  ['anciens cubes remis (6 à 8 au-delà des réserves)', sub('{maxRatio:Infinity, min:DIVIDEND_RESERVE_OVER_RED_MIN, max:DIVIDEND_RESERVE_OVER_RED_MAX}', '{maxRatio:Infinity, min:6, max:8}'), ['S12']],
-  ['cubes jugés sur le bénéfice du semestre (ancienne mesure)', sub('const judged = dividendReserveRatio(ps.perShare, bnr.retainedEarnings, co.sharesIssued);', 'const judged = dividendReserveRatio(ps.perShare, incomeStatementFor(co.id, ps.curSemesterIdx).netIncome, co.sharesIssued);'), ['S3']],
+  ['cubes tirés au hasard (0 à 1 au lieu de 1)', sub('{maxRatio:Infinity, min:DIVIDEND_PAYOUT_OVER_RED, max:DIVIDEND_PAYOUT_OVER_RED},', '{maxRatio:Infinity, min:0, max:DIVIDEND_PAYOUT_OVER_RED},'), ['S12']],
+  ['cubes jugés sur les BNR', sub('const judged = dividendPayoutRatioTier(ps.perShare, netIncome, co.sharesIssued);', 'const judged = dividendPayoutRatioTier(ps.perShare, dividendRetainedEarnings(co, ps.curSemesterIdx).perShare*co.sharesIssued, co.sharesIssued);'), ['S12']],
+  ['2 cubes pour un bénéfice de 1 $', sub('const loss = ni < -1e-9;', 'const loss = ni < 1e-3;'), ['S12']],
+  ['cubes comptés hors part de la banque (section 320 d’origine)', sub('const judged = dividendPayoutRatioTier(ps.perShare, netIncome, co.sharesIssued);', "const judged = dividendPayoutRatioTier(ps.perShare, netIncome, co.shareholders.filter(h=>h.playerId!=='BANK').reduce((t,h)=>t+h.shares,0));"), ['S12']],
+  ['bénéfice de référence non mémorisé (rejugement sur un autre bénéfice)', sub("  if(!info.keepRef && typeof info.netIncome==='number') co.dividendPenaltyRefNetIncome = info.netIncome;\n", ''), ['S12']],
   ['règle des 5 cubes du sac type remise', sub("      // fondamental (announcedDividendPayoutPenalty).\n", "      // fondamental (announcedDividendPayoutPenalty).\n      { const paidForRatio = dividendNetPaidInSemester(co.id, semesterBefore); if(co.type==='dividende' && paidForRatio>1e-9 && (is.netIncome<=1e-9 || paidForRatio/is.netIncome>1)){ const tp = co.typeReserve; const w = Math.min(5, tp.white); tp.white -= w; tp.red += w; const g = Math.min(5-w, tp.green); tp.green -= g; tp.red += g; } }\n"), ['S13']],
   ['aperçu du récurrent sans le récurrent', sub("const recurrentPart = co.type==='dividende' ? recurrentPerShare : 0;", 'const recurrentPart = 0;'), ['S11', 'S6']],
   ['récurrent seul qui ajoute des cubes à la clôture', sub('  if(co.dividendPenaltySemesterIdx!==semesterIdx) return 0;\n  if(!(perSharePaid>1e-15)) return 0;', '  if(!(perSharePaid>1e-15)) return 0;'), ['S5']],

@@ -77,9 +77,19 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 - Rendu : `render()` → `renderTab()` → `renderPortefeuille`, `renderEntreprise`, `renderDevenirAssureur`,
   `renderProduitsMatrice`, `renderAdmin`… ; liste des onglets dans `visibleTabs()`.
 - Tour de jeu : `rollDiceAndMove`, `performRollForAllCompanies`, `advanceGameClock`, `processYearEnd`.
-- Dividendes (section 320) : plus de séquence dans le sac fondamental ; `announcedDividendPayoutPenalty` (ratio de
-  distribution d'un dividende annoncé, rouges à partir de 80 %), `closeAnnouncedDividendPayoutPenalty` (rejugé à la
-  clôture), jauge du récurrent limitée à un changement par semestre. Aide-mémoire et cahiers 6 et 7 pas encore à jour.
+- Sac fondamental à la clôture (section 321, dans `advanceGameClock`) : semestre rentable ou déficitaire 3 à 5 cubes
+  (`STOCK_TRIGGER_PROFIT_MIN/MAX`), couverture de tous les intérêts (`semesterInterestExpense`,
+  `STOCK_INTEREST_COVERAGE_*`), cours contre valeur comptable à 10 % près (`STOCK_BOOK_VALUE_TOLERANCE_PCT`) ; plus de
+  cube « équité », « revenus » ni case Départ.
+- Dividendes (sections 320 et 321) : plus de séquence dans le sac fondamental. Au versement, le cours baisse selon les
+  BNR par action (`dividendRetainedEarnings`, `dividendReservePriceDrop`, `applyDividendPayoutPriceDrop`) ; un dividende
+  que le cours ne peut pas absorber est refusé à l'annonce, réduit ou annulé à la clôture
+  (`dividendMaxAbsorbablePerShare`, `applyDividendCloseGuard`, écriture `dividend_cancelled_return`) ; options ajustées
+  en proportion (`adjustOptionsForDividend`, plafonds en contrats d'origine par `pos.dividendAdjustFactor`) ; référence
+  des Momentum abaissée ; cubes symboliques 0, 1 ou 2 d'un dividende annoncé (`dividendPayoutRatioTier`,
+  `announcedDividendPayoutPenalty`, rejugé par `closeAnnouncedDividendPayoutPenalty`) ; jauge du récurrent limitée à un
+  changement par semestre ; plus de règle des 5 cubes au sac type. Ordre d'achat exécuté au cours, jamais au-dessus de
+  sa limite (`fillPendingBid`). Aide-mémoire et cahiers 6 et 7 pas à jour des sections 320 et 321 (demande de Julien).
 - Marché : `executeShareTrade`, `placeBid` / `placeAsk` / `checkPendingOrders`, `drawStockCubes`, options
   (`blackScholesPremium`, `openOptionPosition`…), `enforceMarginCalls`.
 
@@ -99,8 +109,8 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 
 ## Tests
 
-- `node tests/run-all.js` lance tous les `tests/*.test.js` (82 fichiers, 3 420 vérifications et 53 cas
-  multi-appareils au 2026-11-16, après la section 320). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
+- `node tests/run-all.js` lance tous les `tests/*.test.js` (84 fichiers, 4 206 vérifications et 53 cas
+  multi-appareils au 2026-11-16, après la section 321). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
   `tests/helpers/fake-firebase.js`, mini-DOM `tests/helpers/fake-dom.js` ; `SYNC_SEEDS=40` pour un passage long). Il charge
   tout le script d'`index.html`, donc une erreur de syntaxe le fait échouer. Tout doit passer avant un push.
 - Syntaxe seule : `node -e "new (require('vm').Script)(require('./tests/helpers/engine').engineSource())"`.

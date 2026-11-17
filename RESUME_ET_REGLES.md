@@ -2422,3 +2422,159 @@ ligne « Dividende annoncé » de la fiche 6), cahier 6 (p. 5 et 13–14, série
 15 versions cassées exprès attrapées) ; `tests/section317a-creation.test.js` perd deux refus de réglages disparus.
 Revue du lot par un réviseur (2 sérieux corrigés : points 3 et 5 ; la faille du point 4 tranchée par l'utilisateur).
 Vérifié à l'écran en mode local : menu de départ, aperçu et annonce, avertissement et verrou de la jauge.
+
+## 321. Sac fondamental refondu et dividendes : rentabilité jugée deux fois au lieu de cinq, cube de la case Départ retiré, couverture de tous les intérêts, tolérance de 10 % sur la valeur comptable ; au versement d'un dividende, le cours baisse selon les BNR par action ; cubes symboliques 0, 1 ou 2 — 2026-11-16
+
+Contexte : après la section 320, l'utilisateur a demandé, verbatim : « Après fais moi tes proposition pour le sac
+fondamental ». Six propositions chiffrées sur le vrai moteur (20 000 semestres simulés par cas) lui ont été faites ;
+réponse : « Les 6! », puis « Mais il faut calibrer le 6eme » (la sixième : faire baisser le cours au versement d'un
+dividende). Chaque changement du code porte le commentaire « Section 321 ».
+
+### Lot A — sac fondamental à la clôture d'un semestre (`advanceGameClock`)
+
+Constat mesuré : « elle a gagné de l'argent » était compté cinq fois (semestre rentable, équité en hausse, revenus en
+hausse, bénéfice au-dessus de l'attendu, cube de la case Départ), et le cube vert de la case Départ, donné même dans un
+mauvais semestre, faisait monter tous les cours avec le temps (bon semestre +2,6 %, mauvais −1,5 %).
+
+1. **Semestre rentable ou déficitaire : 3 à 5 cubes** (avant : 1 à 2 ; `STOCK_TRIGGER_PROFIT_MIN/MAX`). « Bénéfice
+   comparé à l'attendu » est inchangé (1 à 2, 3 à 5, 6 à 8). Ce sont les deux seuls jugements de rentabilité.
+2. **Retirés** : les cubes « équité en hausse ou en baisse » (redite, et punition du dividende récurrent, contre la
+   décision de la section 320) et « croissance des revenus » (redite, 0 à 1 cube).
+3. **Case Départ : plus de cube vert** (`applyPassGoEffect`, y compris la branche « avance remboursée »). La subvention
+   reste, et elle compte déjà dans le bénéfice.
+4. **Couverture des intérêts sur toutes les dépenses d'intérêts** (`semesterInterestExpense`,
+   `STOCK_INTEREST_EXPENSE_CATEGORIES` : hypothèques et titrisation ABS), seulement s'il y en a : couverture =
+   (bénéfice net + intérêts) ÷ intérêts ; sous 1 : 3 à 5 rouges ; de 1 à 2 exclu : 1 à 2 rouges ; 2 ou plus : 0 à 1
+   vert. Avant : intérêts d'hypothèque seuls, 0 à 1 cube de part et d'autre de 1. Les prêts entre entreprises
+   (obligations, prêt de dernier recours) n'ont pas de dépense d'intérêts au compte de résultat (tout est inscrit en
+   financement) : ils n'entrent pas dans la couverture.
+5. **Cours contre valeur comptable par action : tolérance de 10 %** (`STOCK_BOOK_VALUE_TOLERANCE_PCT`) — rien entre
+   90 % et 110 % (bornes comprises) ; dessous : 1 à 2 verts ; dessus, ou valeur comptable nulle ou négative : 1 à 2
+   rouges. Avant : un cent d'écart suffisait.
+6. Flux de trésorerie : rien à ajouter (dans ce jeu, le bénéfice net est exactement le flux d'exploitation).
+
+Mesure (GARP, sac type neutre) avec les points 1 à 3 : bon semestre ordinaire +2,2 % (avant +2,6 %), très bon +3,2 %
+(+3,4 %), mauvais −2,1 % (−1,5 %), très mauvais −4,1 % (−3,5 %) : un mauvais semestre coûte autant qu'un bon rapporte.
+
+### Lot B — dividendes : baisse du cours au versement, cubes symboliques, sac type
+
+La règle a été refaite trois fois avec l'utilisateur. Écartés, verbatim : la baisse dollar pour dollar au-delà de 80 %
+du bénéfice (« Non et dollar pour dollar ne fonctionne pas c'est trop drastique à la bourse BELL verse desfois 100% de
+ses bénéfice elle ne perd pas 100% de sa valeur ») ; le bénéfice d'un seul semestre comme mesure (« rappelons-nous que
+nous jouons au monopoly et que les bénéfices sont très volatile voir négative. Si une entreprise fais 1$ de bénéfice et
+verse un dividende de 2M à cause qu'elle a des réserves ta manière de faire n'est pas logique dans l'aspect du jeu »).
+Règle retenue, verbatim : « Le versement du dividende / valeur de l'action = Le rendement du dividende exemple 4%. La
+valeur de l'action va tomber de en fonction de ce % mais ajuster » ; « l'effet de la banque ne devrait rien changer
+[…] Après on regarde ma réserve, BNR. Plus mon 1,5M est faible comparativement à mes BNR plus l'action baisse proche de
+0%. Plus le ratio approche ou dépasse 1. Plus la baisse est importante » ; « on peut calculer les BNR ajuster […] On
+prend le rendement par actions excluant la banque et on compare les pommes avec les pommes » ; pour le sac type :
+« pour ne pas pénalisé 2 fois la même chose dans le sac TYPE du DIVIDENDE. Je ne mettrais pas de métrique pour le ratio
+de distribution » ; pour les cubes : « Rien de game changer juste par principe », puis « Je veux garder le ratio de
+distribution pour la partie symbolique soit 0-1-2 cubes en fonction des revenus du tour. 0 : <80% ; 1: >80% ; 2: Si
+Bénéfice <0 ». Sur la valeur cachée quand la banque détient une grosse part : « est-ce qu'on peut dire que cet effet
+est la compensation d'être dans un monopoly et les liquidités sont importantes et verser un dividende est plus
+pénalisant que la vrai vie dans le jeu » (accepté ; la part de la banque dans le dividende n'est pas touchée).
+
+7. **Baisse du cours au versement** (`applyDividendPayoutPriceDrop`, à la clôture du semestre, après les versements et
+   avant les déclencheurs du sac fondamental et le tirage) — pour TOUT dividende ordinaire versé à cette clôture
+   (annonces échues et récurrent), par action : baisse = d × min(1, d ÷ BNR par action), d = dividende par action
+   (`dividendReservePriceDrop`). BNR par action nuls ou négatifs : tout le dividende sort du cours. Tout est par
+   action, donc la part de la banque ne change rien. Vaut aussi au dernier lancer de la partie.
+8. **BNR par action** (`dividendRetainedEarnings`, relu dans le grand livre) — (somme des bénéfices nets depuis le
+   premier semestre de l'entreprise, semestre jugé compris − dividendes ordinaires déclarés aux semestres d'avant,
+   bruts, soit les `dividend_payout` moins les annulations `dividend_cancelled_return` − dividendes privilégiés versés)
+   ÷ parts émises d'aujourd'hui. Les fenêtres affichent aussi leur équivalent pour les actionnaires réels (BNR par
+   action × parts hors banque). Le calcul en dollars divisé par les parts d'aujourd'hui tient une IPO tardive (60 000 →
+   200 000 parts).
+9. **Un dividende que le cours ne peut pas absorber n'est pas versé** (retouche de la revue ; garde =
+   `dividendPriceDropGuard`, deux fois le cours plancher de fin de partie, soit 10 % du cours de fondation ;
+   `dividendMaxAbsorbablePerShare`, `dividendAbsorbable`). La baisse ne fait jamais passer le cours sous la garde et ne
+   termine jamais la partie. Premier jet : la baisse était simplement rognée à la garde, donc à la garde tout dividende
+   devenait gratuit (un CEO vidait la caisse semestre après semestre, la part de la banque revenant chaque fois en
+   trésorerie : +13,4 M$ en huit semestres dans la sonde du réviseur). Règle :
+   - à l'annonce (dans l'action, sur l'état frais) : refus si le total par action du semestre (annonces déjà faites +
+     celle-ci + récurrent d'une Dividendes) ne passe pas au cours actuel ; le message et l'aperçu donnent le maximum
+     encore permis. Maximum par action : marge m = cours − garde ; m si les BNR par action sont nuls ou si m les
+     dépasse ; sinon √(m × BNR par action) ;
+   - à la clôture, avant les versements (`applyDividendCloseGuard`, cours du moment et BNR définitifs) : le récurrent
+     passe d'abord, en tout ou rien (non versé = semestre sans versement récurrent : sac type à 20 rouges) ; puis les
+     annonces échues, dans l'ordre où elles ont été faites : versée en entier si elle tient, sinon RÉDUITE à ce qui
+     reste (porteurs et vendeurs à découvert au même montant par action réduit), ANNULÉE s'il ne reste rien. La part
+     non versée revient à la trésorerie (`dividend_cancelled_return`, financement, porté au semestre de l'annonce) et
+     ne compte nulle part comme un dividende versé (BNR, cubes rejugés, cote de crédit, plafond du délai de grâce).
+   *Vu à l'écran* : cours 100 $, BNR 10 $ par action, récurrent 1,50 $, annonce de 1 M$ déjà faite : une annonce de
+   17 M$ est refusée (« cette annonce peut aller jusqu'à 16.70 M$ »), 16,7 M$ acceptés ; le cours ayant glissé à
+   98,23 $ avant la clôture, l'annonce de 16,7 M$ est réduite à 16,35 M$ (81,73 $ par action), 354 K$ rendus, cours
+   98,23 $ → 10,00 $.
+10. **Options ajustées comme pour un fractionnement** (retouche de la revue ; `adjustOptionsForDividend`) — la prime
+    d'une option ne tient pas compte d'un dividende à venir : après une annonce publique de 18 M$, 2 000 puts achetés
+    1,07 M$ à la banque rapportaient 16,6 M$. À chaque baisse, avec f = cours après ÷ cours avant : strike × f,
+    contrats ÷ f, prime d'ouverture × f, pour toutes les positions ouvertes sur l'entreprise (calls et puts, achetées
+    et vendues, jambes de stratégies) ; ligne 🔧 au journal. Black-Scholes étant homogène en (cours, strike), la valeur
+    de chaque position est conservée exactement. La baisse du strike du même montant que le cours (premier jet, comme
+    pour un dividende exceptionnel sur les vrais marchés) a été écartée : après une grosse baisse elle écrasait la
+    valeur-temps (acheteur de puts à −94 % de sa prime au lieu de −21 %), donc un gain pour qui vend des options à la
+    banque après l'annonce. `pos.dividendStrikeAdjust` garde strike et contrats d'avant pour la variation du
+    portefeuille du lancer. Les PLAFONDS (options écrites nues, calls achetés) se comptent en contrats d'origine
+    (`pos.dividendAdjustFactor`, produit des f) : sans cela, un vendeur de calls couverts ne pouvait plus vendre une
+    part après un ajustement. La marge exigée lit les vrais contrats. Rappel : le CEO ne peut négocier aucune option
+    sur sa propre entreprise.
+11. **Momentum** — `momentumRefPrice` baisse du même montant que le cours : sans cela, `momentumTrendStep` lisait la
+    baisse comme un semestre perdu (choc de retournement, 14,46 $ de baisse pour 6 $ de dividende, sac type à 20
+    rouges).
+12. **Cubes symboliques au sac fondamental** (`dividendPayoutRatioTier`, `announcedDividendPayoutPenalty`) — déclenchés
+    seulement par un dividende ANNONCÉ, quantités fixes, sans tirage : ratio de distribution par action = dividendes par
+    action du semestre (annonces + récurrent d'une Dividendes) ÷ bénéfice par action du semestre de référence (le
+    dernier clos ; le semestre en cours pendant le premier semestre de l'entreprise). Jusqu'à 80 % : 0 ; au-delà, ou
+    bénéfice nul : 1 rouge ; bénéfice négatif : 2 rouges. Cumul par semestre et rejugement à la clôture sur ce qui a
+    réellement été versé : inchangés (section 320). Remplace les paliers 1 à 2, 3 à 5, 6 à 8 de la section 320.
+13. **Sac TYPE des Dividendes** — la règle « dividendes versés supérieurs au bénéfice du semestre : 5 cubes rougis »
+    (sections 306 et 315) est retirée (`redenTypeReserveWhiteFirst`, `DIVIDEND_OVERPAYOUT_RED_CUBES`). Restent : la
+    jauge du récurrent (hausse = verts, baisse = 20 rouges, un changement de niveau par semestre) et les 20 rouges d'un
+    semestre sans versement récurrent.
+14. **Partie en cours au moment de la mise à jour** — la baisse et la garde ne valent qu'à partir du semestre qui suit
+    (`state.dividendPriceDropFromSemester`, posé par `migrateState` ; 0 pour une partie neuve). Les dividendes versés
+    pendant le semestre exempté comptent ensuite contre les BNR.
+15. **Fenêtres** « Annoncer un dividende » et « Dividende récurrent » — aperçu mis à jour pendant la saisie : dividende
+    par action du semestre, rendement au cours actuel, BNR par action, ratio, baisse estimée, maximum encore permis,
+    cubes. En rouge avec ⚠️ seulement si un cube serait ajouté, si la baisse dépasse 2 % du cours
+    (`DIVIDEND_PREVIEW_ALARM_DROP_PCT`) ou si le dividende serait refusé, réduit ou non versé ; sinon texte ordinaire.
+
+16. **Ordre d'achat à cours limité exécuté au cours** (retouche de la relecture de contrôle ; `fillPendingBid`) — un
+    ordre déclenché s'exécute au cours du moment quand il est sous la limite, jamais au-dessus de la limite. Avant, il
+    s'exécutait à sa limite : avec un ordre à 95 $ et un versement qui faisait tomber le cours à 10 $, l'acheteur payait
+    0,95 M$ des parts qui en valaient 0,10. Vaut aussi pour les mouvements ordinaires des cubes.
+
+**Conséquences à connaître** (conformes à la règle, pas des défauts) : verser les mêmes réserves en k parts égales,
+une par semestre, fait baisser le cours de moins au total (100 % en une fois, 52 % en quatre fois, 29 % en dix fois) ;
+quand la banque détient une grosse part, un gros dividende laisse le cours sous la valeur comptable (la part de la
+banque revient en trésorerie), aubaine modeste pour qui achète ensuite des parts de la banque (environ +23 % en trois
+ans dans la sonde du réviseur) ; une annonce acceptée peut être réduite ou annulée à la clôture si le cours a baissé
+entre-temps ; une Dividendes dont le cours est à la garde ne verse plus son récurrent (20 rouges au sac type à chaque
+semestre) tant que le cours ne remonte pas ; au lot A, « couverture sous 1 » équivaut à « semestre déficitaire » : une
+entreprise endettée en perte reçoit les rouges de la perte et ceux de la couverture.
+
+**Limites connues** : après une très grosse baisse, les contrats d'options sont multipliés d'autant (300 calls
+deviennent 3 000 après une baisse de 90 %) : l'exercice livre alors plus de parts qu'il n'en existe (la banque passe en
+négatif, ce qu'un achat au marché permettait déjà), et un vendeur de calls couverts, à moitié découvert, voit sa marge
+exigée monter — s'il était déjà proche de sa limite, un appel de marge automatique part de l'ajustement seul (constat
+écrit dans le test S25) ; les contrats deviennent fractionnaires (7 → 7,0219 pour un récurrent ordinaire) ; les ratios
+affichés des états (bêta, volatilité) comptent la baisse du versement comme un rendement de marché ; les cubes ajoutés
+à l'annonce restent si l'annonce est ensuite réduite ou annulée ; le grand livre est plafonné à 10 000 écritures (les
+BNR perdraient les plus anciennes au-delà). Défauts d'avant le lot, signalés à l'utilisateur et non corrigés : chaque
+rachat d'actions ajoute 1 à 2 verts de bonus quelle que soit la quantité (20 rachats d'une part : +34 verts pour
+2 000 $) ; taux libre des privilégiées ; la volatilité des options monte à l'annonce (le montant quitte la trésorerie)
+puis retombe à la clôture.
+
+**Documents joueurs NON mis à jour, à la demande de l'utilisateur** (« juste le code ») : aide-mémoire (lignes sur les
+5 cubes rougis, l'équité, la case Départ, le dividende annoncé), cahier 6 (p. 5, 6, 13–14), cahier 7 (p. 25),
+`docs/cahiers/README.md` (renvoi à l'encadré des 5 cubes).
+
+**Tests** : `tests/section321-sac-fondamental.test.js` (lot A : 523 vérifications, 15 versions cassées exprès
+attrapées) ; `tests/section321-versement.test.js` (lot B : 25 scénarios, 265 vérifications, contre-épreuve sur le moteur
+de la section 320 et 53 versions cassées attrapées) ; `section306`, `section315-dividendes`, `section320-dividendes`
+adaptés (règle des 5 cubes retirée, cubes fixes) ; `audit-bug4` partie 3 : baisse mise hors jeu (son sujet est la
+position négative de la banque). Suite : 84 fichiers, 4 206 vérifications et 53 cas multi-appareils. Revue du lot par
+un réviseur, puis relecture de contrôle, avec ses propres sondes (2 bloquants et 1 sérieux à la revue : points 9, 10
+et 11 ; 1 sérieux au contrôle : point 16 ; plafonds du point 10). Vérifié à l'écran en mode local : aperçus des deux
+fenêtres, refus à l'annonce, annonce réduite à la clôture, ajustement des options, fenêtre des ordres d'achat.

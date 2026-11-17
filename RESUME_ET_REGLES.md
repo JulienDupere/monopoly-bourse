@@ -2725,3 +2725,86 @@ du résumé du tour et dans l'onglet Entreprise, annonces par de vrais clics (pr
 
 Les cahiers et l'aide-mémoire décrivent encore l'ancien verdict des analystes et ne parlent ni de la zone ni du pari
 du PDG ; ils ne sont pas mis à jour.
+
+## 324. Analystes : zone resserrée à 0,25, annonce du PDG seulement dans le résumé du tour et jamais au premier semestre, les trois analystes sur le graphique, fenêtres « Détails » — 2026-11-17
+
+### Demandes de Julien (verbatim)
+
+Après la capture d'écran du graphique de la section 323 :
+
+> Plusieurs points :
+> 1) Annonce du PDG je veux qu'elle soit dans le Pop-up du résumé de tour
+> 2) Je pensais qu'on avait dit que la zone était +- 350K
+> 3) Je veux voir les autres analystes sur le graphiques
+> 4) Toutes les données en chiffre j'aimerais avoir un lien "Details" sur le graphique dans un coin qui fait un pop-up avec les informations complète
+> 5) Dans la page pour les joueurs pour analyser les compagnies j'aimerais avoir la aussi un bouton details. Ce bouton donnerai un pop-up qui montrerait les graph de toutes les entreprises une en dessous de l'autre sur l'ensemble des semestres avec les points des analyste les zone et leur résultats pour analyser le tout
+
+Puis, sur l'encadré d'annonce de l'onglet Entreprise (gardé pour le premier semestre, qui n'a pas de résumé du tour) et
+sur la zone, après la mesure :
+
+> Enlever au premier tour on ne va pas faire de prédictions PDG
+> Pour le multiple je comprend ton point utilise 0.25 alors
+
+### Mécanique retenue
+
+Contrat : `docs/contrats/section-324-affichage.md`.
+
+- **Zone** : cible ± max(0,35 M$ ; 0,25 × irrégularité) (`ANALYST_ZONE_K = 0.25`, `ANALYST_ZONE_FLOOR = 0.35` ; avant :
+  0,35 et 0,5). Le « 0,35 » de la section 323 était un multiple de l'irrégularité, pas un montant : la zone moyenne
+  faisait ± 1,29 M$. Mesure d'appoint (`tests/sim/analystes/mesures324-zone.js`, résumé `resultats-324.txt`) : 23,1 %
+  des semestres dans la zone au lieu de 31,5 %, demi-largeur moyenne 0,92 M$ ; une zone fixe de ± 0,35 M$ aurait donné
+  12,4 %. Les chiffres déjà publiés et les lignes d'historique d'une partie en cours gardent leur ancienne zone.
+- **Pari du PDG, remesuré avec cette zone** (`mesures324-pari.js`) : on finit plus souvent sous la zone (39 % au lieu de
+  35 %). L'avertissement à l'aveugle rapporte +2,2 % sur 12 semestres (avant +1,4 %) ; la promesse à l'aveugle coûte
+  −3,2 % (avant −1,7 %) ; la promesse bien informée rapporte +0,6 % (avant +1,2 %). Les tailles (1 rouge ; 1 vert et
+  3 rouges) ne sont pas changées. L'effet de la zone plus étroite sur le cours à long terme n'a pas été remesuré.
+- **Annonce du PDG** : aucune annonce au premier semestre de la partie (`CEO_CALL_FIRST_SEMESTER = 1`, refus dans
+  `ceoCallRefusal`, donc aussi dans l'action synchronisée). L'encadré n'existe plus que dans la fenêtre « Résultats du
+  tour » du lancer qui clôt un semestre ; il est retiré de l'onglet Entreprise. Un PDG qui a manqué cette fenêtre (page
+  rechargée, appareil partagé, entreprise fondée pendant la fenêtre) voit dans le bloc « Attentes des analystes » une
+  ligne qui le renvoie au bouton « 🔁 Revoir le dernier tour ». L'annonce faite reste visible de tous dans ce bloc.
+- **Graphique** (`expectationVsActualChartHtml`) : une marque par analyste présent (losange bleu = historien, triangle
+  violet = modélisateur, carré ambre = marché ; constante `ANALYST_MARKS`), à gauche de la colonne ; le point du
+  bénéfice à droite ; l'échelle tient compte des analystes ; légende au-dessus.
+- **Bouton « Détails » du graphique** → fenêtre `openAnalystDetailsModal` : tous les semestres de l'entreprise (pas
+  seulement la période choisie), avec les trois analystes, la cible, la zone, le bénéfice officiel et le bénéfice jugé,
+  le verdict, les analystes battus, les cubes, l'annonce du PDG et son effet (`analystDetailsTableHtml`) ; pour le
+  semestre en cours, le détail du modélisateur. Le tableau qui était sous le graphique vit maintenant dans cette fenêtre.
+- **Bouton « Détails » de Portefeuille › États financiers par entreprise** (`pfAnalystDetailsBtn`) → fenêtre
+  `openAnalystOverviewModal` : le graphique de chaque entreprise active, l'une sous l'autre, sur tous les semestres, en
+  mode compact (colonnes étroites, « An 1 / S1 », signe du verdict ▲▲ ▲ = ▼ ▼▼), échelle propre à chaque entreprise,
+  et un volet « Chiffres » repliable par entreprise.
+- Aucun nouveau champ d'état ; l'affichage n'écrit rien dans la partie.
+
+### Revue et corrections
+
+Revue du lot (`reviseur-lot`) : aucun bloquant. Un sérieux, conséquence du retrait de l'encadré : un PDG qui avait
+manqué la fenêtre du tour n'avait plus aucune indication (d'où la ligne qui renvoie à « Revoir le dernier tour »).
+Mineurs corrigés : texte du refus construit depuis la constante, refus qui disent où annoncer, boutons « Détails » et
+« Fermer » en clic libre (`data-free-click` : jamais ignorés pendant un enregistrement), ligne d'historique sans
+verdict ignorée au lieu d'afficher « undefined », pas de colonne vide en fin de fenêtre quand la partie est terminée,
+commentaires périmés, `analystVerdictLineTail` supprimée (plus d'appelant). Cinq versions cassées exprès du réviseur
+n'étaient attrapées par aucun test : couvertes. Laissé tel quel : l'onglet Entreprise montre le semestre le plus récent
+à gauche (aligné sur les tableaux voisins), les fenêtres vont du plus ancien au plus récent ; une fenêtre « Détails »
+ouverte ne se redessine pas quand un autre appareil fait avancer la partie.
+
+### Tests
+
+`tests/section323.test.js` (572 vérifications, 49/49 versions cassées attrapées) et `tests/section323-pari.test.js`
+(869, 19/19) adaptés aux deux règles ; `tests/section323-affichage.test.js` (159) et
+`tests/section323-pari-affichage.test.js` (706, 18/18) adaptés au tableau déplacé et à l'encadré retiré ;
+nouveau `tests/section324-affichage.test.js` (182, 52/52). `node tests/run-all.js` : 90 fichiers sur 90,
+6 768 vérifications et 53 cas multi-appareils.
+
+### Vérification à l'écran (session principale, mode local sans Firebase)
+
+Partie à 6 entreprises et 2 pions neutres, six semestres : annonce du PDG faite par de vrais clics dans le résumé du
+tour ; onglet Entreprise sans encadré, avec la ligne d'indication pour un autre joueur qui prend l'appareil, puis
+l'encadré retrouvé par « Revoir le dernier tour » ; graphique avec les trois analystes ; fenêtre « Détails » (douze
+colonnes visibles sans défiler à 1 280 px) ; fenêtre « toutes les entreprises » (six graphiques, volet « Chiffres ») ;
+aucune erreur dans la console. Captures : `docs/captures/324-*.png|jpg`.
+
+### Changements visibles pour les joueurs (cahiers)
+
+Les cahiers et l'aide-mémoire ne parlent ni des analystes de la section 323 ni de ces écrans ; ils ne sont pas mis à
+jour.

@@ -4568,6 +4568,11 @@ function renderPortefeuilleFinancials(){
   const allPeriodBsNoteHtml = semesterIndex==='all'
     ? `<div class="small" style="margin-top:4px;">Le bilan reflète déjà la position cumulative de l'entreprise depuis sa fondation — affiché ici au semestre courant.</div>`
     : '';
+  // Section 324 (B3) : « Attentes des analystes » juste après l'état des résultats, avec le bouton « Détails » (fenêtre de tous les graphiques).
+  bodyHtml += `
+  <div class="section-title" style="margin-top:22px;">Attentes des analystes</div>
+  <div class="small" style="margin-bottom:6px;">Pour chaque entreprise : ce que les trois analystes attendaient, la zone acceptable et le résultat, semestre par semestre.</div>
+  <button type="button" class="btn btn-sm" data-free-click id="pfAnalystDetailsBtn">Détails</button>`;
   bodyHtml += `
   <div class="section-title" style="margin-top:22px;">Bilan</div>
   <div style="overflow-x:auto;">
@@ -4759,7 +4764,7 @@ function renderEntrepriseFinancials(company){
   
   bodyHtml += `
   <div class="section-title" style="margin-top:22px;">Bénéfice net : cible des analystes et résultat réel</div>
-  ${expectationVsActualChartHtml(company, periods)}`;
+  ${expectationVsActualChartHtml(company, periods)}`; // Section 324 : lien « Détails » dans le coin, le tableau est dans la fenêtre
 
   
   const bsCell = (s, field) => !s.bs ? '<span class="small">–</span>' : `<span class="money">${fmt(s.bs[field])}</span>`;
@@ -6159,7 +6164,7 @@ function renderEntreprise(){
 
   <div class="small" style="font-weight:600;margin-top:16px;">📊 Attentes des analystes (ce semestre)</div>
   <div style="margin:6px 0 4px;">${expectationHtml}</div>
-  ${ceoCallBoxHtml(company, 'ent')}<!-- Section 323 (pari du PDG) -->
+  <!-- Section 324 (décision de Julien du 2026-11-17) : l'encadré d'annonce du PDG n'est plus ici ; il n'existe que dans la fenêtre « Résultats du tour ». L'annonce faite reste visible de tous dans le bloc ci-dessus (ceoCallPublicLineHtml). -->
   `)}
 
   ${entrepriseAccordion('terrains', `Terrains possédés (valeur totale: ${fmt(companyRealEstateValue(company))})`, `
@@ -11688,13 +11693,16 @@ function netIncomeExpectationTier(is, expectation){
 //   Historien H : moyenne du bénéfice net des 3 derniers semestres clos (2 s'il n'y en a que 2) ; absent avant.
 //   Modélisateur M = S + E_recus − E_payes − E_taxes − I (parc tel qu'il est au moment du calcul, 3 lancers).
 //   Marché K = capitalisation × (Σ M ÷ Σ capitalisations des entreprises actives) ; absent si Σ capitalisations ≤ 0.
-//   Cible = analyste du milieu (médiane à 3, moyenne à 2, lui seul à 1) ; zone = cible ± max(0,5 ; 0,35 × σ) (D4).
+//   Cible = analyste du milieu (médiane à 3, moyenne à 2, lui seul à 1) ; zone = cible ± max(0,35 ; 0,25 × σ) (section 324).
 // Angle mort voulu : hors la subvention, le modélisateur ignore la position des pions ; il ignore aussi les assurances,
 // les REIT (revenus des parts), le lot commercial et les accords de compensation de loyer.
 // ===================================================================================================================
 // Section 323 (décision D4 de Julien du 2026-11-17, après mesure) : zone à 0,35 × σ (avant : 0,5), plancher 0,5 inchangé ;
-// un tiers des semestres dans la zone au lieu de 43 %.
-const ANALYST_ZONE_K = 0.35, ANALYST_ZONE_FLOOR = 0.5, ANALYST_HISTORIAN_MIN_SEMESTERS = 2;
+// un tiers des semestres dans la zone au lieu de 43 %. (Historique : la section 324, ci-dessous, remplace ces deux valeurs.)
+// Section 324 (décision de Julien du 2026-11-17, « utilise 0.25 alors », après une nouvelle mesure) : zone resserrée à
+// 0,25 × σ, plancher 0,35 M$ ; environ 23 % des semestres dans la zone au lieu de 31,5 % (demi-largeur moyenne
+// 0,92 M$ au lieu de 1,29 M$).
+const ANALYST_ZONE_K = 0.25, ANALYST_ZONE_FLOOR = 0.35, ANALYST_HISTORIAN_MIN_SEMESTERS = 2;
 const ANALYST_VERDICT_NORMAL_CUBES = 2, ANALYST_VERDICT_STRONG_CUBES = 5; // Section 323 — tailles fixées par Julien le 2026-11-17
 const ANALYST_ZONE_CUBES_MIN = 0, ANALYST_ZONE_CUBES_MAX = 1; // Section 323 — dans la zone : 0 ou 1 cube du côté de l'écart (décision de Julien du 2026-11-17)
 const ANALYST_HISTORIAN_MAX_SEMESTERS = 3; // Section 323 — l'historien regarde au plus les 3 derniers semestres clos
@@ -11707,6 +11715,7 @@ const ANALYST_MARKET_MIN_COMPANIES = 2;    // Section 323 (C3) — entreprises �
 // fondamental (avertissement : 1 rouge ; promesse : 1 vert), et 3 rouges de plus à la clôture si la promesse est ratée.
 const CEO_WARNING_COST_CUBES = 1, CEO_PROMISE_GAIN_CUBES = 1, CEO_PROMISE_BROKEN_RED_CUBES = 3;
 const CEO_CALL_KINDS = ['warning', 'promise'];
+const CEO_CALL_FIRST_SEMESTER = 1; // Section 324 — premier semestre (0 = le tout premier) où une annonce du PDG est permise
 const CEO_CALL_LABELS = {warning:'avertissement', promise:'promesse'};
 
 // Section 323 — fréquence exacte d'arrivée sur chaque case, PAR LANCER RÉELLEMENT JOUÉ (chaîne de Markov du plateau :
@@ -12232,6 +12241,11 @@ function ceoCallRefusal(co, playerId){
   if(!activeCompanies().some(c=>c.id===co.id)) return `${co.name} n’est pas une entreprise active : pas d’annonce du PDG.`;
   if(!playerId || co.ceoId!==playerId) return `Seul le PDG de ${co.name} peut faire une annonce pour cette entreprise.`;
   const sem = analystCurrentSemester();
+  // Section 324 — décision de Julien (2026-11-17, « au premier tour on ne va pas faire de prédictions PDG ») : aucune
+  // annonce pour le premier semestre de la partie. L'encadré n'existe plus que dans la fenêtre « Résultats du tour » du
+  // lancer qui clôt un semestre ; la première occasion est donc le début du deuxième semestre.
+  // Section 324 (M1) : le texte lit la constante (CEO_CALL_FIRST_SEMESTER) au lieu d'écrire « deuxième semestre » en dur.
+  if(sem<CEO_CALL_FIRST_SEMESTER) return `Pas d’annonce du PDG avant le ${analystSemesterName(CEO_CALL_FIRST_SEMESTER)} : première occasion au début de ce semestre, dans le résumé du tour.`;
   const done = ceoCallFor(co, sem);
   if(done) return `${co.name} a déjà fait son annonce pour ce semestre (${CEO_CALL_LABELS[done.kind]}) — une seule par semestre, sans retour possible.`;
   // Section 323 — décision de Julien (2026-11-17, « Non le pdg peut ») : une entreprise sous enquête de l'AMF PEUT
@@ -12240,8 +12254,8 @@ function ceoCallRefusal(co, playerId){
   // demande de Julien : rester sous enquête est un choix (on peut payer pour en sortir), et rien de l'AMF ne change.
   if(!ceoCallWindowOpen()){
     const frozen = co.analystForecast && co.analystForecast.semester===sem;
-    if(!frozen) return `Ce semestre n’aura pas de verdict des analystes pour ${co.name} (le semestre a commencé sans ses chiffres) : pas d’annonce possible. Prochaine occasion : au début du semestre suivant, avant le premier lancer.`;
-    return 'Trop tard pour ce semestre : les chiffres des analystes sont publiés depuis le premier lancer. Prochaine occasion : au début du semestre suivant, avant le premier lancer.';
+    if(!frozen) return `Ce semestre n’aura pas de verdict des analystes pour ${co.name} (le semestre a commencé sans ses chiffres) : pas d’annonce possible. Prochaine occasion : au début du semestre suivant, avant le premier lancer, dans le résumé du tour.`;
+    return 'Trop tard pour ce semestre : les chiffres des analystes sont publiés depuis le premier lancer. Prochaine occasion : au début du semestre suivant, avant le premier lancer, dans le résumé du tour.';
   }
   return null;
 }
@@ -19387,26 +19401,23 @@ function analystExpectationBlockHtml(co){
     : !f.verdictPossible
     ? "Pas de verdict ce semestre : les chiffres n'ont pas été publiés au début du semestre."
     : (f.frozen ? 'Chiffres publiés.' : 'Chiffres provisoires : ils bougent jusqu\'au premier lancer du semestre.');
-  // Ronde de corrections (A3) : chaque poste avec son effet sur le bénéfice (les intérêts et charges peuvent être un
-  // revenu net pour un prêteur ou un porteur d'ABS) ; intérêts hypothécaires de fin d'année signalés (rejugés à la clôture).
-  const mort = Number(p.mortgage)||0;
-  const mortNote = analystIsZero(mort) ? '' : ` (dont intérêts hypothécaires de fin d'année ${analystSigned(-mort)}, comptés tels que prévus ici au verdict)`;
+  // Section 324 : le détail du modélisateur (ronde A3) est dans analystModelerDetailHtml, commune avec la fenêtre « Détails ».
   return `<table>
       <tr><td style="font-weight:600;">Historien</td>${cell(f.h)}<td class="small">${esc(hWhy)}</td></tr>
       <tr><td style="font-weight:600;">Modélisateur</td>${cell(f.m)}<td class="small">ce que le parc devrait rapporter en 3 lancers</td></tr>
       <tr><td style="font-weight:600;">Marché</td>${cell(f.k)}<td class="small">${esc(kWhy)}</td></tr>
     </table>
     <div style="margin:6px 0 2px;"><b>Cible</b> (${esc(targetWhy)}) : <span class="money" style="font-weight:700;color:${analystMoneyColor(f.target)};">${esc(analystSigned(f.target))}</span> — zone acceptable de <span class="money">${esc(analystSigned(lo))}</span> à <span class="money">${esc(analystSigned(hi))}</span></div>
-    <div class="small">Détail du modélisateur : subvention de départ ${esc(analystSigned(p.subsidy))}, loyers reçus ${esc(analystSigned(p.rentsIn))}, loyers payés ${esc(analystSigned(-p.rentsOut))}, taxes ${esc(analystSigned(-p.taxes))}, intérêts et charges ${esc(analystSigned(-p.charges))}${esc(mortNote)}.</div>
+    ${analystModelerDetailHtml(f)}<!-- Section 324 -->
     <div class="small" style="margin-top:4px;font-weight:600;">${esc(state_)}</div>
-    ${ceoCallPublicLineHtml(co)}
+    ${ceoCallPublicLineHtml(co)}${ceoCallHintHtml(co)}<!-- Section 324 (S1) -->
     <div class="small" style="margin-top:4px;">À la clôture : dans la zone, ${ANALYST_ZONE_CUBES_MIN} ou ${ANALYST_ZONE_CUBES_MAX} cube du côté de l'écart (vert au-dessus de la cible, rouge en dessous). Hors de la zone, des analystes divisés donnent un verdict normal (${analystCubesPhrase(ANALYST_VERDICT_NORMAL_CUBES)}), des analystes tous du même avis un verdict fort (${analystCubesPhrase(ANALYST_VERDICT_STRONG_CUBES)}) : cubes verts au-dessus de la zone, rouges en dessous, au sac fondamental.</div>`;
 }
 
 // ===================================================================================================================
 // Section 323 (lot 7) — interface du pari du PDG (contrat section 7.3). Un seul encadré, fabriqué par ceoCallBoxHtml,
-// placé dans la fenêtre « Résultats du tour » (place 'pop') et dans l'onglet Entreprise sous les attentes des analystes
-// (place 'ent'). Le moteur (ceoCallRefusal, announceCeoCall) décide de tout ; ici on affiche, on confirme et on appelle.
+// placé dans la fenêtre « Résultats du tour » (place 'pop') seulement : depuis la section 324, plus d'encadré dans l'onglet
+// Entreprise (place 'ent' retirée ; une ligne d'indication y renvoie à « Revoir le dernier tour »). Le moteur (ceoCallRefusal, announceCeoCall) décide de tout ; ici on affiche, on confirme et on appelle.
 // Tous les nombres viennent des constantes du moteur.
 // ===================================================================================================================
 function ceoCubesText(n, color){ return `${n} cube${n>1?'s':''} ${color==='red'?'rouge':'vert'}${n>1?'s':''}`; }
@@ -19435,7 +19446,15 @@ function ceoCallPublicLineHtml(co){
   if(!call) return '';
   return `<div class="small" style="margin-top:4px;" data-ceo-call-public="${esc(call.kind)}">📣 Annonce du PDG pour ce semestre : <b>${esc(CEO_CALL_LABELS[call.kind])}</b> (${esc(ceoCallNowText(call.kind))}). ${esc(ceoCallLaterText(call.kind))}</div>`;
 }
-// L'encadré. co = l'entreprise ; place = 'pop' (fenêtre du tour) ou 'ent' (onglet Entreprise) : préfixe des identifiants.
+// Section 324 (S1) — plus d'encadré dans l'onglet Entreprise : au PDG qui peut encore annoncer (ceoCallRefusal vaut null), une
+// ligne dit où trouver l'encadré (fenêtre « Résultats du tour », bouton « Revoir le dernier tour »). Rien pour les autres.
+function ceoCallHintHtml(co){
+  const me = myCompany();
+  if(!co || !me || me.id!==co.id) return '';
+  if(ceoCallRefusal(co, myPlayerId)!==null) return '';
+  return `<div class="small" data-ceo-call-hint style="margin-top:4px;">📣 Annonce du PDG encore possible pour ce semestre, jusqu'au premier lancer : bouton « 🔁 Revoir le dernier tour ».</div>`;
+}
+// L'encadré. co = l'entreprise ; place = 'pop' (fenêtre du tour, seule place utilisée depuis la section 324) : préfixe des identifiants.
 // Rien du tout si le joueur de l'appareil ne dirige pas `co`.
 function ceoCallBoxHtml(co, place){
   const me = myCompany();
@@ -19497,14 +19516,82 @@ function bindCeoCallBox(place, co, afterDone){
   });
 }
 
+// Section 324 — les trois analystes sur le graphique (contrat docs/contrats/section-324-affichage.md, B1). Une seule
+// constante pour le graphique, la légende et les tableaux : clé du chiffre (h, m, k), nom affiché, forme, couleur.
+// Jamais le vert ni le rouge (réservés au verdict).
+const ANALYST_MARKS = [
+  {key:'h', name:'Historien', shape:'diamond', color:'#2563eb'},
+  {key:'m', name:'Modélisateur', shape:'triangle', color:'#7c3aed'},
+  {key:'k', name:'Marché', shape:'square', color:'#d97706'},
+];
+// Section 324 — une marque d'analyste (losange, triangle ou carré) centrée en (x, y), de rayon r ; attrs = attributs
+// ajoutés à la forme, inner = contenu (le <title>).
+function analystMarkShape(mark, x, y, r, attrs, inner){
+  const f = `fill="${mark.color}" stroke="var(--paper)" stroke-width="1"`;
+  const a = attrs ? ' ' + attrs : '';
+  const q = v => Math.round(v*100)/100;
+  if(mark.shape==='diamond') return `<polygon points="${q(x)},${q(y-r)} ${q(x+r)},${q(y)} ${q(x)},${q(y+r)} ${q(x-r)},${q(y)}" ${f}${a}>${inner||''}</polygon>`;
+  if(mark.shape==='triangle') return `<polygon points="${q(x)},${q(y-r)} ${q(x+r)},${q(y+r*0.8)} ${q(x-r)},${q(y+r*0.8)}" ${f}${a}>${inner||''}</polygon>`;
+  return `<rect x="${q(x-r*0.85)}" y="${q(y-r*0.85)}" width="${q(r*1.7)}" height="${q(r*1.7)}" ${f}${a}>${inner||''}</rect>`;
+}
+// Section 324 — « Année 2, Semestre 1 » pour le semestre d'indice `sem` (même forme que financialPeriods).
+function analystSemesterLabel(sem){ return `Année ${Math.floor(sem/2)+1}, Semestre ${(sem%2)+1}`; }
+// Section 324 — lignes valables de co.analystHistory (anciennes lignes abîmées ignorées), du plus ancien au plus récent.
+function analystHistoryRows(co){
+  const h = (co && Array.isArray(co.analystHistory)) ? co.analystHistory : [];
+  return h.filter(e=>e && typeof e.semester==='number' && typeof e.actual==='number' && typeof e.target==='number' && typeof e.zone==='number' && ANALYST_VERDICT_LABELS[e.verdict]) // Section 324 (M4) : verdict connu exigé
+    .slice().sort((a,b)=>a.semester-b.semester);
+}
+// Section 324 — les chiffres du semestre en cours (provisoires ou publiés) quand ils ont un sens : partie en cours,
+// verdict possible, semestre pas encore jugé. Sinon null (aucune ligne « en cours »).
+function analystCurrentRow(co){
+  if(!co || state.gameEndedReason) return null;
+  const f = analystForecastFor(co);
+  if(!f || !f.verdictPossible) return null;
+  if(analystHistoryRows(co).some(e=>e.semester===f.semester)) return null;
+  return f;
+}
+// Section 324 — « Détail du modélisateur » (subvention, loyers, taxes, intérêts et charges), commun au bloc de l'onglet
+// Entreprise et à la fenêtre « Détails ».
+// Ronde de corrections (A3) : chaque poste avec son effet sur le bénéfice (les intérêts et charges peuvent être un
+// revenu net pour un prêteur ou un porteur d'ABS) ; intérêts hypothécaires de fin d'année signalés (rejugés à la clôture).
+function analystModelerDetailHtml(f){
+  const p = f.parts;
+  const mort = Number(p.mortgage)||0;
+  const mortNote = analystIsZero(mort) ? '' : ` (dont intérêts hypothécaires de fin d'année ${analystSigned(-mort)}, comptés tels que prévus ici au verdict)`;
+  return `<div class="small">Détail du modélisateur : subvention de départ ${esc(analystSigned(p.subsidy))}, loyers reçus ${esc(analystSigned(p.rentsIn))}, loyers payés ${esc(analystSigned(-p.rentsOut))}, taxes ${esc(analystSigned(-p.taxes))}, intérêts et charges ${esc(analystSigned(-p.charges))}${esc(mortNote)}.</div>`;
+}
+// Section 324 — légende commune : zone, cible, les trois analystes, bénéfice (jugé / officiel s'il diffère).
+function analystLegendHtml(anyAdjusted){
+  const sw = inner => `<svg width="18" height="14" viewBox="0 0 18 14" style="vertical-align:-2px;margin-right:4px;" aria-hidden="true">${inner}</svg>`;
+  const item = (inner, text) => `<span style="white-space:nowrap;">${sw(inner)}${esc(text)}</span>`;
+  const items = [
+    item(`<rect x="1" y="1" width="16" height="12" fill="#64748b" opacity="0.16" rx="2"/>`, 'Zone acceptable'),
+    item(`<line x1="1" x2="17" y1="7" y2="7" stroke="#64748b" stroke-width="2.5"/>`, 'Cible'),
+  ].concat(ANALYST_MARKS.map(m=>item(analystMarkShape(m, 9, 7, 5, `data-legend-analyst="${m.key}"`, ''), m.name)));
+  items.push(item(`<circle cx="9" cy="7" r="5" fill="#64748b"/>`, anyAdjusted ? 'Bénéfice jugé' : 'Bénéfice réel'));
+  if(anyAdjusted) items.push(item(`<circle cx="9" cy="7" r="4.5" fill="none" stroke="#64748b" stroke-width="2"/>`, 'Bénéfice officiel'));
+  return `<div class="small" data-analyst-legend style="display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;">${items.join('')}</div>`;
+}
+// Section 324 — signe court du verdict sous une colonne du mode compact.
+const ANALYST_VERDICT_SIGNS = {strongUp:'▲▲', normalUp:'▲', zone:'=', normalDown:'▼', strongDown:'▼▼'};
+
 /// Section 323 — graphique « cible et résultat réel ». Ronde de corrections (A5) : une colonne par période choisie par
 // l'écran (`periods`, comme les états voisins, avec leurs libellés) ; avant, tout co.analystHistory (jusqu'à 40
 // colonnes) quel que soit le choix. Par période, lu dans co.analystHistory : bande de la zone, cible, bénéfice jugé
 // (point plein) et, s'il diffère (A6), bénéfice officiel (cercle creux), verdict en clair. Période en cours : cible et
 // zone de analystForecastFor (provisoires ou publiées), sans point. Période sans ligne d'historique (avant la section
 // 323, ou sans chiffres figés) : « pas de verdict », rien n'est inventé. Sans `periods` : les semestres de l'historique.
-function expectationVsActualChartHtml(company, periods){
-  const hist = (Array.isArray(company.analystHistory) ? company.analystHistory : []).filter(e=>e && typeof e.actual==='number' && typeof e.target==='number');
+// Section 324 — (B1) une marque par analyste présent (losange historien, triangle modélisateur, carré marché) dans la
+// moitié gauche de la colonne, le point du bénéfice dans la moitié droite : rien ne se superpose ; l'échelle tient compte
+// des chiffres des analystes. (B2) lien « Détails » dans le coin ; le tableau des chiffres n'est plus sous le graphique
+// (fenêtre `openAnalystDetailsModal`). (B3) opts = {compact, detailsButton} : mode compact (colonnes de 64 px, libellés
+// courts « An 1 / S1 », signe du verdict) pour la fenêtre « toutes les entreprises » ; sans opts : onglet Entreprise.
+function expectationVsActualChartHtml(company, periods, opts){
+  opts = opts || {};
+  const compact = !!opts.compact;
+  const withBtn = opts.detailsButton!==undefined ? !!opts.detailsButton : !compact;
+  const hist = analystHistoryRows(company);
   const bySemester = new Map();
   hist.forEach(e=>bySemester.set(e.semester, e));
   const cols = (Array.isArray(periods) && periods.length>0)
@@ -19512,35 +19599,45 @@ function expectationVsActualChartHtml(company, periods){
         const e = bySemester.get(p.semesterIndex) || null;
         let cur = null;
         if(!e && p.isCurrent && !state.gameEndedReason){ const f = analystForecastFor(company); if(f && f.verdictPossible) cur = f; }
-        return {label:p.label, e, cur};
+        return {label:p.label, sem:p.semesterIndex, e, cur};
       })
-    : hist.slice().sort((a,b)=>a.semester-b.semester).map(e=>({label:'Semestre ' + (e.semester+1), e, cur:null}));
-  if(!cols.some(c=>c.e)){
+    : hist.map(e=>({label:'Semestre ' + (e.semester+1), sem:e.semester, e, cur:null}));
+  if(!cols.some(c=>c.e || c.cur)){
     return `<div class="small">Pas encore de semestre jugé par les analystes.</div>`;
   }
   const data = cols.map(c=>{
     const src = c.e || c.cur;
     if(!src) return Object.assign(c, {has:false});
-    return Object.assign(c, {has:true, target:src.target, lo:src.target-src.zone, hi:src.target+src.zone, judged: c.e ? analystJudgedOf(c.e) : null});
+    const an = {};
+    ANALYST_MARKS.forEach(m=>{ const v = src[m.key]; an[m.key] = (typeof v==='number' && isFinite(v)) ? v : null; });
+    return Object.assign(c, {has:true, target:src.target, lo:src.target-src.zone, hi:src.target+src.zone, an, judged: c.e ? analystJudgedOf(c.e) : null});
   });
   const anyAdjusted = data.some(d=>d.e && Math.abs(d.judged - d.e.actual)>1e-9);
   const n = data.length;
-  const allVals = data.filter(d=>d.has).flatMap(d=>[d.lo, d.hi, d.target].concat(d.e ? [d.judged, d.e.actual] : []));
-  const COL_POSTE_WIDTH = 220, COL_DATA_WIDTH = 140;
-  const height = 274, padL = COL_POSTE_WIDTH, padR = 20, padT = 30, padB = 88;
-  const width = padL + n*COL_DATA_WIDTH, plotH = height-padT-padB;
+  const allVals = data.filter(d=>d.has).flatMap(d=>[d.lo, d.hi, d.target].concat(ANALYST_MARKS.map(m=>d.an[m.key]).filter(v=>v!==null)).concat(d.e ? [d.judged, d.e.actual] : []));
+  // Dimensions (px). Normal : colonnes de 140 sous un bandeau de 220 aligné sur les tableaux voisins ; compact : colonnes de 64
+  // (une douzaine de semestres dans 1100 px). mx = centres des trois marques d'analyste (moitié gauche), rx = centre du point du
+  // bénéfice (moitié droite), à partir du centre de la colonne ; band = demi-largeur de la bande de la zone.
+  // Section 324 (E3) : en mode compact la colonne s'adapte au nombre de semestres : clamp(64, floor(980 / n), 112) ; toute la
+  // géométrie suit en proportion de 64 px (s = colW / 64), les rayons grossissent avec un plafond (marques 5,5, point 6,5, cercle 5,5).
+  const cw = Math.max(64, Math.min(112, Math.floor(980/n))), s = cw/64;
+  const L = compact
+    ? {colW:cw, padL:58, padR:8, padT:12, padB:56, height:200, band:29*s, mx:[-25*s,-16*s,-7*s], mr:Math.min(5.5,3.5*s), rx:17*s, rr:Math.min(6.5,5*s), orr:Math.min(5.5,4*s)}
+    : {colW:140, padL:220, padR:20, padT:16, padB:88, height:260, band:58, mx:[-50,-34,-18], mr:6, rx:28, rr:7, orr:6};
+  const height = L.height, padL = L.padL, padR = L.padR, padT = L.padT, padB = L.padB;
+  const width = padL + n*L.colW, plotH = height-padT-padB;
   const dataMinY = Math.min(...allVals), dataMaxY = Math.max(...allVals);
   const rangeY = dataMaxY-dataMinY;
   const padY = rangeY>1e-9 ? rangeY*0.15 : Math.max(Math.abs(dataMaxY)*0.15, 1);
   const minY = dataMinY-padY, maxY = dataMaxY+padY;
-  const xAt = i => padL + i*COL_DATA_WIDTH + COL_DATA_WIDTH/2;
+  const xAt = i => padL + i*L.colW + L.colW/2;
   const yAt = v => padT + plotH - (maxY>minY ? (v-minY)/(maxY-minY) : 0.5)*plotH;
   const gridN = 4;
   const grid = Array.from({length:gridN+1}, (_,i)=>{
     const gy = padT + plotH - (i/gridN)*plotH;
     const val = minY + (i/gridN)*(maxY-minY);
     return `<line x1="${padL}" x2="${width-padR}" y1="${gy}" y2="${gy}" stroke="var(--line)" stroke-width="1" opacity="0.5"/>
-      <text x="8" y="${gy+4}" text-anchor="start" class="tv-chart-axis">${esc(analystMoney(val))}</text>`;
+      <text x="${compact?4:8}" y="${gy+4}" text-anchor="start" class="tv-chart-axis">${esc(analystMoney(val))}</text>`;
   }).join('');
   const wordOf = d => !d.has ? 'Pas de verdict' : d.cur ? 'En cours' : d.e.verdict==='zone' ? 'Dans la zone' : (d.e.verdict==='normalUp'||d.e.verdict==='strongUp') ? 'Au-dessus' : 'Sous la zone';
   const strengthOf = d => d.cur ? (d.cur.frozen ? 'chiffres publiés' : 'provisoire') : (!d.e || d.e.verdict==='zone') ? '' : (d.e.verdict==='strongUp'||d.e.verdict==='strongDown') ? 'verdict fort' : 'verdict normal';
@@ -19549,55 +19646,155 @@ function expectationVsActualChartHtml(company, periods){
     let marks = '';
     if(d.has){
       const bandY = yAt(d.hi), bandH = Math.max(2, yAt(d.lo)-yAt(d.hi));
-      marks += `<rect x="${x-34}" y="${bandY}" width="68" height="${bandH}" fill="#64748b" opacity="0.16" rx="3"/>`;
-      marks += `<line x1="${x-34}" x2="${x+34}" y1="${yAt(d.target)}" y2="${yAt(d.target)}" stroke="#64748b" stroke-width="2.5"${d.cur ? ' stroke-dasharray="5 4"' : ''}/>`;
+      marks += `<rect x="${x-L.band}" y="${bandY}" width="${2*L.band}" height="${bandH}" fill="#64748b" opacity="0.16" rx="3"/>`;
+      marks += `<line x1="${x-L.band}" x2="${x+L.band}" y1="${yAt(d.target)}" y2="${yAt(d.target)}" stroke="#64748b" stroke-width="2.5"${d.cur ? ' stroke-dasharray="5 4"' : ''}/>`;
+      ANALYST_MARKS.forEach((m, j)=>{
+        const v = d.an[m.key];
+        if(v===null) return; // analyste absent : pas de marque
+        marks += analystMarkShape(m, x + L.mx[j], yAt(v), L.mr, `data-analyst="${m.key}"`, `<title>${esc(m.name + ' : ' + analystSigned(v))}</title>`);
+      });
     }
     if(d.e){
-      if(Math.abs(d.judged - d.e.actual)>1e-9) marks += `<circle cx="${x}" cy="${yAt(d.e.actual)}" r="6" fill="none" stroke="${c}" stroke-width="2"/>`;
-      marks += `<circle cx="${x}" cy="${yAt(d.judged)}" r="7" fill="${c}" stroke="var(--paper)" stroke-width="1.5"/>`;
+      if(Math.abs(d.judged - d.e.actual)>1e-9) marks += `<circle cx="${x+L.rx}" cy="${yAt(d.e.actual)}" r="${L.orr}" fill="none" stroke="${c}" stroke-width="2" data-result="official"/>`;
+      marks += `<circle cx="${x+L.rx}" cy="${yAt(d.judged)}" r="${L.rr}" fill="${c}" stroke="var(--paper)" stroke-width="1.5" data-result="judged"/>`;
     }
-    const wordLine = `<text x="${x}" y="${height-padB+16}" text-anchor="middle" font-weight="700" fill="${c}" font-size="12">${esc(wordOf(d))}</text>`;
-    const strongLine = strengthOf(d) ? `<text x="${x}" y="${height-padB+31}" text-anchor="middle" fill="${c}" font-size="12">${esc(strengthOf(d))}</text>` : '';
+    const baseY = height-padB;
+    if(compact){
+      const sem = typeof d.sem==='number' ? d.sem : null;
+      const l1 = sem!==null ? 'An ' + (Math.floor(sem/2)+1) : String(d.label).split(', ')[0];
+      const l2 = sem!==null ? 'S' + ((sem%2)+1) : (String(d.label).split(', ')[1] || '');
+      const sign = d.e ? (ANALYST_VERDICT_SIGNS[d.e.verdict] || '') : '';
+      const signLine = sign ? `<text x="${x}" y="${baseY+16}" text-anchor="middle" font-weight="700" fill="${c}" font-size="12" data-verdict-sign="${esc(d.e.verdict)}">${sign}</text>` : '';
+      const labelLine = `<text x="${x}" y="${baseY+32}" text-anchor="middle" class="tv-chart-axis"><tspan x="${x}" dy="0">${esc(l1)}</tspan><tspan x="${x}" dy="12">${esc(l2)}</tspan></text>`;
+      return marks + signLine + labelLine;
+    }
+    const wordLine = `<text x="${x}" y="${baseY+16}" text-anchor="middle" font-weight="700" fill="${c}" font-size="12">${esc(wordOf(d))}</text>`;
+    const strongLine = strengthOf(d) ? `<text x="${x}" y="${baseY+31}" text-anchor="middle" fill="${c}" font-size="12">${esc(strengthOf(d))}</text>` : '';
     const [labelLine1, labelLine2] = d.label.split(', ');
-    const labelY = height-padB+50;
-    const labelLine = `<text x="${x}" y="${labelY}" text-anchor="middle" class="tv-chart-axis"><tspan x="${x}" dy="0">${esc(labelLine1)}</tspan><tspan x="${x}" dy="13">${esc(labelLine2||'')}</tspan></text>`;
+    const labelLine = `<text x="${x}" y="${baseY+50}" text-anchor="middle" class="tv-chart-axis"><tspan x="${x}" dy="0">${esc(labelLine1)}</tspan><tspan x="${x}" dy="13">${esc(labelLine2||'')}</tspan></text>`;
     return marks + wordLine + strongLine + labelLine;
   }).join('');
-  const legend = `<g>
-    <rect x="${padL}" y="${padT-22}" width="16" height="12" fill="#64748b" opacity="0.16" rx="2"/>
-    <text x="${padL+22}" y="${padT-12}" class="small">Zone acceptable</text>
-    <line x1="${padL+140}" x2="${padL+158}" y1="${padT-16}" y2="${padT-16}" stroke="#64748b" stroke-width="2.5"/>
-    <text x="${padL+164}" y="${padT-12}" class="small">Cible</text>
-    <circle cx="${padL+226}" cy="${padT-16}" r="6" fill="#64748b"/>
-    <text x="${padL+238}" y="${padT-12}" class="small">${anyAdjusted ? 'Bénéfice jugé' : 'Bénéfice réel'}</text>${anyAdjusted ? `
-    <circle cx="${padL+346}" cy="${padT-16}" r="5" fill="none" stroke="#64748b" stroke-width="2"/>
-    <text x="${padL+358}" y="${padT-12}" class="small">Bénéfice officiel</text>` : ''}
-  </g>`;
-  const dash = '<span class="small">–</span>';
-  const rows = data.map(d=>{
-    if(!d.has) return `<tr><td>${esc(d.label)}</td><td>${dash}</td><td>${dash}</td><td>${dash}</td><td class="small" style="color:#64748b;">pas de verdict</td></tr>`;
-    const zoneCell = `<td class="money">${esc(analystSigned(d.target))}</td><td class="money">${esc(analystSigned(d.lo))} à ${esc(analystSigned(d.hi))}</td>`;
-    if(d.cur) return `<tr><td>${esc(d.label)}</td>${zoneCell}<td>${dash}</td><td class="small" style="color:#64748b;">en cours (${d.cur.frozen ? 'chiffres publiés' : 'chiffres provisoires'})</td></tr>`;
-    const note = analystJudgedNote(d.e);
-    return `<tr><td>${esc(d.label)}</td>${zoneCell}<td class="money" style="color:${analystMoneyColor(d.e.actual)};">${esc(analystSigned(d.e.actual))}${note ? `<div class="small" style="font-weight:400;">${esc(note)}</div>` : ''}</td><td class="small" style="color:${analystVerdictColor(d.e.verdict)};font-weight:600;">${analystVerdictLineTail(d.e)}</td></tr>`;
-  }).join('');
-  return `<div style="overflow-x:auto;"><svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible;display:block;">
+  const legendHtml = compact ? '' : analystLegendHtml(anyAdjusted);
+  const btnHtml = withBtn ? `<button type="button" class="btn btn-sm" data-free-click id="analystDetailsBtn-${esc(company.id)}" data-analyst-details="${esc(company.id)}">Détails</button>` : '';
+  const head = (legendHtml || btnHtml)
+    ? `<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px 12px;margin-bottom:6px;"><div style="flex:1 1 auto;">${legendHtml}</div>${btnHtml ? `<div style="margin-left:auto;">${btnHtml}</div>` : ''}</div>`
+    : '';
+  return `${head}<div style="overflow-x:auto;"><svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible;display:block;" data-analyst-chart="${compact ? 'compact' : 'full'}">
     ${grid}
     <line x1="${padL}" x2="${width-padR}" y1="${padT+plotH}" y2="${padT+plotH}" stroke="var(--board)" stroke-width="1.5"/>
-    ${legend}
     ${points}
-  </svg></div>
-  <div style="overflow-x:auto;margin-top:8px;"><table>
-    <tr><th>Semestre</th><th>Cible</th><th>Zone acceptable</th><th>Réel</th><th>Verdict</th></tr>
-    ${rows}
-  </table></div>`;
+  </svg></div>`;
 }
-// Section 323 — fin de la phrase d'un verdict (libellé, analystes battus, cubes) pour la table sous le graphique.
-function analystVerdictLineTail(e){
-  const label = ANALYST_VERDICT_LABELS[e.verdict] || e.verdict;
-  const callTxt = analystCallText(e); // Section 323 (pari du PDG) : ce que l'annonce a changé aux cubes
-  return `${esc(label)}${analystBeatenText(e, ' — ')} — ${analystCubesText(e)}${callTxt ? ` (${esc(callTxt)})` : ''}`; // Section 323 (D2) : zone = « dans la zone — 1 cube vert »
+
+// Section 324 (B2) — tableau de tous les chiffres d'une entreprise : une ligne par semestre jugé (TOUS, du plus ancien au
+// plus récent), puis le semestre en cours s'il a des chiffres. Utilisé par la fenêtre « Détails » et, en volet repliable,
+// par la fenêtre « toutes les entreprises ».
+function analystDetailsTableHtml(co){
+  const rows = analystHistoryRows(co);
+  const curF = analystCurrentRow(co);
+  if(rows.length===0 && !curF) return `<div class="small">Pas encore de semestre jugé par les analystes.</div>`;
+  const dash = '<span class="small">–</span>';
+  const numCell = v => (typeof v==='number' && isFinite(v))
+    ? `<td class="money" style="color:${analystMoneyColor(v)};">${esc(analystSigned(v))}</td>`
+    : `<td class="small">absent</td>`;
+  const cap = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : t; // Section 324 (E2)
+  const zoneCell = x => `<td class="money">${esc(analystSigned(x.target - x.zone))} à ${esc(analystSigned(x.target + x.zone))}</td>`;
+  const markTh = m => `<th><svg width="12" height="12" viewBox="0 0 12 12" style="vertical-align:-1px;margin-right:3px;" aria-hidden="true">${analystMarkShape(m, 6, 6, 4.5, '', '')}</svg>${esc(m.name)}</th>`;
+  const head = `<tr><th>Semestre</th>${ANALYST_MARKS.map(markTh).join('')}<th>Cible</th><th>Zone acceptable</th><th>Bénéfice officiel</th><th>Bénéfice jugé</th><th>Verdict</th><th>Analystes battus</th><th>Cubes</th><th>Annonce du PDG</th></tr>`;
+  const histRows = rows.map(e=>{
+    const note = analystJudgedNote(e);
+    const judged = analystJudgedOf(e);
+    const callTxt = analystCallText(e);
+    const call = callTxt ? esc(cap(callTxt)) : dash; // Section 324 (E2) : le texte de l'annonce seul, majuscule au début (plus de « promesse — promesse… »)
+    return `<tr data-analyst-row="${esc(e.semester)}"><td>${esc(analystSemesterLabel(e.semester))}</td>${numCell(e.h)}${numCell(e.m)}${numCell(e.k)}<td class="money">${esc(analystSigned(e.target))}</td>${zoneCell(e)}`
+      + `<td class="money" style="color:${analystMoneyColor(e.actual)};">${esc(analystSigned(e.actual))}</td>`
+      + `<td class="money" style="color:${analystMoneyColor(judged)};">${esc(analystSigned(judged))}${note ? `<div class="small" style="font-weight:400;">${esc(note)}</div>` : ''}</td>`
+      + `<td class="small verdict" style="color:${analystVerdictColor(e.verdict)};font-weight:600;">${esc(ANALYST_VERDICT_LABELS[e.verdict] || e.verdict)}</td>`
+      + `<td class="small">${e.verdict==='zone' ? dash : esc(`${e.beaten} sur ${e.of}`)}</td>`
+      + `<td class="small" style="white-space:nowrap;">${esc(analystCubesText(e))}</td><td class="small annonce">${call}</td></tr>`;
+  }).join('');
+  let curRow = '';
+  if(curF){
+    const cc = ceoCallFor(co, curF.semester);
+    curRow = `<tr data-analyst-row="${esc(curF.semester)}" data-analyst-current="1"><td>${esc(analystSemesterLabel(curF.semester))}<div class="small" style="color:#64748b;">en cours (${curF.frozen ? 'chiffres publiés' : 'chiffres provisoires'})</div></td>${numCell(curF.h)}${numCell(curF.m)}${numCell(curF.k)}<td class="money">${esc(analystSigned(curF.target))}</td>${zoneCell(curF)}<td>${dash}</td><td>${dash}</td><td>${dash}</td><td>${dash}</td><td>${dash}</td><td class="small annonce">${cc ? esc(cap(CEO_CALL_LABELS[cc.kind])) : dash}</td></tr>`;
+  }
+  // Section 324 (E1) : style porté par ce tableau seulement (pas de règle globale) : cellules serrées, montants et zone sur une ligne.
+  const css = `<style>table[data-analyst-table] th, table[data-analyst-table] td{padding:6px 8px;font-size:12px;} table[data-analyst-table] td.money{white-space:nowrap;} table[data-analyst-table] td.verdict{min-width:120px;} table[data-analyst-table] td.annonce{min-width:130px;}</style>`;
+  return `<div style="overflow-x:auto;">${css}<table data-analyst-table>${head}${histRows}${curRow}</table></div>`;
 }
+
+// Section 324 (B2) — fenêtre « Détails » d'une entreprise : tous les chiffres, tous les semestres (pas seulement la
+// période choisie à l'écran), et, pour le semestre en cours, le détail du modélisateur.
+function openAnalystDetailsModal(companyId){
+  const co = companyById(companyId);
+  if(!co) return;
+  const curF = analystCurrentRow(co);
+  openModal(`
+    <style>.modal{max-width:1240px;}</style>
+    <h3>📊 Analystes — ${esc(co.name)} : tous les chiffres</h3>
+    ${analystDetailsTableHtml(co)}
+    ${curF ? `<div style="margin-top:8px;">${analystModelerDetailHtml(curF)}</div>` : ''}
+    <div class="modal-actions">
+      <button class="btn btn-primary" data-free-click id="mAnalystDetailsClose">Fermer</button>
+    </div>`);
+  const close = document.getElementById('mAnalystDetailsClose');
+  if(close) close.addEventListener('click', closeModal);
+}
+
+// Section 324 (B3) — tous les semestres, du premier jugé ou suivi jusqu'au semestre en cours (et non la période choisie à
+// l'écran), pour la fenêtre « toutes les entreprises ».
+function analystAllPeriods(companies){
+  const cur = analystCurrentSemester();
+  let start = cur;
+  financialPeriods().forEach(p=>{ if(p.semesterIndex<start) start = p.semesterIndex; });
+  (companies||[]).forEach(c=>analystHistoryRows(c).forEach(e=>{ if(e.semester<start) start = e.semester; }));
+  start = Math.max(0, start);
+  // Section 324 (M5) : partie terminée, le semestre en cours n'aura pas lieu : pas de colonne vide (sauf s'il a une ligne d'historique).
+  let end = cur;
+  if(state.gameEndedReason && !(companies||[]).some(c=>analystHistoryRows(c).some(e=>e.semester===cur))) end = cur-1;
+  const periods = [];
+  for(let s=start; s<=end; s++) periods.push({semesterIndex:s, label:analystSemesterLabel(s), isCurrent:s===cur});
+  return periods;
+}
+
+// Section 324 (B3) — fenêtre « toutes les entreprises » : une légende commune, puis pour chaque entreprise son graphique
+// compact sur tous les semestres et un volet « Chiffres » (la fenêtre du jeu est unique : pas de fenêtre depuis une fenêtre).
+function openAnalystOverviewModal(){
+  const cos = activeCompanies();
+  const periods = analystAllPeriods(cos);
+  const anyAdjusted = cos.some(c=>analystHistoryRows(c).some(e=>Math.abs(analystJudgedOf(e) - e.actual)>1e-9));
+  const blocks = cos.map(c=>{
+    const typeLabel = (COMPANY_TYPES.find(t=>t.key===c.type)||{}).label || c.type;
+    return `<div data-analyst-company="${esc(c.id)}" style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line);">
+      <div style="font-weight:700;margin-bottom:4px;">${esc(c.name)} <span class="small" style="font-weight:400;">${esc(typeLabel||'')}</span></div>
+      ${expectationVsActualChartHtml(c, periods, {compact:true, detailsButton:false})}
+      <details style="margin-top:6px;"><summary class="small" style="cursor:pointer;">Chiffres</summary>${analystDetailsTableHtml(c)}</details>
+    </div>`;
+  }).join('');
+  openModal(`
+    <style>.modal{max-width:1240px;}</style>
+    <h3>📊 Analystes — toutes les entreprises</h3>
+    ${cos.length ? analystLegendHtml(anyAdjusted) : ''}
+    <div class="small" style="margin-top:4px;">Sous chaque colonne : ▲▲ au-dessus de la zone (verdict fort), ▲ au-dessus (normal), = dans la zone, ▼ sous la zone (normal), ▼▼ sous la zone (fort).</div>
+    ${blocks || '<div class="empty">Aucune entreprise fondée pour l’instant.</div>'}
+    <div class="modal-actions">
+      <button class="btn btn-primary" data-free-click id="mAnalystOverviewClose">Fermer</button>
+    </div>`);
+  const close = document.getElementById('mAnalystOverviewClose');
+  if(close) close.addEventListener('click', closeModal);
+}
+
+// Section 324 — branche les boutons « Détails » (un par graphique de l'onglet Entreprise, et celui de la page d'analyse du
+// Portefeuille) ; appelé à chaque rendu de ces deux onglets. L'entreprise est relue par son identifiant au clic.
+function bindAnalystButtons(){
+  document.querySelectorAll('[data-analyst-details]').forEach(b=>{
+    const id = b.dataset.analystDetails;
+    b.addEventListener('click', ()=>openAnalystDetailsModal(id));
+  });
+  const ov = document.getElementById('pfAnalystDetailsBtn');
+  if(ov) ov.addEventListener('click', ()=>openAnalystOverviewModal());
+}
+// Section 324 (M8) : analystVerdictLineTail (fin de phrase du tableau sous le graphique) supprimée : plus aucun appelant.
 function tvChartLegend(series){
   return `<div class="tv-chart-legend">${series.map(s=>`
     <div class="tv-chart-legend-item"><span class="tv-chart-legend-dot" style="background:${s.color}"></span>${esc(s.label)}</div>`).join('')}</div>`;
@@ -20304,7 +20501,8 @@ function bindTabEvents(t){
     
     const entReviewLastTurnBtn = document.getElementById('entReviewLastTurnBtn');
     if(entReviewLastTurnBtn) entReviewLastTurnBtn.addEventListener('click', ()=>reviewLastTurnSummary());
-    bindCeoCallBox('ent', myCompany()); // Section 323 (pari du PDG)
+    bindAnalystButtons(); // Section 324 : lien « Détails » du graphique des analystes
+    // Section 324 : plus d'encadré d'annonce du PDG dans l'onglet Entreprise (seulement dans la fenêtre « Résultats du tour »).
     
     
     
@@ -20741,6 +20939,7 @@ function bindTabEvents(t){
     
     
     
+    bindAnalystButtons(); // Section 324 : bouton « Détails » des attentes des analystes
     const openBuySharesBtn = document.getElementById('openBuySharesBtn');
     if(openBuySharesBtn) openBuySharesBtn.addEventListener('click', ()=>modalBuySellShares('buy'));
     const openSellSharesBtn = document.getElementById('openSellSharesBtn');

@@ -1,5 +1,10 @@
-// Test — section 323, pari du PDG, côté moteur (contrat docs/contrats/section-323-analystes.md, section 7) et zone
-// à 0,35 × σ (décision D4).
+// Test — section 323, pari du PDG, côté moteur (contrat docs/contrats/section-323-analystes.md, section 7), avec la
+// règle de la section 324 (contrat docs/contrats/section-324-affichage.md, partie A) : aucune annonce au premier
+// semestre de la partie (CEO_CALL_FIRST_SEMESTER = 1). La zone des analystes est vérifiée dans tests/section323.test.js.
+//   A0. Section 324 : au premier semestre, refus à l'écran (ceoCallRefusal) et dans l'action (announceCeoCall : aucun
+//      cube, aucun co.ceoCall, argent inchangé), avant et après des lancers ; au début du deuxième semestre, atteint
+//      par trois vrais lancers, annonce permise et faite. Les autres scénarios qui annoncent se placent au début du
+//      deuxième semestre (auDeuxiemeSemestre, ou de vrais lancers).
 //   A. Les refus (ceoCallRefusal) : fenêtre ouverte, après le premier lancer sur les trois chemins (lancer pour tous,
 //      lancer d'une entreprise, pion neutre), après le gel seul, joueur qui ne dirige pas l'entreprise, deuxième
 //      annonce, partie terminée, entreprise inactive, entreprise créée en cours de semestre, partie migrée en cours
@@ -40,15 +45,74 @@ async function partie(opts = {}){
 }
 const refus = (eng, who, pid) => eng.json(`ceoCallRefusal(${who}, ${JSON.stringify(pid)})`);
 const logs = (eng, re) => eng.json(`state.log.map(l=>String(l.text||l))`).filter(t => re.test(t));
+// Section 324 — aucune annonce au premier semestre (semestre 0). Les scénarios qui annoncent se placent au début du
+// deuxième semestre : rollCount = 3, aucun lancer joué dans ce semestre, aucun chiffre figé, fenêtre des annonces ouverte.
+const DEUXIEME_SEMESTRE_ROLL = 3;
+const auDeuxiemeSemestre = eng => eng.run(`state.gameClock.rollCount = ${DEUXIEME_SEMESTRE_ROLL};`);
+const PREMIER = /^Pas d’annonce du PDG avant le semestre 2 de l'année 1 : première occasion au début de ce semestre, dans le résumé du tour\.$/;
 
 const SCENARIOS = [];
 function scenario(key, title, fn){ SCENARIOS.push({ key, title, fn }); }
+
+// --- A0. Section 324 : aucune annonce au premier semestre -----------------------------------------------------
+scenario('premier', 'A0. Section 324 : aucune annonce au premier semestre ; permise au début du deuxième', async (tf) => {
+  const eng = await partie({ seed: 324, transform: tf });
+  const [alice, bob] = eng.ids;
+  ok(eng.run(`state.gameClock.rollCount`) === 0 && eng.run(`ceoCallWindowOpen()`) === true,
+    'tout début de partie : aucun lancer, aucun chiffre figé, fenêtre ouverte (le refus ne vient pas de la fenêtre)');
+  // À l'écran : le refus du premier semestre, pour chaque entreprise et son PDG.
+  for(const [who, pid] of [['A', alice], ['B', bob]]){
+    const t = refus(eng, who, pid);
+    ok(PREMIER.test(t || ''), `écran, semestre 1 de l'année 1, ${who} et son PDG : « ${t} »`);
+  }
+  ok(/Seul le PDG de Co Alice/.test(refus(eng, 'A', bob)), 'premier semestre, Bob pour A : le refus du dirigeant reste le premier dit');
+  // Dans l'action : les deux sortes d'annonce, pour les deux entreprises, au nom de leur PDG.
+  const snap = () => eng.json(`({fa:A.stockReserve, fb:B.stockReserve, ta:A.tradingReserve||{}, tb:B.tradingReserve||{}, ya:A.typeReserve||{}, yb:B.typeReserve||{},
+    ca:A.ceoCall, cb:B.ceoCall, cash:[A.cash, B.cash], price:[A.stockPrice, B.stockPrice], ids:(state.appliedActionIds||[]).length})`);
+  const s0 = snap(), m0 = eng.cashTotal();
+  for(const [pid, co, kind] of [[alice, 'A', 'warning'], [alice, 'A', 'promise'], [bob, 'B', 'promise'], [bob, 'B', 'warning']]){
+    eng.run(`myPlayerId = ${JSON.stringify(pid)};`);
+    const r = await eng.run(`announceCeoCall(${co}.id, '${kind}')`);
+    ok(r && r.ok === false && PREMIER.test(r.error || ''), `action announceCeoCall, ${co} ${kind} au premier semestre : refusée — « ${r && r.error} »`);
+    const d = eng.json(`ceoCallApply(${co}.id, '${kind}', ${JSON.stringify(pid)})`);
+    ok(d.ok === false && PREMIER.test(d.error || ''), `corps de l'action (ceoCallApply), ${co} ${kind} : refusé de même`);
+  }
+  eng.run(`myPlayerId = ${JSON.stringify(alice)};`);
+  const s1 = snap();
+  ok(JSON.stringify(s1) === JSON.stringify(s0) && s1.ca === null && s1.cb === null,
+    `action refusée : aucun cube (sacs fondamental, trading et type), aucun co.ceoCall, encaisses et cours inchangés, aucune action enregistrée — ${JSON.stringify({ fa: s1.fa, fb: s1.fb })}`);
+  ok(near(eng.cashTotal(), m0), 'premier semestre : argent inchangé après les refus');
+  ok(logs(eng, /📣/).length === 0, 'premier semestre : aucune ligne d\'annonce au journal');
+  const saved = JSON.parse(eng.mem.get('game:' + eng.run('gameCode')));
+  ok(saved.companies.every(c => c.ceoCall === null || c.ceoCall === undefined), 'premier semestre : rien d\'annoncé dans la partie enregistrée');
+  // Pendant le premier semestre, après un et deux vrais lancers : toujours le refus du premier semestre.
+  for(const rc of [1, 2]){
+    await eng.run(`performRollForAllCompanies()`);
+    ok(eng.run(`state.gameClock.rollCount`) === rc && PREMIER.test(refus(eng, 'A', alice) || ''), `après ${rc} lancer(s) du premier semestre : encore le refus du premier semestre`);
+    const r = await eng.run(`announceCeoCall(A.id, 'promise')`);
+    ok(r.ok === false && eng.json(`A.ceoCall`) === null && logs(eng, /📣/).length === 0, `après ${rc} lancer(s) : l'action refuse, rien de posé`);
+  }
+  // Troisième vrai lancer : clôture du premier semestre ; début du deuxième, fenêtre ouverte : annonce permise.
+  await eng.run(`performRollForAllCompanies()`);
+  ok(eng.run(`state.gameClock.rollCount`) === 3 && eng.run(`ceoCallWindowOpen()`) === true && !eng.run(`!!state.gameEndedReason`), 'trois vrais lancers : début du deuxième semestre, fenêtre ouverte');
+  ok(refus(eng, 'A', alice) === null && refus(eng, 'B', bob) === null, 'début du deuxième semestre : annonce permise pour A (Alice) et B (Bob)');
+  const red0 = eng.json(`A.stockReserve.red`), m1 = eng.cashTotal();
+  const r = await eng.run(`announceCeoCall(A.id, 'warning')`);
+  ok(r.ok === true && r.semester === 1 && r.qty === 1 && eng.json(`A.stockReserve.red`) === red0 + 1 && eng.json(`A.ceoCall`).semester === 1 && eng.json(`A.ceoCall`).atRoll === 3,
+    `début du deuxième semestre : avertissement fait, 1 cube rouge (${red0} → ${eng.json('A.stockReserve.red')}), co.ceoCall du semestre 1`);
+  ok(near(eng.cashTotal(), m1), 'annonce du deuxième semestre : argent conservé');
+  const l = logs(eng, /📣/);
+  ok(l.length === 1 && l[0].includes('semestre 2 de l\'année 1'), `journal : « ${l[0]} »`);
+  // Vérifiée après les comportements : une version cassée de la constante doit tomber sur un refus ou une permission.
+  ok(eng.json(`CEO_CALL_FIRST_SEMESTER`) === 1, 'constante : premier semestre permis = 1 (le deuxième de la partie)');
+});
 
 // --- A. Refus ------------------------------------------------------------------------------------------------
 scenario('refus', 'A. Refus : fenêtre, gel sur tous les chemins, dirigeant, une seule annonce, fin de partie, inactive, sans verdict', async (tf) => {
   const eng = await partie({ transform: tf });
   const [alice, bob] = eng.ids;
-  ok(refus(eng, 'A', alice) === null, 'fenêtre du tout premier semestre, Alice dirige A : annonce permise');
+  auDeuxiemeSemestre(eng); // Section 324 : pas d'annonce au premier semestre (scénario A0)
+  ok(refus(eng, 'A', alice) === null, 'fenêtre du début du deuxième semestre, Alice dirige A : annonce permise');
   ok(eng.run(`ceoCallWindowOpen()`) === true, 'fenêtre ouverte : aucun lancer, chiffres provisoires');
   ok(/Seul le PDG de Co Alice/.test(refus(eng, 'A', bob)), `Bob ne dirige pas A : « ${refus(eng, 'A', bob)} »`);
   ok(/Seul le PDG/.test(refus(eng, 'A', '')) && /Seul le PDG/.test(eng.json(`ceoCallRefusal(A, null)`)), 'sans identité : refusée');
@@ -71,6 +135,7 @@ scenario('refus', 'A. Refus : fenêtre, gel sur tous les chemins, dirigeant, une
   // Les trois chemins de lancer.
   for(const [chemin, appel] of [['lancer pour tous', 'performRollForAllCompanies()'], ['lancer d\'une entreprise', 'rollDiceAndMove(B.id)'], ['pion neutre', "(state.neutralPawns = state.neutralPawns||[], state.neutralPawns.push({id:'pw', name:'N', position:0, inJail:false, jailTurnsLeft:0}), corePerformNeutralPawnRoll(state.neutralPawns[state.neutralPawns.length-1]))"]]){
     const e = await partie({ transform: tf });
+    auDeuxiemeSemestre(e);
     ok(refus(e, 'A', e.ids[0]) === null, `${chemin} : permise avant`);
     await e.run(appel);
     ok(/Trop tard pour ce semestre/.test(refus(e, 'A', e.ids[0])), `${chemin} : refusée après le premier déplacement — « ${refus(e, 'A', e.ids[0]).slice(0, 60)}… »`);
@@ -79,6 +144,7 @@ scenario('refus', 'A. Refus : fenêtre, gel sur tous les chemins, dirigeant, une
   }
   // Fenêtre fermée entre l'affichage et le clic : l'écran a vu « permise », un lancer passe, puis le clic.
   const e2 = await partie({ transform: tf });
+  auDeuxiemeSemestre(e2);
   ok(refus(e2, 'A', e2.ids[0]) === null, 'écran : permise');
   const pRoll = e2.run(`performRollForAllCompanies()`);
   const pCall = e2.run(`announceCeoCall(A.id, 'promise')`);
@@ -86,15 +152,17 @@ scenario('refus', 'A. Refus : fenêtre, gel sur tous les chemins, dirigeant, une
   ok(rc.ok === false && /Trop tard/.test(rc.error) && e2.json(`A.ceoCall`) === null && e2.json(`state.log.map(l=>String(l.text||l))`).every(t => !/📣/.test(t)), 'clic mis en file derrière un lancer : refusé dans l\'action, aucun cube, aucune ligne');
   // Nouveau semestre : de nouveau permise.
   await e2.run(`performRollForAllCompanies()`); await e2.run(`performRollForAllCompanies()`);
-  ok(e2.run(`state.gameClock.rollCount`) === 3 && refus(e2, 'A', e2.ids[0]) === null, 'semestre suivant, avant son premier lancer : permise');
+  ok(e2.run(`state.gameClock.rollCount`) === 6 && refus(e2, 'A', e2.ids[0]) === null, 'semestre suivant (le troisième), avant son premier lancer : permise');
   // Entreprise créée en cours de semestre.
   const e3 = await partie({ names: ['Alice', 'Bob', 'Chloe'], types: ['garp', 'garp', null], transform: tf });
+  auDeuxiemeSemestre(e3);
   await e3.run(`performRollForAllCompanies()`);
   await e3.run(`createCompany(state.players[2].id, 'Co Tard', '', 'garp', null, null, null)`);
   e3.run(`applyCompanyIpoFunding(state.companies[2]);`);
   ok(/n’aura pas de verdict des analystes pour Co Tard/.test(e3.json(`ceoCallRefusal(state.companies[2], state.players[2].id)`)), 'entreprise créée en cours de semestre : refusée (pas de verdict)');
   // Entreprise créée DANS la fenêtre (avant le premier lancer) : permise, elle sera figée au premier lancer.
   const e4 = await partie({ names: ['Alice', 'Bob', 'Chloe'], types: ['garp', 'garp', null], transform: tf });
+  auDeuxiemeSemestre(e4);
   await e4.run(`createCompany(state.players[2].id, 'Co Tot', '', 'garp', null, null, null)`);
   e4.run(`applyCompanyIpoFunding(state.companies[2]);`);
   ok(e4.json(`ceoCallRefusal(state.companies[2], state.players[2].id)`) === null, 'entreprise créée dans la fenêtre : permise');
@@ -106,6 +174,7 @@ scenario('refus', 'A. Refus : fenêtre, gel sur tous les chemins, dirigeant, une
   // sous enquête est un choix, rien de l'AMF ne change). À l'écran et dans l'action, avertissement comme promesse.
   for(const kind of ['warning', 'promise']){
     const e6 = await partie({ seed: 41, transform: tf });
+    auDeuxiemeSemestre(e6);
     e6.run(`A.inJail = true; A.jailTurnsLeft = 3;`);
     ok(refus(e6, 'A', e6.ids[0]) === null, `entreprise sous enquête : ${kind} permise (aucun refus)`);
     const coul = kind === 'warning' ? 'red' : 'green';
@@ -125,20 +194,21 @@ scenario('annonce', 'B. Annonce synchronisée : cube immédiat, argent conservé
   for(const [kind, color, other] of [['warning', 'red', 'green'], ['promise', 'green', 'red']]){
     const eng = await partie({ transform: tf });
     const [alice] = eng.ids;
+    auDeuxiemeSemestre(eng); // Section 324 : semestre 1 (le deuxième de la partie), roll 3
     const live0 = eng.json(`analystForecastFor(A)`);
     const snap = () => eng.json(`({f:Object.assign({}, A.stockReserve), t:Object.assign({}, A.tradingReserve||{}), ty:Object.assign({}, A.typeReserve||{}), bf:Object.assign({}, B.stockReserve), cash:A.cash, price:A.stockPrice})`);
     const s0 = snap(), m0 = eng.cashTotal();
     const ids0 = eng.json(`(state.appliedActionIds||[]).length`);
     const r = await eng.run(`announceCeoCall(A.id, ${JSON.stringify(kind)})`);
     const s1 = snap();
-    ok(r.ok === true && r.kind === kind && r.color === color && r.qty === 1 && r.semester === 0, `${kind} : action réussie, ${JSON.stringify({ kind: r.kind, color: r.color, qty: r.qty, semester: r.semester })}`);
+    ok(r.ok === true && r.kind === kind && r.color === color && r.qty === 1 && r.semester === 1, `${kind} : action réussie, ${JSON.stringify({ kind: r.kind, color: r.color, qty: r.qty, semester: r.semester })}`);
     ok(s1.f[color] - s0.f[color] === 1 && s1.f[other] === s0.f[other] && s1.f.white === s0.f.white, `${kind} : 1 cube ${color === 'red' ? 'rouge' : 'vert'} au sac FONDAMENTAL (${s0.f[color]} → ${s1.f[color]}), rien d'autre`);
     ok(JSON.stringify(s1.t) === JSON.stringify(s0.t) && JSON.stringify(s1.ty) === JSON.stringify(s0.ty) && JSON.stringify(s1.bf) === JSON.stringify(s0.bf), `${kind} : sac trading, sac type et sac de B inchangés`);
     ok(near(eng.cashTotal(), m0) && s1.cash === s0.cash && s1.price === s0.price, `${kind} : argent conservé, encaisse et cours inchangés`);
     const call = eng.json(`A.ceoCall`);
-    ok(call && call.semester === 0 && call.kind === kind && call.atRoll === 0 && call.playerId === alice, `${kind} : co.ceoCall = ${JSON.stringify(call)}`);
+    ok(call && call.semester === 1 && call.kind === kind && call.atRoll === 3 && call.playerId === alice, `${kind} : co.ceoCall = ${JSON.stringify(call)}`);
     const l = logs(eng, /📣/);
-    ok(l.length === 1 && l[0].includes('Co Alice') && l[0].includes(kind === 'warning' ? 'avertissement du PDG' : 'promesse du PDG') && l[0].includes('semestre 1 de l\'année 1') && l[0].includes('au sac fondamental'), `${kind} : une ligne de journal visible de tous — « ${l[0]} »`);
+    ok(l.length === 1 && l[0].includes('Co Alice') && l[0].includes(kind === 'warning' ? 'avertissement du PDG' : 'promesse du PDG') && l[0].includes('semestre 2 de l\'année 1') && l[0].includes('au sac fondamental'), `${kind} : une ligne de journal visible de tous — « ${l[0]} »`);
     ok(eng.json(`(state.appliedActionIds||[]).length`) === ids0 + 1, `${kind} : passée par la file d'actions (identifiant enregistré)`);
     const saved = JSON.parse(eng.mem.get('game:' + eng.run('gameCode')));
     ok(saved.companies[0].ceoCall && saved.companies[0].ceoCall.kind === kind && saved.companies[0].stockReserve[color] === s1.f[color], `${kind} : enregistrée avec son cube (même écriture)`);
@@ -150,6 +220,7 @@ scenario('annonce', 'B. Annonce synchronisée : cube immédiat, argent conservé
   }
   // Double clic (deux actions en file, la seconde voit la première).
   const eng = await partie({ transform: tf });
+  auDeuxiemeSemestre(eng);
   eng.run(`myPlayerId = ${JSON.stringify(eng.ids[1])};`);
   const g0 = eng.json(`B.stockReserve.green`);
   const [x, y] = await Promise.all([eng.run(`announceCeoCall(B.id, 'promise')`), eng.run(`announceCeoCall(B.id, 'promise')`)]);
@@ -159,12 +230,22 @@ scenario('annonce', 'B. Annonce synchronisée : cube immédiat, argent conservé
   const rb = await eng.run(`announceCeoCall(A.id, 'warning')`);
   ok(rb.ok === false && /Seul le PDG de Co Alice/.test(rb.error) && eng.json(`A.ceoCall`) === null && eng.json(`A.stockReserve.red`) === red0, 'Bob annonce pour A : refusée, aucun cube');
   // « Vous êtes » change pendant que l'action attend dans la file : l'action n'est pas faite au nom du nouveau joueur.
+  // Section 324 : au deuxième semestre, sinon le refus du premier semestre rendrait ce cas vide. La file est occupée
+  // par une action neutre et non plus par un lancer (qui fermait la fenêtre : le refus pouvait venir de « Trop tard »
+  // et non de l'identité) ; le témoin sans changement d'identité prouve que seule l'identité fait refuser.
   const e2 = await partie({ transform: tf });
-  const pRoll = e2.run(`performRollForAllCompanies()`); // occupe la file
+  auDeuxiemeSemestre(e2);
+  const pNeutre = e2.run(`attemptActionWithRetry(()=>({ok:true}), {label:'neutre'})`); // occupe la file
   const pCall = e2.run(`announceCeoCall(A.id, 'promise')`); // lancée au nom d'Alice
   e2.run(`myPlayerId = ${JSON.stringify(e2.ids[1])};`);
-  await pRoll; const rcall = await pCall;
-  ok(rcall.ok === false && e2.json(`A.ceoCall`) === null, 'identité changée pendant l\'attente : rien n\'est annoncé');
+  await pNeutre; const rcall = await pCall;
+  ok(rcall.ok === false && e2.json(`A.ceoCall`) === null && !PREMIER.test(rcall.error || ''), `identité changée pendant l'attente : rien n'est annoncé — « ${rcall.error} »`);
+  const e2b = await partie({ transform: tf });
+  auDeuxiemeSemestre(e2b);
+  const qNeutre = e2b.run(`attemptActionWithRetry(()=>({ok:true}), {label:'neutre'})`);
+  const qCall = e2b.run(`announceCeoCall(A.id, 'promise')`);
+  await qNeutre; const rtem = await qCall;
+  ok(rtem.ok === true && e2b.json(`A.ceoCall.kind`) === 'promise', 'témoin : même file, identité inchangée : l\'annonce passe');
 });
 
 // --- C. Clôture -----------------------------------------------------------------------------------------------
@@ -276,17 +357,25 @@ scenario('verdict', 'C3. L\'annonce ne change ni le verdict, ni l\'axe Croissanc
 scenario('parcours', 'C4. Parcours complet : annonce par l\'action, gel, trois vrais lancers, clôture', async (tf) => {
   for(const kind of ['warning', 'promise']){
     const eng = await partie({ seed: kind === 'warning' ? 11 : 12, transform: tf });
+    // Section 324 : premier semestre joué par trois vrais lancers, sans annonce possible ; l'annonce se fait au début du
+    // deuxième semestre (semestre 1), de fin d'année.
+    ok(PREMIER.test(eng.json(`ceoCallRefusal(A, myPlayerId)`) || ''), `${kind} : premier semestre, annonce refusée`);
+    for(let i = 0; i < 3; i++) await eng.run(`performRollForAllCompanies()`);
+    ok(eng.run(`state.gameClock.rollCount`) === 3 && !eng.run(`!!state.gameEndedReason`) && eng.json(`A.analystHistory.length`) === 1 && eng.json(`A.analystHistory[0].call`) === null,
+      `${kind} : premier semestre clos par trois vrais lancers (verdict sans annonce)`);
     const live = eng.json(`analystForecastFor(A)`);
+    ok(live.semester === 1 && live.frozen === false, `${kind} : début du deuxième semestre, chiffres provisoires`);
     const r = await eng.run(`announceCeoCall(A.id, '${kind}')`);
-    ok(r.ok, `${kind} : annonce faite dans la fenêtre`);
+    ok(r.ok && r.semester === 1, `${kind} : annonce faite dans la fenêtre du deuxième semestre`);
     const m0 = eng.cashTotal();
     await eng.run(`performRollForAllCompanies()`);
     const f = eng.json(`A.analystForecast`);
-    ok(f.semester === 0 && f.m === live.m && f.target === live.target && f.zone === live.zone, `${kind} : chiffres figés = chiffres provisoires vus avant l'annonce`);
+    ok(f.semester === 1 && f.m === live.m && f.target === live.target && f.zone === live.zone, `${kind} : chiffres figés = chiffres provisoires vus avant l'annonce`);
     ok(eng.json(`A.ceoCall.kind`) === kind, `${kind} : annonce gardée jusqu'à la clôture`);
     await eng.run(`performRollForAllCompanies()`); await eng.run(`performRollForAllCompanies()`);
-    const h = eng.json(`A.analystHistory[0]`);
-    ok(h && h.semester === 0 && h.call === kind && eng.json(`A.ceoCall`) === null, `${kind} : clôture : historique ${JSON.stringify({ verdict: h && h.verdict, qty: h && h.qty, call: h && h.call, callEffect: h && h.callEffect })}, ceoCall remis à null`);
+    const h = eng.json(`A.analystHistory.find(e=>e.semester===1)`);
+    ok(h && h.semester === 1 && h.call === kind && eng.json(`A.ceoCall`) === null && eng.json(`A.analystHistory.length`) === 2,
+      `${kind} : clôture : historique ${JSON.stringify({ verdict: h && h.verdict, judged: h && +h.judged.toFixed(4), target: h && +h.target.toFixed(4), zone: h && +h.zone.toFixed(4), qty: h && h.qty, call: h && h.call, callEffect: h && h.callEffect })}, ceoCall remis à null`);
     const down = /Down$/.test(h.verdict);
     const exp = kind === 'promise' ? (down ? [h.verdict === 'strongDown' ? 8 : 5] : null) : (down ? (h.verdict === 'strongDown' ? [2] : [0, 1]) : null);
     if(exp) ok(exp.includes(h.qty) && typeof h.callEffect === 'string', `${kind} : ${h.verdict} → ${h.qty} cube(s), effet « ${h.callEffect} »`);
@@ -310,9 +399,11 @@ scenario('fin', 'C5. Promesse au tout dernier semestre : pas de règle spéciale
 
 // --- D. Deux appareils ----------------------------------------------------------------------------------------
 scenario('appareils', 'D. Deux appareils (faux serveur) : simultanées, accusé perdu : un seul cube', async (tf) => {
+  // Section 324 : parties posées sur le serveur au début du deuxième semestre (roll 3), où l'annonce est permise.
+  const deuxieme = s => { s.gameClock.rollCount = 3; };
   // D1. Deux appareils d'Alice annoncent en même temps (l'un un avertissement, l'autre une promesse).
   {
-    const P = await partieReseau(['Alice', 'Bob'], ['garp', 'garp']);
+    const P = await partieReseau(['Alice', 'Bob'], ['garp', 'garp'], deuxieme);
     const R = new Reseau({ graine: 5 });
     R.ecrireServeur(P.chemin, P.raw);
     const T1 = appareil(R, P, 'Alice-tel', P.ids[0], { transform: tf });
@@ -325,6 +416,7 @@ scenario('appareils', 'D. Deux appareils (faux serveur) : simultanées, accusé 
     await R.pomper();
     const apres = serveur(R, P);
     const fa = avant.companies[0].stockReserve, fb = apres.companies[0].stockReserve;
+    ok(avant.gameClock.rollCount === 3, 'partie du serveur au début du deuxième semestre (roll 3)');
     const oks = [r1, r2].filter(r => r && r.ok);
     const added = (fb.red - fa.red) + (fb.green - fa.green);
     ok(oks.length === 1 && added === 1, `simultanées : une réussie, l'autre refusée (« ${([r1, r2].find(r => !r.ok) || {}).error} ») ; ${added} cube ajouté sur le serveur`);
@@ -336,7 +428,7 @@ scenario('appareils', 'D. Deux appareils (faux serveur) : simultanées, accusé 
   }
   // D2. Accusé perdu : le serveur écrit, l'accusé se perd, Bob enregistre 110 actions, Alice se reconnecte (rejeu).
   for(const nb of [0, 110]){
-    const P = await partieReseau(['Alice', 'Bob'], ['garp', 'garp']);
+    const P = await partieReseau(['Alice', 'Bob'], ['garp', 'garp'], deuxieme);
     const R = new Reseau({ graine: 9 });
     R.ecrireServeur(P.chemin, P.raw);
     const A = appareil(R, P, 'Alice', P.ids[0], { transform: tf });
@@ -365,11 +457,14 @@ scenario('appareils', 'D. Deux appareils (faux serveur) : simultanées, accusé 
 scenario('migration', 'E. Partie ancienne migrée, annonce périmée, semestre sans verdict, affichage', async (tf) => {
   const eng = await partie({ seed: 5, transform: tf });
   // Partie ancienne : ni ceoCall, ni call dans l'historique.
-  eng.run(`(function(){ const s = JSON.parse(JSON.stringify(state)); s.companies.forEach(c=>{ delete c.ceoCall; c.analystHistory = [{semester:0, h:null, m:2, k:null, target:2, zone:0.5, actual:0.5, verdict:'strongDown', beaten:0, of:1, color:'red', qty:5}]; }); s.companies[1].ceoCall = 'illisible'; migrateState(s); state = s; A = state.companies[0]; B = state.companies[1]; })()`);
+  // Section 324 : partie migrée au début du deuxième semestre (roll 3, après le verdict du semestre 0).
+  eng.run(`(function(){ const s = JSON.parse(JSON.stringify(state)); s.gameClock.rollCount = 3; s.companies.forEach(c=>{ delete c.ceoCall; c.analystHistory = [{semester:0, h:null, m:2, k:null, target:2, zone:0.5, actual:0.5, verdict:'strongDown', beaten:0, of:1, color:'red', qty:5}]; }); s.companies[1].ceoCall = 'illisible'; migrateState(s); state = s; A = state.companies[0]; B = state.companies[1]; })()`);
   ok(eng.json(`A.ceoCall`) === null && eng.json(`B.ceoCall`) === null, 'migrateState : ceoCall absent → null, forme illisible → null');
   const line = eng.run(`analystVerdictLineText(A.analystHistory[0], true)`);
   ok(/— 5 cubes rouges au sac fondamental\.$/.test(line) && !/PDG/.test(line), `ancienne ligne d'historique sans annonce : « …${line.slice(line.indexOf('—'))} »`);
-  ok(eng.json(`ceoCallRefusal(A, myPlayerId)`) === null, 'partie migrée, au début d\'un semestre : annonce permise');
+  ok(eng.json(`ceoCallRefusal(A, myPlayerId)`) === null, 'partie migrée, au début du deuxième semestre : annonce permise');
+  ok(eng.json(`(function(){ const s = JSON.parse(JSON.stringify(state)); s.gameClock.rollCount = 0; s.companies.forEach(c=>{ delete c.ceoCall; c.analystHistory = []; }); migrateState(s); state = s; A = state.companies[0]; B = state.companies[1]; return ceoCallRefusal(A, myPlayerId); })()`).startsWith('Pas d’annonce du PDG avant le semestre 2'),
+    'partie migrée au tout premier semestre : refus du premier semestre (section 324)');
   // Annonce périmée : promesse du semestre 0 restée dans l'état, clôture du semestre 2 sous la zone (fort).
   const e2 = await closeBench(tf, 9);
   const st = e2.json(`(function(){ __ni = 0.5; A.analystForecast = Object.assign({semester:2, sigma:0, parts:{}}, ${JSON.stringify(F3)}); A.ceoCall = {semester:0, kind:'promise', atRoll:0, playerId:A.ceoId};
@@ -377,19 +472,22 @@ scenario('migration', 'E. Partie ancienne migrée, annonce périmée, semestre s
   ok(st.e.verdict === 'strongDown' && st.e.qty === 5 && st.dr === 5 && st.e.call === null && st.e.callEffect === null && st.call === null, `annonce périmée (semestre 0) à la clôture du semestre 2 : ignorée (5 rouges, pas 8) et effacée — ${JSON.stringify({ qty: st.e.qty, call: st.e.call })}`);
   ok(e2.json(`analystVerdictCubes('strongDown', {ceoCall:{semester:0, kind:'promise'}, analystForecast:{semester:2}}, -1.5).qtyMax`) === 5, 'analystVerdictCubes : semestre par défaut = celui des chiffres figés, annonce d\'un autre semestre ignorée');
   // Semestre sans verdict : annonce faite, puis aucun chiffre figé à la clôture.
+  // Section 324 : annonce au début du deuxième semestre (semestre 1), clôture de ce semestre sans chiffres figés.
   const e3 = await partie({ seed: 6, transform: tf });
-  await e3.run(`announceCeoCall(A.id, 'promise')`);
+  auDeuxiemeSemestre(e3);
+  const ann3 = await e3.run(`announceCeoCall(A.id, 'promise')`);
+  ok(ann3.ok === true && ann3.semester === 1, 'semestre sans verdict : promesse faite au début du semestre 1');
   e3.run(`drawStockCubes = function(){ return []; }; globalThis.__vc = 0; globalThis.__rvc = analystVerdictCubes; analystVerdictCubes = function(){ __vc++; return __rvc.apply(null, arguments); };
-    state.gameClock.rollCount = 2; state.companies.forEach(c=>{ c.analystForecast = null; }); advanceGameClock();`);
+    state.gameClock.rollCount = 5; state.companies.forEach(c=>{ c.analystForecast = null; }); advanceGameClock();`);
   ok(e3.json(`A.analystHistory.length`) === 0 && e3.json(`A.ceoCall`) === null, 'semestre sans verdict : aucune ligne d\'historique, l\'annonce est effacée');
   const lg = logs(e3, /reste sans effet/);
   ok(lg.length === 1 && /promesse/.test(lg[0]), `semestre sans verdict : une ligne dit que l'annonce reste sans effet — « ${lg[0]} »`);
   ok(e3.json(`__vc`) === 0 && !logs(e3, /promesse du PDG non tenue/).length, 'semestre sans verdict : aucun cube de verdict ni de promesse (seul le cube de l\'annonce a compté)');
   // Un semestre plus tard, elle ne revient pas : clôture suivante avec chiffres figés et bénéfice sous la zone.
   e3.run(`incomeStatementFor = function(id, s){ return {companyId:id, semesterIndex:s, revenues:{}, expenses:{}, totalRevenue:10, totalExpense:9.5, netIncome:0.5}; };
-    A.analystForecast = Object.assign({semester:1, sigma:0, parts:{}}, ${JSON.stringify(F3)}); state.gameClock.rollCount = 5; advanceGameClock();`);
+    A.analystForecast = Object.assign({semester:2, sigma:0, parts:{}}, ${JSON.stringify(F3)}); state.gameClock.rollCount = 8; advanceGameClock();`);
   const h3 = e3.json(`A.analystHistory[0]`);
-  ok(h3 && h3.semester === 1 && h3.call === null && h3.qty === 5, `semestre suivant : l'ancienne annonce ne s'applique pas (5 rouges, call null)`);
+  ok(h3 && h3.semester === 2 && h3.call === null && h3.qty === 5, `semestre suivant : l'ancienne annonce ne s'applique pas (5 rouges, call null)`);
   // Affichage : rien ne plante, la ligne du verdict reste juste dans le résumé du tour et le tableau du graphique.
   const e4 = await partie({ transform: tf });
   e4.run(`A.analystHistory = [{semester:0, h:1, m:2, k:3, target:2, zone:0.5, actual:0.5, judged:0.5, adjust:0, verdict:'strongDown', beaten:0, of:3, color:'red', qty:8, call:'promise', callEffect:'promesse du PDG non tenue : 3 cubes rouges de plus'},
@@ -402,8 +500,15 @@ scenario('migration', 'E. Partie ancienne migrée, annonce périmée, semestre s
   e4.run(`state.lastDiceRollEvent = {roll:5, portfolioDeltas:{}}; __modals.length = 0; showDiceRollTurnPopup(A, 5);`);
   const pop2 = strip(e4.run(`__modals[__modals.length-1]`));
   ok(/sous la zone \(verdict normal\), 1 analyste battu sur 3 — aucun cube \(avertissement du PDG : tirage de la zone, 0 ou 1 cube rouge, au lieu de 2 cubes rouges\)\./.test(pop2), 'résumé du tour : avertissement, « aucun cube » expliqué');
-  const tab = strip(e4.run(`expectationVsActualChartHtml(A, [])`));
-  ok(/8 cubes rouges \(promesse du PDG non tenue/.test(tab) && /aucun cube \(avertissement du PDG/.test(tab) && /5 cubes verts \(promesse du PDG tenue\)/.test(tab), 'tableau du graphique : effet de chaque annonce, promesse tenue comprise');
+  // Section 324 (contrat, B2) : le tableau quitte le dessous du graphique pour la fenêtre « Détails »
+  // (analystDetailsTableHtml) ; une ligne par semestre jugé, cubes et annonce du PDG dans la même ligne.
+  const rows = e4.json(`(analystDetailsTableHtml(A).match(/<tr[\\s\\S]*?<\\/tr>/g)||[])`).map(strip);
+  const row = re => rows.find(t => re.test(t)) || '';
+  const r0 = row(/Année 1, Semestre 1/), r1 = row(/Année 1, Semestre 2/), r2 = row(/Année 2, Semestre 1/);
+  ok(/8 cubes rouges/.test(r0) && /Promesse du PDG non tenue : 3 cubes rouges de plus/.test(r0)
+    && /aucun cube/.test(r1) && /Avertissement du PDG : tirage de la zone/.test(r1)
+    && /5 cubes verts/.test(r2) && /Promesse du PDG tenue/.test(r2),
+    `tableau de la fenêtre « Détails » : effet de chaque annonce dans la ligne de son semestre, promesse tenue comprise — « ${r0} »`);
   const page = strip(e4.run(`renderEntreprise()`));
   ok(/Attentes des analystes/.test(page), 'onglet Entreprise : s\'affiche avec une annonce en cours');
   ok(strip(e4.run(`analystExpectationBlockHtml(A)`)).length > 0, 'bloc des attentes : s\'affiche avec une annonce en cours');
@@ -427,6 +532,11 @@ const MUTATIONS = [
   ['annonce refusée pendant une enquête de l\'AMF (refus retiré à la demande de Julien)', s => rep(s, '  if(!ceoCallWindowOpen()){\n    const frozen = co.analystForecast', "  if(co.inJail) return 'refus pendant une enquête';\n  if(!ceoCallWindowOpen()){\n    const frozen = co.analystForecast"), ['refus']],
   ['annonce permise en fin de partie', s => rep(s, "  if(state.gameEndedReason) return 'La partie est terminée — plus aucune annonce", "  if(false) return 'La partie est terminée — plus aucune annonce"), ['refus']],
   ['annonce qui change le verdict (fort ramené à normal)', s => rep(s, '  const v = analystVerdict(fc, judged);', "  const v = analystVerdict(fc, judged); if(call && v.verdict==='strongDown') v.verdict = 'normalDown';"), ['cloture', 'verdict']],
+  // Section 324 : aucune annonce au premier semestre.
+  ['section 324 : refus du premier semestre retiré', s => rep(s, "  if(sem<CEO_CALL_FIRST_SEMESTER) return `Pas d’annonce du PDG avant le", "  if(false) return `Pas d’annonce du PDG avant le"), ['premier', 'parcours', 'migration']],
+  ['section 324 : CEO_CALL_FIRST_SEMESTER à 0 (annonce permise dès le premier semestre)', s => rep(s, 'const CEO_CALL_FIRST_SEMESTER = 1;', 'const CEO_CALL_FIRST_SEMESTER = 0;'), ['premier', 'parcours', 'migration']],
+  ['section 324 : CEO_CALL_FIRST_SEMESTER à 2 (deuxième semestre refusé aussi)', s => rep(s, 'const CEO_CALL_FIRST_SEMESTER = 1;', 'const CEO_CALL_FIRST_SEMESTER = 2;'), ['premier', 'refus', 'annonce', 'parcours', 'appareils', 'migration']],
+  ['section 324 : premier semestre compté sur les lancers et non sur le semestre', s => rep(s, "  if(sem<CEO_CALL_FIRST_SEMESTER) return `Pas d’annonce", "  if((state.gameClock.rollCount||0)<CEO_CALL_FIRST_SEMESTER) return `Pas d’annonce"), ['premier']],
 ];
 
 async function runScenario(sc, tf){

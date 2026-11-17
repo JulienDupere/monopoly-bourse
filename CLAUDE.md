@@ -97,7 +97,7 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 - Attentes du marché (section 323, contrat `docs/contrats/section-323-analystes.md`) : trois analystes
   (`analystHistorian`, `analystModeller` / `analystModelAll` sur les fréquences exactes du plateau
   `analystBoardChain` / `analystTurnTables`, marché = capitalisation × rendement moyen), cible = l'analyste du milieu,
-  zone = cible ± max(0,5 ; 0,35 σ) (`ANALYST_ZONE_K`, `ANALYST_ZONE_FLOOR`). Chiffres provisoires pendant la fenêtre
+  zone = cible ± max(0,35 ; 0,25 σ) depuis la section 324 (`ANALYST_ZONE_K`, `ANALYST_ZONE_FLOOR`). Chiffres provisoires pendant la fenêtre
   (`analystForecastsLive`, `analystForecastFor`), figés au premier déplacement du semestre
   (`freezeAnalystForecasts`, `co.analystForecast`), jugés à la clôture (`applyAnalystVerdict`, `co.analystHistory`) sur
   le bénéfice jugé (intérêts hypothécaires de fin d'année rejugés). Cubes fixes lus à un seul endroit
@@ -107,6 +107,14 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
   fenêtre, permise même sous enquête de l'AMF par décision de Julien), interface `ceoCallBoxHtml`. `companyExpectedNetIncome` et
   `netIncomeExpectationTier` ne commandent plus aucun cube. Banc de mesure hors du jeu : `tests/sim/analystes/`
   (non lancé par `run-all`). Aide-mémoire et cahiers pas à jour de la section 323.
+- Affichage des analystes (section 324, contrat `docs/contrats/section-324-affichage.md`) : aucune annonce du PDG au
+  premier semestre (`CEO_CALL_FIRST_SEMESTER`) ; l'encadré `ceoCallBoxHtml` n'existe que dans la fenêtre « Résultats du
+  tour » (`showDiceRollTurnPopup`), plus dans l'onglet Entreprise, qui garde une ligne d'indication vers « Revoir le
+  dernier tour ». Graphique `expectationVsActualChartHtml(company, periods, opts)` : trois analystes (`ANALYST_MARKS`),
+  mode compact ; fenêtres `openAnalystDetailsModal` (tableau `analystDetailsTableHtml`, tous les semestres) et
+  `openAnalystOverviewModal` (toutes les entreprises, bouton `pfAnalystDetailsBtn` de `renderPortefeuilleFinancials`) ;
+  boutons branchés par `bindAnalystButtons`. Mesures d'appoint : `tests/sim/analystes/mesures324-*.js`,
+  `resultats-324.txt`.
 - Marché : `executeShareTrade`, `placeBid` / `placeAsk` / `checkPendingOrders`, `drawStockCubes`, options
   (`blackScholesPremium`, `openOptionPosition`…), `enforceMarginCalls`.
 
@@ -126,8 +134,8 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 
 ## Tests
 
-- `node tests/run-all.js` lance tous les `tests/*.test.js` (89 fichiers, 6 520 vérifications et 53 cas
-  multi-appareils au 2026-11-17, après la section 323). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
+- `node tests/run-all.js` lance tous les `tests/*.test.js` (90 fichiers, 6 768 vérifications et 53 cas
+  multi-appareils au 2026-11-17, après la section 324). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
   `tests/helpers/fake-firebase.js`, mini-DOM `tests/helpers/fake-dom.js` ; `SYNC_SEEDS=40` pour un passage long). Il charge
   tout le script d'`index.html`, donc une erreur de syntaxe le fait échouer. Tout doit passer avant un push.
 - Syntaxe seule : `node -e "new (require('vm').Script)(require('./tests/helpers/engine').engineSource())"`.

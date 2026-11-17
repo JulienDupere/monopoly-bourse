@@ -371,9 +371,18 @@ scenario('analystes', 'A6. Historien, marché (C3 : au moins 2 capitalisations p
   ok(tz('null', 1, 4, 0).target === 2.5 && tz(2, 6, 'null', 0).target === 4, 'cible à 2 analystes : leur moyenne');
   ok(tz('null', -1.25, 'null', 0).target === -1.25, 'cible à 1 analyste : lui');
   // Section 323 (D4, décision de Julien du 2026-11-17) : zone à 0,35 × σ (avant : 0,5 × σ ; σ = 3 donnait 1,5).
-  ok(tz(1, 2, 3, 0).zone === 0.5 && tz(1, 2, 3, 1).zone === 0.5 && tz(1, 2, 3, 1.4).zone === 0.5, 'zone au plancher : 0,5 tant que 0,35 × σ ≤ 0,5 (σ = 0, 1, 1,4)');
-  ok(Math.abs(tz(1, 2, 3, 3).zone - 1.05) < 1e-12, 'zone au-dessus du plancher : σ = 3 → 0,35 × 3 = 1,05 (D4 ; avant : 1,5)');
-  ok(Math.abs(tz(1, 2, 3, 2).zone - 0.7) < 1e-12, 'zone au-dessus du plancher : σ = 2 → 0,7 (D4 ; avec 0,5 × σ : 1)');
+  // Section 324 (décision de Julien du 2026-11-17) : zone resserrée à max(0,35 ; 0,25 × σ) (section 323 : max(0,5 ; 0,35 × σ)).
+  ok(tz(1, 2, 3, 0).zone === 0.35 && tz(1, 2, 3, 1).zone === 0.35 && Math.abs(tz(1, 2, 3, 1.4).zone - 0.35) < 1e-12,
+    'zone au plancher : 0,35 tant que 0,25 × σ ≤ 0,35 (σ = 0, 1, 1,4 ; avec la section 323 : 0,5, 0,5, 0,5)');
+  ok(Math.abs(tz(1, 2, 3, 1.2).zone - 0.35) < 1e-12, 'σ = 1,2 : 0,25 × 1,2 = 0,3 sous le plancher → 0,35 (avec 0,35 × σ : 0,42)');
+  ok(Math.abs(tz(1, 2, 3, 3).zone - 0.75) < 1e-12, 'zone au-dessus du plancher : σ = 3 → 0,25 × 3 = 0,75 (section 323 : 1,05 ; avant : 1,5)');
+  ok(Math.abs(tz(1, 2, 3, 2).zone - 0.5) < 1e-12, 'zone au-dessus du plancher : σ = 2 → 0,25 × 2 = 0,5 (section 323 : 0,7 ; avec 0,5 × σ : 1)');
+  ok(Math.abs(tz(1, 2, 3, 1.6).zone - 0.4) < 1e-12, 'juste au-dessus du plancher : σ = 1,6 → 0,25 × 1,6 = 0,4 (section 323 : 0,35 × 1,6 = 0,56)');
+  // Les chiffres provisoires du moteur portent la même zone : max(0,35 ; 0,25 × σ du modélisateur).
+  const zA = all[ids[0]];
+  ok(zA.sigma > 0 && close(zA.zone, Math.max(0.35, 0.25 * zA.sigma)), `chiffres provisoires de A : σ = ${zA.sigma.toFixed(6)}, zone = max(0,35 ; 0,25 × σ) = ${zA.zone.toFixed(6)}`);
+  // Vérifiées après les valeurs : les versions cassées des constantes doivent tomber sur une zone calculée fausse.
+  ok(eng.json(`[ANALYST_ZONE_K, ANALYST_ZONE_FLOOR]`).join() === '0.25,0.35', 'constantes de la zone (section 324) : multiple 0,25 × σ, plancher 0,35');
   // Un seul analyste présent dans la partie : cible = M.
   const L = eng.json(`analystForecastFor(A)`);
   ok(L.h === null && L.k === null && L.target === L.m && L.frozen === false && L.verdictPossible === true, 'semestre 0, cours nuls : historien et marché absents, cible = M, chiffres provisoires');
@@ -541,7 +550,7 @@ scenario('rejuge', 'C4. Bénéfice jugé : intérêts hypothécaires rejugés à
   ok(close(apr.hA.actual, fen.hA.actual, 1e-9) && close(apr.hA.adjust, -7) && close(apr.hA.judged, apr.hA.actual - 7),
     `remboursé APRÈS le premier lancer : officiel ${apr.hA.actual.toFixed(4)} (sans intérêt), jugé ${apr.hA.judged.toFixed(4)} (intérêt figé de 7 compté)`);
   ok(close(apr.hA.judged - apr.hA.target, fen.hA.judged - fen.hA.target, 1e-9) && apr.hA.verdict === fen.hA.verdict && apr.hA.beaten === fen.hA.beaten,
-    `contournement refermé : même écart à la cible (${(apr.hA.judged - apr.hA.target).toFixed(4)}) et même verdict (${apr.hA.verdict}) qu'avec le remboursement dans la fenêtre`);
+    `contournement refermé : même écart à la cible (${(apr.hA.judged - apr.hA.target).toFixed(4)}, zone ± ${apr.hA.zone.toFixed(4)}) et même verdict (${apr.hA.verdict}) qu'avec le remboursement dans la fenêtre`);
   ok(apr.officialVerdictA !== apr.hA.verdict, `sans le rejugement, le bénéfice officiel aurait donné « ${apr.officialVerdictA} » au lieu de « ${apr.hA.verdict} » (cubes gagnés sans risque)`);
   ok(fen.cashOk && apr.cashOk && jam.cashOk, 'monnaie conservée dans les trois cas');
   // Prêteur : B prête à A ; A rembourse après le premier lancer, B ne reçoit pas l'intérêt que son M comptait.
@@ -807,8 +816,12 @@ const FREEZE_ALL = "    // enchères résolues à ce lancer et avant tout dépla
 const FREEZE_SOLO = "    // déplacement, dans la même action.\n    freezeAnalystForecasts();\n";
 const MUTATIONS = [
   // Lot moteur (première ronde).
-  ['plancher de la zone à 0,25', s => rep(s, 'const ANALYST_ZONE_K = 0.35, ANALYST_ZONE_FLOOR = 0.5,', 'const ANALYST_ZONE_K = 0.35, ANALYST_ZONE_FLOOR = 0.25,'), ['analystes']],
-  ['zone revenue à 0,5 × σ (D4)', s => rep(s, 'const ANALYST_ZONE_K = 0.35, ANALYST_ZONE_FLOOR = 0.5,', 'const ANALYST_ZONE_K = 0.5, ANALYST_ZONE_FLOOR = 0.5,'), ['analystes']],
+  // Section 324 : zone = max(0,35 ; 0,25 × σ). Chaque version cassée change UNE des deux constantes, ou les deux.
+  ['plancher de la zone à 0,25', s => rep(s, 'const ANALYST_ZONE_K = 0.25, ANALYST_ZONE_FLOOR = 0.35,', 'const ANALYST_ZONE_K = 0.25, ANALYST_ZONE_FLOOR = 0.25,'), ['analystes']],
+  ['section 324 : plancher revenu à 0,5', s => rep(s, 'const ANALYST_ZONE_K = 0.25, ANALYST_ZONE_FLOOR = 0.35,', 'const ANALYST_ZONE_K = 0.25, ANALYST_ZONE_FLOOR = 0.5,'), ['analystes']],
+  ['section 324 : multiple revenu à 0,35 × σ', s => rep(s, 'const ANALYST_ZONE_K = 0.25, ANALYST_ZONE_FLOOR = 0.35,', 'const ANALYST_ZONE_K = 0.35, ANALYST_ZONE_FLOOR = 0.35,'), ['analystes']],
+  ['section 324 : zone de la section 323 (0,35 × σ, plancher 0,5)', s => rep(s, 'const ANALYST_ZONE_K = 0.25, ANALYST_ZONE_FLOOR = 0.35,', 'const ANALYST_ZONE_K = 0.35, ANALYST_ZONE_FLOOR = 0.5,'), ['analystes']],
+  ['zone revenue à 0,5 × σ (D4)', s => rep(s, 'const ANALYST_ZONE_K = 0.25, ANALYST_ZONE_FLOOR = 0.35,', 'const ANALYST_ZONE_K = 0.5, ANALYST_ZONE_FLOOR = 0.35,'), ['analystes']],
   ['bord de la zone exclu (< au lieu de ≤)', s => rep(s, 'if(Math.abs(actual - f.target) <= f.zone)', 'if(Math.abs(actual - f.target) < f.zone)'), ['verdict']],
   ['égalité comptée comme battue', s => rep(s, 'const beaten = vals.filter(x=>actual > x).length;', 'const beaten = vals.filter(x=>actual >= x).length;'), ['verdict']],
   ['un seul analyste donne un verdict fort', s => rep(s, "(of>1 && beaten===of) ? 'strongUp'", "(beaten===of) ? 'strongUp'"), ['verdict']],

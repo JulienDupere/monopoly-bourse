@@ -1,7 +1,8 @@
 // Test — section 323 (lot 7) : interface du pari du PDG (contrat docs/contrats/section-323-analystes.md, 7.3).
 // L'encadré « Annonce du PDG pour le semestre qui commence » (ceoCallBoxHtml), à deux endroits : fenêtre « Résultats du
-// tour » (place 'pop') et onglet Entreprise sous les attentes des analystes (place 'ent').
-//   A. Encadré permis (cible provisoire, règle, deux gestes, « ne rien annoncer ») aux deux endroits.
+// tour » (place 'pop'). Section 324 : plus d'encadré dans l'onglet Entreprise (place 'ent' retirée), et aucune annonce au
+// premier semestre de la partie (CEO_CALL_FIRST_SEMESTER = 1) : tous les scénarios d'annonce se jouent au semestre 1 ou après.
+//   A. Encadré permis (cible provisoire, règle, deux gestes, « ne rien annoncer ») dans la fenêtre du tour ; absent de l'onglet Entreprise.
 //   B. Déjà annoncé (avertissement, promesse) : le texte de l'annonce, sans bouton ; ligne visible de tous (autre joueur).
 //   C. Refus : fenêtre fermée, semestre sans verdict, partie terminée ; joueur sans entreprise : rien du tout.
 //   D. Fenêtre du tour : absente quand le lancer ne clôt pas un semestre ou que le semestre a déjà changé.
@@ -58,11 +59,16 @@ async function suite(transform, K){
   const texteAvert = `Avertissement : coûte tout de suite ${cubes(K.w, 'r')} au sac fondamental. Si le bénéfice finit sous la zone, le verdict est adouci d'un cran : un verdict fort passe de ${K.s} à ${NORMAL} cubes rouges, un verdict normal de ${NORMAL} cubes rouges à un tirage de ${ZMIN} ou ${ZMAX} cube rouge.`;
   const textePromesse = `Promesse : donne tout de suite ${cubes(K.g, 'v')} au sac fondamental. Si le bénéfice finit sous la zone, ${cubes(K.b, 'r')} s'ajoutent au verdict ; dans la zone ou au-dessus, la promesse est tenue : rien de plus.`;
 
-  console.log('\nA. Encadré permis, aux deux endroits');
+  console.log('\nA. Encadré permis dans la fenêtre du tour, absent de l\'onglet Entreprise');
   eng.run(`state.gameClock.rollCount = 0;`);
+  // Section 324 : au premier semestre, aucun geste (texte du moteur, pas de bouton).
+  const h0 = box(eng, 'A', 'pop'), t0 = strip(h0);
+  ok(t0.includes('Pas d’annonce du PDG avant le semestre 2 de l\'année 1') && !/CeoWarningBtn|CeoPromiseBtn/.test(h0), 'section 324 : premier semestre : refus du moteur, aucun bouton');
+  ok(eng.json(`ceoCallRefusal(A, myPlayerId)`) === "Pas d’annonce du PDG avant le semestre 2 de l'année 1 : première occasion au début de ce semestre, dans le résumé du tour.", 'section 324 : le moteur refuse au semestre 0');
+  eng.run(`state.gameClock.rollCount = 3;`);
   const [tg, lo, hi] = eng.json(`(()=>{ const f = analystForecastFor(A); return [analystSigned(f.target), analystSigned(f.target - f.zone), analystSigned(f.target + f.zone)]; })()`);
   const ligneCible = `Cible provisoire des analystes : ${tg} — zone acceptable de ${lo} à ${hi}.`;
-  const hEnt = box(eng, 'A', 'ent'), tEnt = strip(hEnt);
+  const hEnt = box(eng, 'A', 'pop'), tEnt = strip(hEnt);
   console.log('   ' + tEnt);
   ok(tEnt.startsWith('📣 Annonce du PDG pour le semestre qui commence'), 'titre « Annonce du PDG pour le semestre qui commence »');
   ok(tEnt.includes(ligneCible), 'cible et zone provisoires : « ' + ligneCible + ' »');
@@ -70,12 +76,12 @@ async function suite(transform, K){
   ok(tEnt.includes(texteAvert), 'avertissement : coût immédiat et effet à la clôture, nombres des constantes');
   ok(tEnt.includes(textePromesse), 'promesse : gain immédiat et risque, nombres des constantes');
   ok(tEnt.includes('Ne rien annoncer : rien ne change.'), '« Ne rien annoncer : rien ne change. »');
-  ok(/id="entCeoWarningBtn"/.test(hEnt) && /id="entCeoPromiseBtn"/.test(hEnt), 'deux boutons (avertissement, promesse) avec leurs identifiants');
+  ok(/id="popCeoWarningBtn"/.test(hEnt) && /id="popCeoPromiseBtn"/.test(hEnt), 'deux boutons (avertissement, promesse) avec leurs identifiants');
   ok(/max-width:100%;white-space:normal/.test(hEnt), 'boutons qui ne débordent pas (téléphone)');
   const page = eng.run(`renderEntreprise()`);
   const pageT = strip(page);
-  ok(pageT.includes('Attentes des analystes (ce semestre)') && pageT.includes('Annonce du PDG pour le semestre qui commence') && /id="entCeoPromiseBtn"/.test(page), "onglet Entreprise : l'encadré est dans la page");
-  ok(pageT.indexOf('Attentes des analystes') < pageT.indexOf('Annonce du PDG pour le semestre qui commence'), "l'encadré est sous le bloc des attentes");
+  ok(pageT.includes('Attentes des analystes (ce semestre)'), 'section 324 : onglet Entreprise : le bloc des attentes est là');
+  ok(!pageT.includes('Annonce du PDG pour le semestre qui commence') && !/CeoCallBox|CeoWarningBtn|CeoPromiseBtn/.test(page), "section 324 : onglet Entreprise : plus d'encadré d'annonce du PDG (ni titre, ni bouton)");
   // Fenêtre du tour : le lancer 2 clôt le semestre 0 ; le semestre 1 commence (rollCount 3).
   eng.run(`state.gameClock.rollCount = 3;`);
   const hPop = popup(eng, 2), tPop = strip(hPop);
@@ -96,17 +102,17 @@ async function suite(transform, K){
     e.run(`state.gameClock.rollCount = 3;`);
     const r = e.json(`ceoCallApply(A.id, '${kind}', myPlayerId)`);
     ok(r.ok === true, `${mot} faite par le moteur`);
-    for(const place of ['ent', 'pop']){
-      const h = place === 'ent' ? box(e, 'A', 'ent') : popup(e, 2), t = strip(h);
+    for(const place of ['pop']){
+      const h = popup(e, 2), t = strip(h);
       ok(t.includes(`Annonce faite pour ce semestre : ${mot} — ${cube}.`), `${place} : « Annonce faite pour ce semestre : ${mot} — ${cube}. »`);
       ok(!/CeoWarningBtn|CeoPromiseBtn/.test(h) && !t.includes('Ne rien annoncer'), `${place} : aucun bouton`);
     }
-    console.log('   ' + strip(box(e, 'A', 'ent')));
+    console.log('   ' + strip(box(e, 'A', 'pop')));
     // Visible de tous : le bloc des attentes dit l'annonce, même vu par un autre joueur.
     e.run(`myPlayerId = ${JSON.stringify(bob)};`);
     const bloc = strip(e.run(`analystExpectationBlockHtml(A)`));
     ok(bloc.includes(`Annonce du PDG pour ce semestre : ${mot}`), `bloc des attentes : l'annonce (${mot}) est visible d'un autre joueur`);
-    ok(box(e, 'A', 'ent') === '', "l'encadré, lui, n'est pas montré à un autre joueur");
+    ok(box(e, 'A', 'pop') === '', "l'encadré, lui, n'est pas montré à un autre joueur");
     e.run(`state.gameClock.rollCount = 6; A.analystForecast = null;`);
     ok(!strip(e.run(`analystExpectationBlockHtml(A)`)).includes('Annonce du PDG pour ce semestre'), 'une annonce d\'un autre semestre n\'est pas affichée');
   }
@@ -115,23 +121,23 @@ async function suite(transform, K){
   console.log('\nC. Refus et joueur sans entreprise');
   const e2 = await boot(transform);
   e2.run(`state.gameClock.rollCount = 3; A.analystForecast = {semester:1, h:1, m:2, k:3, sigma:0.4, target:2, zone:0.5, parts:{subsidy:1.2, rentsIn:3, rentsOut:0.8, taxes:0.4, charges:0.1}, frozenAtRoll:3};`);
-  let h = box(e2, 'A', 'ent'), t = strip(h);
+  let h = box(e2, 'A', 'pop'), t = strip(h);
   console.log('   fenêtre fermée : ' + t);
   ok(t.includes('Trop tard pour ce semestre : les chiffres des analystes sont publiés depuis le premier lancer.') && !/CeoWarningBtn|CeoPromiseBtn/.test(h), 'fenêtre fermée : texte du moteur, pas de bouton');
   e2.run(`A.analystForecast = null; state.gameClock.rollCount = 4;`);
-  h = box(e2, 'A', 'ent'); t = strip(h);
+  h = box(e2, 'A', 'pop'); t = strip(h);
   console.log('   semestre sans verdict : ' + t);
   ok(/n’aura pas de verdict des analystes/.test(t) && !/CeoWarningBtn|CeoPromiseBtn/.test(h), 'semestre sans verdict : texte du moteur, pas de bouton');
   e2.run(`state.gameClock.rollCount = 3; state.gameEndedReason = {reason:'maxDuration', roll:3, year:0};`);
-  h = box(e2, 'A', 'ent'); t = strip(h);
+  h = box(e2, 'A', 'pop'); t = strip(h);
   console.log('   partie terminée : ' + t);
   ok(/La partie est terminée/.test(t) && !/CeoWarningBtn|CeoPromiseBtn/.test(h), 'partie terminée : texte du moteur, pas de bouton');
   ok(/La partie est terminée/.test(strip(popup(e2, 2))), 'partie terminée : même texte dans la fenêtre du tour');
   e2.run(`state.gameEndedReason = null; myPlayerId = 'personne';`);
-  ok(box(e2, 'A', 'ent') === '' && box(e2, 'A', 'pop') === '', 'joueur sans entreprise : rien du tout (onglet)');
+  ok(box(e2, 'A', 'pop') === '', 'joueur sans entreprise : rien du tout (encadré de l\'entreprise A)');
   ok(!/CeoCallBox/.test(popup(e2, 2)), 'joueur sans entreprise : rien du tout (fenêtre du tour)');
   e2.run(`myPlayerId = ${JSON.stringify(bob)};`);
-  ok(box(e2, 'A', 'ent') === '', "l'entreprise d'un autre : rien du tout");
+  ok(box(e2, 'A', 'pop') === '', "l'entreprise d'un autre : rien du tout");
 
   console.log('\nF. Clic, confirmation, appel unique');
   const e3 = await boot(transform);
@@ -155,8 +161,8 @@ async function suite(transform, K){
   ok(e3.alerts.length === 0, 'aucune alerte');
 
   const e4 = await boot(transform);
-  e4.run(`state.gameClock.rollCount = 0; bindCeoCallBox('ent', A);`);
-  await e4.run(`__click('entCeoWarningBtn')`);
+  e4.run(`state.gameClock.rollCount = 3; bindCeoCallBox('pop', A);`);
+  await e4.run(`__click('popCeoWarningBtn')`);
   ok(/vous allez faire un <b>avertissement|vous allez faire un avertissement/.test(strip(lastModal(e4)).replace('<b>', '')) || strip(lastModal(e4)).includes('vous allez faire un avertissement'), 'confirmation de l\'avertissement');
   ok(strip(lastModal(e4)).includes(`Tout de suite : ${cubes(K.w, 'r')} au sac fondamental.`), `R6 : confirmation de l'avertissement : « Tout de suite : ${cubes(K.w, 'r')} au sac fondamental. »`);
   await e4.run(`__click('mOk')`);
@@ -165,8 +171,8 @@ async function suite(transform, K){
 
   // Conditions changées entre l'affichage et la confirmation : rien n'est annoncé, le refus est montré.
   const e5 = await boot(transform);
-  e5.run(`state.gameClock.rollCount = 0; bindCeoCallBox('ent', A);`);
-  await e5.run(`__click('entCeoPromiseBtn')`);
+  e5.run(`state.gameClock.rollCount = 3; bindCeoCallBox('pop', A);`);
+  await e5.run(`__click('popCeoPromiseBtn')`);
   e5.run(`freezeAnalystForecasts();`); // un autre appareil a lancé : fenêtre fermée
   await e5.run(`__click('mOk')`);
   ok(e5.json(`__calls`).length === 0 && e5.json(`A.ceoCall`) === null, 'fenêtre fermée avant la confirmation : aucun appel, rien d\'annoncé');
@@ -174,8 +180,8 @@ async function suite(transform, K){
   ok(fin.includes('Trop tard pour ce semestre') && fin.includes('Les conditions ont changé'), 'le texte du refus du moteur est montré tel quel');
   // Refus du moteur après la confirmation (par exemple un autre appareil a annoncé entre-temps) : texte montré.
   const e6 = await boot(transform);
-  e6.run(`state.gameClock.rollCount = 0; bindCeoCallBox('ent', A);`);
-  await e6.run(`__click('entCeoWarningBtn')`);
+  e6.run(`state.gameClock.rollCount = 3; bindCeoCallBox('pop', A);`);
+  await e6.run(`__click('popCeoWarningBtn')`);
   e6.run(`announceCeoCall = function(){ return Promise.resolve({ok:false, error:'Refus du moteur : texte exact.'}); };`);
   await e6.run(`__click('mOk')`);
   ok(e6.alerts.length === 1 && e6.alerts[0] === 'Refus du moteur : texte exact.', 'refus de l\'action : le texte est montré tel quel');
@@ -185,23 +191,23 @@ async function suite(transform, K){
   // l'encadré garde ses deux boutons, aux deux endroits, et ne montre aucun refus.
   const e7 = await boot(transform);
   e7.run(`state.gameClock.rollCount = 3; A.inJail = true; A.jailTurnsLeft = 3;`);
-  const hj = box(e7, 'A', 'ent'), tj = strip(hj), pj = popup(e7, 2);
+  const hj = box(e7, 'A', 'pop'), tj = strip(hj), pj = popup(e7, 2);
   console.log('   sous enquête : ' + tj.slice(0, 160));
-  ok(/id="entCeoWarningBtn"/.test(hj) && /id="entCeoPromiseBtn"/.test(hj) && !/sous enquête/.test(tj), 'sous enquête : les deux boutons restent, aucun refus (onglet)');
+  ok(/id="popCeoWarningBtn"/.test(hj) && /id="popCeoPromiseBtn"/.test(hj) && !/sous enquête/.test(tj), 'sous enquête : les deux boutons restent, aucun refus (encadré)');
   ok(/CeoWarningBtn/.test(pj) && /CeoPromiseBtn/.test(pj) && !/sous enquête/.test(strip(pj)), 'sous enquête : les deux boutons restent dans la fenêtre du tour');
   // R4 : un joueur qui regarde l'entreprise d'un autre (Bob, qui dirige B, devant A) : ni encadré ni bouton, aux deux
   // endroits ; seulement la ligne publique quand une annonce est faite.
   const e8 = await boot(transform);
   e8.run(`state.gameClock.rollCount = 3; myPlayerId = ${JSON.stringify(e8.ids[1])};`);
   ok(e8.run(`myCompany().id`) === e8.run(`B.id`), 'R4 : Bob dirige B');
-  ok(box(e8, 'A', 'ent') === '' && box(e8, 'A', 'pop') === '', 'R4 : encadré du pari pour A vu par Bob : rien (onglet et fenêtre du tour)');
+  ok(box(e8, 'A', 'pop') === '', 'R4 : encadré du pari pour A vu par Bob : rien');
   const pb = popup(e8, 2);
   ok(!/CeoCallBox|CeoWarningBtn|CeoPromiseBtn/.test(pb) && !strip(pb).includes('Annonce du PDG pour le semestre qui commence'), 'R4 : fenêtre du tour de A vue par Bob : ni encadré ni bouton');
   ok(!strip(e8.run(`analystExpectationBlockHtml(A)`)).includes('Annonce du PDG'), 'R4 : bloc des attentes de A vu par Bob, sans annonce : rien sur le pari');
   e8.run(`ceoCallApply(A.id, 'promise', A.ceoId);`);
   const blocB = e8.run(`analystExpectationBlockHtml(A)`);
-  ok(strip(blocB).includes('Annonce du PDG pour ce semestre : promesse') && !/CeoWarningBtn|CeoPromiseBtn|CeoCallBox/.test(blocB) && box(e8, 'A', 'ent') === '', 'R4 : annonce faite par Alice : Bob voit la ligne publique seulement');
-  ok(/id="entCeoWarningBtn"/.test(box(e8, 'B', 'ent')), 'R4 : Bob garde ses boutons pour sa propre entreprise B');
+  ok(strip(blocB).includes('Annonce du PDG pour ce semestre : promesse') && !/CeoWarningBtn|CeoPromiseBtn|CeoCallBox/.test(blocB) && box(e8, 'A', 'pop') === '', 'R4 : annonce faite par Alice : Bob voit la ligne publique seulement');
+  ok(/id="popCeoWarningBtn"/.test(box(e8, 'B', 'pop')), 'R4 : Bob garde ses boutons pour sa propre entreprise B');
   // R5 : l'état est remplacé par une copie (comme l'adoption d'un état distant) entre le clic sur le bouton de l'encadré
   // et la confirmation : la fenêtre du tour rouverte relit l'entreprise et montre l'annonce faite, sans bouton.
   const e9 = await boot(transform);
@@ -215,9 +221,9 @@ async function suite(transform, K){
   ok(strip(re).includes('Résultats du tour') && strip(re).includes('Annonce faite pour ce semestre : avertissement') && !/CeoWarningBtn|CeoPromiseBtn/.test(re), 'R5 : fenêtre du tour rouverte à jour (annonce faite, plus de bouton) malgré l\'objet entreprise périmé');
   // Même piège dans l'onglet : boutons branchés, état remplacé avant le clic : l'annonce va à l'entreprise du nouvel état.
   const e10 = await boot(transform);
-  e10.run(`state.gameClock.rollCount = 0; bindCeoCallBox('ent', A);`);
+  e10.run(`state.gameClock.rollCount = 3; bindCeoCallBox('pop', A);`);
   e10.run(`state = JSON.parse(JSON.stringify(state)); globalThis.A = state.companies[0];`);
-  await e10.run(`__click('entCeoPromiseBtn')`);
+  await e10.run(`__click('popCeoPromiseBtn')`);
   await e10.run(`__click('mOk')`);
   ok(e10.json(`A.ceoCall && A.ceoCall.kind`) === 'promise' && e10.json(`__calls.length`) === 1, 'R5 : onglet : état remplacé avant le clic, l\'annonce va à l\'entreprise du nouvel état');
 }
@@ -235,7 +241,7 @@ const MUTATIONS = [
   ['encadré montré à un autre joueur', rep('if(!co || !me || me.id!==co.id) return \'\';', "if(!co) return '';")],
   ['refus du moteur caché', rep('if(refusal) return box(`<div class="small" style="margin-top:4px;">${esc(refusal)}</div>`);', "if(refusal) return '';")],
   ['boutons encore là après l\'annonce', rep('  if(done){\n    const cubes', '  if(false){\n    const cubes')],
-  ['ligne visible de tous retirée', rep('    ${ceoCallPublicLineHtml(co)}\n', '')],
+  ['ligne visible de tous retirée', rep('    ${ceoCallPublicLineHtml(co)}${ceoCallHintHtml(co)}<!-- Section 324 (S1) -->\n', '    ${ceoCallHintHtml(co)}<!-- Section 324 (S1) -->\n')],
   ['écran pas redessiné après l\'annonce', rep('onDone: ()=>{ renderPreservingForms(); if(', 'onDone: ()=>{ if(')],
   ['fenêtre du tour pas rouverte après l\'annonce', rep("bindCeoCallBox('pop', co, ()=>{ const fresh = companyById(ceoCallCoId); if(fresh) showDiceRollTurnPopup(fresh, roll); });", "bindCeoCallBox('pop', co);")],
   // Ronde finale.

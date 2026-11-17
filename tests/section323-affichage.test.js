@@ -149,44 +149,49 @@ async function suite(transform, taille7){
     {semester:4, h:1, m:2, k:3, target:2, zone:0.5, actual:-0.4, verdict:'strongDown', beaten:0, of:3, color:'red', qty:5}];`);
   const g = eng.run(`expectationVsActualChartHtml(A, [])`);
   const gt = strip(g);
-  console.log('   ' + gt.slice(gt.indexOf('Semestre')));
-  ok(/<svg/.test(g) && (g.match(/<circle cx=/g) || []).length === 5 + 1, 'cinq points de bénéfice réel dessinés (plus celui de la légende)');
-  ok((g.match(/<rect x=.*? opacity="0.16"/g) || []).length === 5 + 1, 'cinq bandes de zone (plus celle de la légende)');
+  // Section 324 (B2) : le tableau n'est plus sous le graphique, il vit dans la fenêtre « Détails » (analystDetailsTableHtml).
+  const gtab = eng.run(`analystDetailsTableHtml(A)`), tt = strip(gtab);
+  console.log('   ' + tt.slice(tt.indexOf('Année 1')));
+  ok(!/<table/.test(g) && !/Zone acceptable<\/th>/.test(g), 'section 324 : plus de tableau sous le graphique');
+  ok(/<svg/.test(g) && (g.match(/data-result="judged"/g) || []).length === 5, 'cinq points de bénéfice réel dessinés');
+  ok((g.match(/opacity="0.16"/g) || []).length === 5 + 1, 'cinq bandes de zone (plus celle de la légende)');
   ok(/Dans la zone/.test(g) && /Au-dessus/.test(g) && /Sous la zone/.test(g) && /verdict fort/.test(g) && /verdict normal/.test(g), 'verdicts en clair sous le graphique');
-  ok(/Semestre 1 \+2\.00 M\$ \+1\.50 M\$ à \+2\.50 M\$ \+2\.20 M\$ dans la zone — aucun cube/.test(gt) && !/dans la zone — 1 analyste/.test(gt), 'ligne 1 : « dans la zone — aucun cube » (D2 : les analystes battus ne jouent aucun rôle dans la zone)');
-  ok(/Semestre 2 \+2\.00 M\$ \+1\.50 M\$ à \+2\.50 M\$ \+2\.80 M\$ au-dessus de la zone \(verdict normal\) — 2 analystes battus sur 3 — 2 cubes verts/.test(gt), 'ligne 2 : au-dessus, verdict normal, 2 cubes verts');
-  ok(/Semestre 3 [^|]*?au-dessus de la zone \(verdict fort\) — 3 analystes battus sur 3 — 5 cubes verts/.test(gt), 'ligne 3 : au-dessus, verdict fort, 5 cubes verts');
-  ok(/Semestre 4 [^|]*?sous la zone \(verdict normal\) — 1 analyste battu sur 3 — 2 cubes rouges/.test(gt), 'ligne 4 : sous la zone, verdict normal, 2 cubes rouges');
-  ok(/Semestre 5 [^|]*?\u2212400 K\$ sous la zone \(verdict fort\) — 0 analyste battu sur 3 — 5 cubes rouges/.test(gt), 'ligne 5 : sous la zone, verdict fort, 5 cubes rouges (bénéfice négatif, signe U+2212)');
-  ok(signesPropres(gt), 'A2 : signes propres dans le graphique et sa table (axes compris)');
+  ok(/Année 1, Semestre 1 absent \+2\.00 M\$ absent \+2\.00 M\$ \+1\.50 M\$ à \+2\.50 M\$ \+2\.20 M\$ \+2\.20 M\$ dans la zone – aucun cube/.test(tt) && !/dans la zone — 1 analyste/.test(tt), 'ligne 1 : « dans la zone », battus « – », « aucun cube » (D2 : les analystes battus ne jouent aucun rôle dans la zone)');
+  ok(/Année 1, Semestre 2 \+1\.00 M\$ \+2\.00 M\$ \+3\.00 M\$ \+2\.00 M\$ \+1\.50 M\$ à \+2\.50 M\$ \+2\.80 M\$ \+2\.80 M\$ au-dessus de la zone \(verdict normal\) 2 sur 3 2 cubes verts/.test(tt), 'ligne 2 : les trois analystes, au-dessus, verdict normal, 2 battus sur 3, 2 cubes verts');
+  ok(/Année 2, Semestre 1 [^|]*?au-dessus de la zone \(verdict fort\) 3 sur 3 5 cubes verts/.test(tt), 'ligne 3 : au-dessus, verdict fort, 5 cubes verts');
+  ok(/Année 2, Semestre 2 [^|]*?sous la zone \(verdict normal\) 1 sur 3 2 cubes rouges/.test(tt), 'ligne 4 : sous la zone, verdict normal, 2 cubes rouges');
+  ok(/Année 3, Semestre 1 [^|]*?\u2212400 K\$ .400 K\$ sous la zone \(verdict fort\) 0 sur 3 5 cubes rouges/.test(tt), 'ligne 5 : sous la zone, verdict fort, 5 cubes rouges (bénéfice négatif, signe U+2212)');
+  ok(signesPropres(gt) && signesPropres(tt), 'A2 : signes propres dans le graphique (axes et titres des marques compris) et dans le tableau des chiffres');
   // Couleurs de sens : vert au-dessus (normal ET fort), rouge en dessous, gris dans la zone.
-  const cl = (label) => { const m = new RegExp(`color:([^;]+);font-weight:600;">${label}`).exec(g); return m && m[1]; };
+  const cl = (label) => { const m = new RegExp(`color:([^;]+);font-weight:600;">${label}`).exec(gtab); return m && m[1]; };
   ok(cl('au-dessus de la zone \\(verdict normal\\)') === '#047857' && cl('au-dessus de la zone \\(verdict fort\\)') === '#047857', 'au-dessus de la zone (normal et fort) : vert');
   ok(cl('sous la zone \\(verdict normal\\)') === 'var(--brick)' && cl('sous la zone \\(verdict fort\\)') === 'var(--brick)', 'sous la zone : rouge du jeu');
   ok(cl('dans la zone') === '#64748b', 'dans la zone : gris');
   // A5 : avec des périodes, le graphique montre ces périodes-là (et seulement elles), avec leurs libellés.
   const g2 = eng.run(`expectationVsActualChartHtml(A, [{semesterIndex:1, label:'Année 1, Semestre 2', isCurrent:false}])`);
   const g2t = strip(g2);
-  ok(/Année 1, Semestre 2 \+2\.00 M\$/.test(g2t) && !/Semestre 1 |Semestre 3|Semestre 4|Semestre 5/.test(g2t) && (g2.match(/<circle cx=/g) || []).length === 1 + 1,
+  ok(/Année 1 Semestre 2/.test(g2t) && !/Semestre 1|Semestre 3|Semestre 4|Semestre 5/.test(g2t) && (g2.match(/data-result="judged"/g) || []).length === 1 && (g2.match(/data-analyst="m"/g) || []).length === 1,
     'A5 : une seule période choisie : une seule colonne (son libellé), pas les cinq semestres de l\'historique');
   eng.run(`A.analystHistory = []; for(let s=0; s<40; s++) A.analystHistory.push({semester:s, h:null, m:1, k:null, target:1, zone:0.5, actual:1.1, judged:1.1, adjust:0, verdict:'zone', beaten:1, of:1, color:null, qty:0});
     state.gameClock.rollCount = 120; A.analystForecast = null;`);
   const per = `[{semesterIndex:38, label:'Année 20, Semestre 1', isCurrent:false}, {semesterIndex:39, label:'Année 20, Semestre 2', isCurrent:false}, {semesterIndex:40, label:'Année 21, Semestre 1', isCurrent:true}]`;
   const g3 = eng.run(`expectationVsActualChartHtml(A, ${per})`), g3t = strip(g3);
-  console.log('   A5 : ' + g3t.slice(g3t.indexOf('Semestre Cible')));
-  ok((g3.match(/<tr><td>/g) || []).length === 3 && (g3.match(/>Dans la zone</g) || []).length === 2 && /En cours/.test(g3) && /Année 21 Semestre 1 [^|]*en cours \(chiffres provisoires\)/.test(g3t),
+  const g3tab = strip(eng.run(`analystDetailsTableHtml(A)`));
+  ok((g3tab.match(/Année \d+, Semestre \d/g) || []).length === 41 && /Année 21, Semestre 1 en cours \(chiffres provisoires\)/.test(g3tab), 'section 324 : la fenêtre « Détails » montre les 40 semestres jugés et le semestre en cours, quelle que soit la période choisie');
+  ok((g3.match(/data-analyst="m"/g) || []).length === 3 && (g3.match(/>Dans la zone</g) || []).length === 2 && /En cours/.test(g3) && /provisoire/.test(g3t) && /Année 21 Semestre 1/.test(g3t),
     'A5 : 40 semestres jugés, 3 périodes choisies : 3 colonnes (2 jugées, la période en cours avec sa cible provisoire)');
   const g4 = strip(eng.run(`expectationVsActualChartHtml(A, [{semesterIndex:0, label:'Année 1, Semestre 1', isCurrent:false}, {semesterIndex:41, label:'Année 21, Semestre 2', isCurrent:false}])`));
-  ok(/Année 21, Semestre 2 – – – pas de verdict/.test(g4), 'A5 : période sans ligne d\'historique : « pas de verdict », rien d\'inventé');
+  ok(/Année 21 Semestre 2/.test(g4) && (g4.match(/Pas de verdict/g) || []).length === 1,'A5 : période sans ligne d\'historique : « pas de verdict », rien d\'inventé');
   ok(/Semestre 1/.test(strip(eng.run(`expectationVsActualChartHtml(A, [])`))), 'sans périodes : les semestres de l\'historique (« Semestre N »)');
   eng.run(`state.gameClock.rollCount = 0;`);
 
   // A6 : bénéfice jugé différent du bénéfice officiel (intérêts hypothécaires rejugés).
   eng.run(`A.analystHistory = [{semester:1, h:null, m:0.5, k:null, target:0.5, zone:0.5, actual:1.0, judged:0.6, adjust:-0.4, verdict:'zone', beaten:1, of:1, color:null, qty:0}];`);
   const g6 = eng.run(`expectationVsActualChartHtml(A, [])`), g6t = strip(g6);
-  console.log('   A6 (tableau) : ' + g6t.slice(g6t.indexOf('Semestre 2')));
-  ok(/Semestre 2 \+500 K\$ 0 à \+1\.00 M\$ \+1\.00 M\$ bénéfice jugé \+600 K\$ : intérêts hypothécaires de fin d'année comptés tels que prévus au premier lancer du semestre, ajustement de \u2212400 K\$ dans la zone/.test(g6t),
-    'A6 : tableau du graphique : bénéfice officiel +1,00 M$, puis le bénéfice jugé +600 K$ et son explication');
+  const g6tab = strip(eng.run(`analystDetailsTableHtml(A)`));
+  console.log('   A6 (tableau) : ' + g6tab.slice(g6tab.indexOf('Année 1')));
+  ok(/Année 1, Semestre 2 absent \+500 K\$ absent \+500 K\$ 0 à \+1\.00 M\$ \+1\.00 M\$ \+600 K\$ bénéfice jugé \+600 K\$ : intérêts hypothécaires de fin d'année comptés tels que prévus au premier lancer du semestre, ajustement de .400 K\$ dans la zone/.test(g6tab),
+    'A6 : tableau des chiffres : bénéfice officiel +1,00 M$, puis le bénéfice jugé +600 K$ et son explication');
   ok(/fill="none"/.test(g6) && /Bénéfice jugé/.test(g6) && /Bénéfice officiel/.test(g6), 'A6 : graphique : point plein au bénéfice jugé, cercle creux au bénéfice officiel, légende des deux');
   // Historique abîmé (anciennes lignes sans nombres) : ignoré sans erreur.
   eng.run(`A.analystHistory = [null, {semester:0}, {semester:1, target:1, zone:0.5, actual:1, verdict:'zone', beaten:1, of:1, color:null, qty:0}];`);
@@ -196,10 +201,10 @@ async function suite(transform, taille7){
   // D2 : dans la zone, 0 ou 1 cube du côté de l'écart (la ligne garde la couleur du côté et la quantité tirée).
   eng.run(`A.analystHistory = [{semester:0, h:null, m:2, k:null, target:2, zone:0.5, actual:2.3, judged:2.3, adjust:0, verdict:'zone', beaten:1, of:1, color:'green', qty:1},
     {semester:1, h:null, m:2, k:null, target:2, zone:0.5, actual:1.8, judged:1.8, adjust:0, verdict:'zone', beaten:0, of:1, color:'red', qty:0}];`);
-  const gz = strip(eng.run(`expectationVsActualChartHtml(A, [])`));
-  console.log('   D2 (tableau) : ' + gz.slice(gz.indexOf('Semestre 1 +2.00')));
-  ok(/Semestre 1 \+2\.00 M\$ \+1\.50 M\$ à \+2\.50 M\$ \+2\.30 M\$ dans la zone — 1 cube vert/.test(gz) && /Semestre 2 \+2\.00 M\$ \+1\.50 M\$ à \+2\.50 M\$ \+1\.80 M\$ dans la zone — aucun cube/.test(gz),
-    'D2 : tableau du graphique : « dans la zone — 1 cube vert » et « dans la zone — aucun cube »');
+  const gz = strip(eng.run(`analystDetailsTableHtml(A)`));
+  console.log('   D2 (tableau) : ' + gz.slice(gz.indexOf('Année 1')));
+  ok(/Année 1, Semestre 1 absent \+2\.00 M\$ absent \+2\.00 M\$ \+1\.50 M\$ à \+2\.50 M\$ \+2\.30 M\$ \+2\.30 M\$ dans la zone – 1 cube vert/.test(gz) && /Année 1, Semestre 2 absent \+2\.00 M\$ absent \+2\.00 M\$ \+1\.50 M\$ à \+2\.50 M\$ \+1\.80 M\$ \+1\.80 M\$ dans la zone – aucun cube/.test(gz),
+    'D2 : tableau des chiffres : « dans la zone », « 1 cube vert » et « aucun cube »');
 
   console.log('\nC. Fenêtre « Résultats du tour » : verdict à la clôture');
   eng.run(`A.analystHistory = [{semester:0, h:null, m:2, k:null, target:2, zone:0.5, actual:3.1, verdict:'normalUp', beaten:1, of:1, color:'green', qty:2}];`);

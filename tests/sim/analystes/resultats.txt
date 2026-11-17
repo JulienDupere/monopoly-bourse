@@ -1,0 +1,660 @@
+BANC « TROIS ANALYSTES » — ronde 2
+Tirages : 300 suites × 4 rotations des types par situation et par variante ; cubes 100000 ; tendances 40000 ; dérive 20000 ; mesure 11 : 500 suites ; fréquences 400000 lancers ; cas à la main 40000.
+
+== Vérification A : tour du banc contre le vrai performRollForAllCompanies (8+3 milieu, 12 lancers, même graine) ==
+rendu neutralisé : identique 5/5 (positions, enquêtes, cours, encaisses, banque, sacs, grand livre entier) ; rendu actif : identique 0/5 (render() consomme du hasard)
+== Vérification B : mesure connue des cubes (GARP 10/10/8, volatilité 1) ==
+ajout  1 sem.  attendu  2 sem.  attendu
++1R     -0.27    -0.26   -0.31    -0.31
++3R     -1.14    -1.14   -1.54    -1.53
++7R     -2.83    -2.77   -4.64    -4.64
+bruit : 6.49 % (attendu 6,5) et 9.19 % (attendu 9,2)
+== Vérification C : p.prob — 8 cases sur 28 à plus de 10 % de la fréquence exacte (Aéroport 1 28.8 %, Rose 1 16.8 %, Rose 3 -10.6 %, Aéroport 2 11.8 %, Orange 3 13.1 %, Rouge 3 18.9 %, Aéroport 3 13.6 %, Bleu foncé 2 15.5 %) ; exacte contre simulée : plus grand écart 1.10 demi-largeur(s) ==
+== Vérification D : cas à la main : 0.40090 ; M' 0.40090 ; simulation 0.39496 ± 0.00827 ; régime établi : M 0.17125, M' 0.16236, simulation 0.16313 ± 0.00565 ==
+== Vérification E : loyer d'un pion neutre : banque -2.20, entreprise 2.20, total 0.00 ==
+
+Suites avec saisie (sur 1200 par variante) : 8+3|milieu {"base":2,"transition":115,"vivant":215} ; 8+3|fin {"base":27,"transition":33,"vivant":61} ; 6+5|milieu {"base":0,"transition":106,"vivant":250} ; 6+5|fin {"base":38,"transition":39,"vivant":59} ; 4+7|milieu {"base":0,"transition":63,"vivant":262} ; 4+7|fin {"base":6,"transition":8,"vivant":9} ; 4+0|milieu {"base":0,"transition":131,"vivant":596} ; 4+0|fin {"base":92,"transition":97,"vivant":200}
+
+== Mesure 1 : justesse du modélisateur (tous les semestres) — biais R−M, σ prévu, écart type réel de R−M ==
+phase profil              n  moy R    R−M   R−Mx   R−M'     σM  sd(R−M)    σM'  sd(R−M')  dans 1σ %
+debut concentree       9600   0.46  -0.02  -0.02  -0.00   0.85     0.80   0.84      0.78       77.9
+debut diversifiee      9600   0.67   0.02   0.07   0.01   0.88     0.87   0.88      0.84       70.6
+debut endettee         9600  -0.29   0.01   0.01  -0.01   0.38     0.36   0.35      0.35       81.9
+debut ordinaire       24000   0.43  -0.02  -0.02   0.00   0.85     0.81   0.85      0.80       79.3
+milieu concentree     19200   3.80  -0.50  -0.22   0.01   3.09     2.71   2.81      2.45       74.1
+milieu diversifiee    19200   0.54  -0.06   0.02  -0.01   1.54     1.26   1.41      1.23       78.2
+milieu endettee       19200  -0.64   0.06   0.04  -0.00   1.42     1.12   1.29      1.09       79.2
+milieu ordinaire      48000   1.28   0.02  -0.03  -0.01   1.91     1.63   1.78      1.54       77.0
+fin concentree        19200  10.66  -1.97  -0.58   0.06  14.73    12.58  13.31     11.38       75.4
+fin diversifiee       19200  -3.84   0.31   0.35   0.04   9.08     7.62   8.27      6.93       82.4
+fin endettee          19200   2.52   0.27  -0.14   0.08  12.15    10.49  11.26      9.80       75.7
+fin ordinaire         48000   8.58  -0.61  -0.48  -0.04  15.72    13.73  14.52     12.56       75.5
+milieu-T concentree    4800  13.65  -1.55  -0.47  -0.11  10.66     9.60   9.80      8.50       75.5
+milieu-T diversifiee   4800  -0.64   0.14   0.12   0.05   3.87     3.20   3.52      2.98       78.1
+milieu-T endettee      4800  -1.73   0.28   0.16   0.10   3.84     3.13   3.50      2.91       78.6
+milieu-T ordinaire    12000   0.00   0.11  -0.03  -0.01   4.02     3.42   3.67      3.16       76.5
+fin-T concentree       4800  13.70  -2.03  -0.38   0.25  16.62    14.11  15.00     12.69       74.7
+fin-T diversifiee      4800  -3.95   0.48   0.49   0.11   9.38     7.77   8.50      7.03       83.0
+fin-T endettee         4800   1.54   0.19  -0.25  -0.05  12.33    10.59  11.35      9.89       75.4
+fin-T ordinaire       12000   7.94  -0.59  -0.49   0.05  15.76    13.73  14.43     12.55       76.7
+milieu-V concentree   19200   6.30  -0.85  -0.32   0.02   6.55     5.79   5.96      5.24       75.1
+milieu-V diversifiee  19200  -0.37   0.01   0.05  -0.02   3.22     2.62   2.93      2.51       81.0
+milieu-V endettee     19200  -0.68   0.04   0.04  -0.02   3.63     3.02   3.31      2.85       79.9
+milieu-V ordinaire    48000   2.12   0.01  -0.06   0.01   4.52     3.96   4.20      3.66       77.7
+fin-V concentree      19200  11.31  -2.35  -0.86  -0.18  15.82    13.50  14.33     12.30       75.4
+fin-V diversifiee     19200  -4.33   0.36   0.38   0.05   9.61     8.04   8.76      7.30       82.6
+fin-V endettee        19200   3.16   0.17  -0.27  -0.00  13.26    11.43  12.31     10.72       75.8
+fin-V ordinaire       48000   8.95  -0.60  -0.44   0.01  16.50    14.35  15.22     13.18       75.2
+
+== Mesure 2 : fréquences du verdict (%) par phase — plancher 0,5 ; zone / n+ / f+ / n− / f− ; Mref = M' seul comme cible (zone / + / −) ==
+Semestres écartés pour saisie : {"milieu S4":16,"milieu-T S4":2332,"milieu-V S4":6652,"fin S4":836,"fin S3":176,"fin-T S4":918,"fin-V S3":368,"fin-V S4":1678,"milieu-V S3":110}
+-- debut S1 (n = 26400) --
+variante          zone  n+ (+)    f+  n− (−)   f−
+p.prob K2 k=0.25  80.0     0.0  11.3     0.0  8.8
+p.prob K2 k=0.5   80.0     0.0  11.3     0.0  8.8
+p.prob K2 k=0.75  80.0     0.0  11.3     0.0  8.8
+p.prob K3 k=0.25  80.3     0.0  11.4     0.0  8.3
+p.prob K3 k=0.5   80.3     0.0  11.4     0.0  8.3
+p.prob K3 k=0.75  80.3     0.0  11.4     0.0  8.3
+exacte K2 k=0.25  80.0     0.0  11.3     0.0  8.7
+exacte K2 k=0.5   80.0     0.0  11.3     0.0  8.7
+exacte K2 k=0.75  80.0     0.0  11.3     0.0  8.7
+exacte K3 k=0.25  79.6     0.0  12.1     0.0  8.3
+exacte K3 k=0.5   79.6     0.0  12.1     0.0  8.3
+exacte K3 k=0.75  79.6     0.0  12.1     0.0  8.3
+M' seul k=0.25    85.0     5.9           9.0     
+M' seul k=0.5     85.0     5.9           9.0     
+M' seul k=0.75    85.1     5.9           9.0     
+-- debut S2 (n = 26400) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  19.3    13.2  13.8    11.5  42.2
+p.prob K2 k=0.5   20.9    12.4  13.7    11.5  41.5
+p.prob K2 k=0.75  37.4     6.3  10.8    11.1  34.4
+p.prob K3 k=0.25  39.7    13.0  13.3     0.0  34.0
+p.prob K3 k=0.5   41.6    12.3  13.3     0.0  32.9
+p.prob K3 k=0.75  57.4     6.7  10.4     0.0  25.5
+exacte K2 k=0.25  19.2    13.5  13.9    11.3  42.2
+exacte K2 k=0.5   20.7    12.6  13.9    11.3  41.5
+exacte K2 k=0.75  37.4     6.4  11.1    10.9  34.3
+exacte K3 k=0.25  39.5    13.2  13.5     0.0  33.8
+exacte K3 k=0.5   41.4    12.4  13.5     0.0  32.7
+exacte K3 k=0.75  57.2     6.8  10.6     0.0  25.3
+M' seul k=0.25    34.7    32.5          32.7      
+M' seul k=0.5     36.5    31.9          31.6      
+M' seul k=0.75    54.7    22.3          23.0      
+-- milieu S3 (n = 26400) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  25.9    10.5  24.2     8.1  31.3
+p.prob K2 k=0.5   41.2     6.0  21.0     4.4  27.4
+p.prob K2 k=0.75  58.5     1.9  16.2     1.8  21.6
+p.prob K3 k=0.25  26.6     5.6  30.9     5.3  31.6
+p.prob K3 k=0.5   43.5     3.3  24.6     2.9  25.7
+p.prob K3 k=0.75  62.9     1.3  16.0     1.3  18.6
+exacte K2 k=0.25  25.8    10.3  24.8     8.1  31.1
+exacte K2 k=0.5   40.4     6.0  21.7     4.5  27.4
+exacte K2 k=0.75  57.8     1.9  16.8     1.8  21.7
+exacte K3 k=0.25  26.8     5.7  31.0     5.2  31.4
+exacte K3 k=0.5   42.6     3.5  25.3     2.9  25.8
+exacte K3 k=0.75  62.3     1.4  16.5     1.3  18.6
+M' seul k=0.25    27.7    36.6          35.6      
+M' seul k=0.5     41.6    29.6          28.8      
+M' seul k=0.75    60.5    19.5          20.0      
+-- milieu S4 (n = 26384) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  26.3     8.9  25.3     7.8  31.7
+p.prob K2 k=0.5   41.2     4.8  22.0     4.2  27.8
+p.prob K2 k=0.75  57.3     1.7  17.1     1.5  22.5
+p.prob K3 k=0.25  26.9     6.0  30.7     5.1  31.3
+p.prob K3 k=0.5   43.5     3.4  24.6     2.7  25.8
+p.prob K3 k=0.75  61.9     1.2  16.7     1.1  19.1
+exacte K2 k=0.25  26.3     8.7  25.8     7.8  31.4
+exacte K2 k=0.5   40.3     4.9  22.7     4.3  27.8
+exacte K2 k=0.75  56.5     1.7  17.8     1.5  22.5
+exacte K3 k=0.25  27.0     6.0  30.9     4.9  31.1
+exacte K3 k=0.5   42.5     3.6  25.4     2.7  25.8
+exacte K3 k=0.75  61.3     1.2  17.3     1.1  19.0
+M' seul k=0.25    28.0    36.6          35.4      
+M' seul k=0.5     41.6    29.7          28.6      
+M' seul k=0.75    60.2    19.6          20.2      
+-- fin S3 (n = 26224) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  23.2     8.0  28.0     6.2  34.5
+p.prob K2 k=0.5   41.9     4.1  23.6     1.9  28.6
+p.prob K2 k=0.75  59.8     1.4  17.3     0.4  21.1
+p.prob K3 k=0.25  23.6     3.6  33.3     4.6  34.9
+p.prob K3 k=0.5   42.8     1.6  27.2     1.7  26.8
+p.prob K3 k=0.75  61.9     0.5  18.6     0.4  18.6
+exacte K2 k=0.25  23.0     7.9  28.7     6.1  34.3
+exacte K2 k=0.5   41.2     4.2  24.1     2.0  28.5
+exacte K2 k=0.75  58.8     1.5  18.1     0.4  21.2
+exacte K3 k=0.25  23.6     3.8  33.7     4.3  34.6
+exacte K3 k=0.5   42.3     1.8  27.9     1.5  26.6
+exacte K3 k=0.75  60.8     0.6  19.7     0.4  18.5
+M' seul k=0.25    23.3    38.6          38.0      
+M' seul k=0.5     43.6    28.5          27.9      
+M' seul k=0.75    61.7    19.1          19.3      
+-- fin S4 (n = 25564) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  22.5     7.7  29.3     5.4  35.1
+p.prob K2 k=0.5   41.9     3.7  24.4     1.2  28.8
+p.prob K2 k=0.75  59.6     1.2  17.8     0.2  21.3
+p.prob K3 k=0.25  23.6     2.6  34.8     3.3  35.8
+p.prob K3 k=0.5   43.1     0.9  28.0     1.0  27.0
+p.prob K3 k=0.75  62.0     0.2  19.0     0.2  18.5
+exacte K2 k=0.25  22.2     7.5  30.1     5.3  35.0
+exacte K2 k=0.5   41.2     3.6  25.2     1.3  28.7
+exacte K2 k=0.75  58.5     1.2  18.7     0.2  21.5
+exacte K3 k=0.25  23.6     2.6  35.3     3.0  35.5
+exacte K3 k=0.5   42.8     1.0  28.7     0.9  26.7
+exacte K3 k=0.75  60.9     0.3  20.2     0.1  18.5
+M' seul k=0.25    23.7    38.8          37.5      
+M' seul k=0.5     43.7    28.6          27.7      
+M' seul k=0.75    62.1    19.1          18.9      
+-- partie type S3 (n = 52624) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  24.5     9.3  26.1     7.2  32.9
+p.prob K2 k=0.5   41.6     5.1  22.3     3.1  28.0
+p.prob K2 k=0.75  59.2     1.6  16.8     1.1  21.3
+p.prob K3 k=0.25  25.1     4.6  32.1     4.9  33.3
+p.prob K3 k=0.5   43.1     2.4  25.9     2.3  26.2
+p.prob K3 k=0.75  62.4     0.9  17.3     0.9  18.6
+exacte K2 k=0.25  24.4     9.1  26.7     7.1  32.7
+exacte K2 k=0.5   40.8     5.1  22.9     3.2  27.9
+exacte K2 k=0.75  58.3     1.7  17.5     1.1  21.4
+exacte K3 k=0.25  25.2     4.8  32.3     4.7  33.0
+exacte K3 k=0.5   42.4     2.6  26.6     2.2  26.2
+exacte K3 k=0.75  61.6     1.0  18.1     0.8  18.5
+M' seul k=0.25    25.5    37.6          36.8      
+M' seul k=0.5     42.6    29.1          28.3      
+M' seul k=0.75    61.1    19.3          19.6      
+-- partie type S4 (n = 51948) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  24.4     8.3  27.2     6.6  33.4
+p.prob K2 k=0.5   41.5     4.2  23.2     2.7  28.3
+p.prob K2 k=0.75  58.4     1.4  17.4     0.8  21.9
+p.prob K3 k=0.25  25.3     4.3  32.7     4.2  33.5
+p.prob K3 k=0.5   43.3     2.2  26.3     1.9  26.4
+p.prob K3 k=0.75  62.0     0.7  17.9     0.7  18.8
+exacte K2 k=0.25  24.3     8.1  27.9     6.5  33.2
+exacte K2 k=0.5   40.7     4.2  23.9     2.9  28.2
+exacte K2 k=0.75  57.5     1.4  18.2     0.9  22.0
+exacte K3 k=0.25  25.3     4.4  33.1     4.0  33.3
+exacte K3 k=0.5   42.6     2.3  27.0     1.8  26.2
+exacte K3 k=0.75  61.1     0.7  18.7     0.6  18.8
+M' seul k=0.25    25.9    37.7          36.4      
+M' seul k=0.5     42.6    29.2          28.2      
+M' seul k=0.75    61.1    19.4          19.5      
+-- partie type (milieu+fin, S3+S4) (n = 104572) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  24.5     8.8  26.7     6.9  33.1
+p.prob K2 k=0.5   41.6     4.6  22.7     2.9  28.1
+p.prob K2 k=0.75  58.8     1.5  17.1     1.0  21.6
+p.prob K3 k=0.25  25.2     4.5  32.4     4.6  33.4
+p.prob K3 k=0.5   43.2     2.3  26.1     2.1  26.3
+p.prob K3 k=0.75  62.2     0.8  17.6     0.8  18.7
+exacte K2 k=0.25  24.3     8.6  27.3     6.8  32.9
+exacte K2 k=0.5   40.8     4.7  23.4     3.0  28.1
+exacte K2 k=0.75  57.9     1.6  17.8     1.0  21.7
+exacte K3 k=0.25  25.3     4.6  32.7     4.4  33.1
+exacte K3 k=0.5   42.5     2.5  26.8     2.0  26.2
+exacte K3 k=0.75  61.4     0.9  18.4     0.7  18.7
+M' seul k=0.25    25.7    37.7          36.6      
+M' seul k=0.5     42.6    29.1          28.3      
+M' seul k=0.75    61.1    19.3          19.6      
+-- milieu-T S4 (n = 24068) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  35.1    14.1  21.2     6.4  23.2
+p.prob K2 k=0.5   57.4     5.9  15.7     1.3  19.8
+p.prob K2 k=0.75  69.0     3.0  10.0     0.2  17.7
+p.prob K3 k=0.25  20.5    12.8  39.6     5.9  21.1
+p.prob K3 k=0.5   46.1     4.2  26.4     3.5  19.8
+p.prob K3 k=0.75  67.3     0.3  10.8     2.9  18.7
+exacte K2 k=0.25  34.4    13.8  21.9     6.3  23.6
+exacte K2 k=0.5   56.6     5.7  16.3     1.3  20.1
+exacte K2 k=0.75  68.4     3.1  10.5     0.2  17.8
+exacte K3 k=0.25  21.8    12.1  40.0     4.7  21.4
+exacte K3 k=0.5   46.3     3.9  26.6     3.3  19.9
+exacte K3 k=0.75  67.5     0.2  10.9     2.6  18.8
+M' seul k=0.25    19.9    46.9          33.3      
+M' seul k=0.5     36.2    35.1          28.7      
+M' seul k=0.75    61.4    16.6          22.0      
+-- fin-T S4 (n = 25482) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  21.9     8.5  29.1     5.2  35.3
+p.prob K2 k=0.5   41.9     3.9  24.4     1.1  28.7
+p.prob K2 k=0.75  59.1     1.3  18.1     0.1  21.4
+p.prob K3 k=0.25  22.6     2.8  35.1     3.7  35.9
+p.prob K3 k=0.5   43.1     0.9  28.2     1.1  26.7
+p.prob K3 k=0.75  61.8     0.2  19.2     0.2  18.5
+exacte K2 k=0.25  21.7     7.7  30.1     5.2  35.3
+exacte K2 k=0.5   41.2     3.7  25.3     1.0  28.8
+exacte K2 k=0.75  58.3     1.2  18.8     0.1  21.6
+exacte K3 k=0.25  22.7     2.6  35.4     3.4  35.9
+exacte K3 k=0.5   42.7     0.9  29.0     0.9  26.5
+exacte K3 k=0.75  60.9     0.2  20.2     0.1  18.6
+M' seul k=0.25    23.7    38.8          37.4      
+M' seul k=0.5     43.6    28.7          27.6      
+M' seul k=0.75    62.0    19.2          18.8      
+-- milieu-V S3 (n = 26290) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  25.2    12.7  24.5     6.7  31.0
+p.prob K2 k=0.5   45.3     5.4  20.3     2.5  26.6
+p.prob K2 k=0.75  60.7     1.5  15.3     0.7  21.8
+p.prob K3 k=0.25  22.0     6.8  35.8     5.3  30.1
+p.prob K3 k=0.5   42.8     3.1  26.5     2.8  24.7
+p.prob K3 k=0.75  64.0     0.6  15.2     1.2  19.0
+exacte K2 k=0.25  24.8    12.4  25.1     6.6  31.1
+exacte K2 k=0.5   44.7     5.3  21.0     2.4  26.6
+exacte K2 k=0.75  60.1     1.5  15.9     0.7  21.9
+exacte K3 k=0.25  21.9     6.8  36.2     4.9  30.2
+exacte K3 k=0.5   42.1     3.1  27.3     2.7  24.8
+exacte K3 k=0.75  63.5     0.7  15.7     1.1  19.1
+M' seul k=0.25    21.6    41.6          36.8      
+M' seul k=0.5     39.6    31.4          29.0      
+M' seul k=0.75    60.1    19.0          21.0      
+-- milieu-V S4 (n = 19748) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  26.5    12.8  24.9     5.9  29.9
+p.prob K2 k=0.5   47.1     5.4  20.6     1.8  25.1
+p.prob K2 k=0.75  62.8     1.4  15.1     0.4  20.3
+p.prob K3 k=0.25  21.8     6.6  36.6     5.5  29.6
+p.prob K3 k=0.5   42.4     3.3  27.9     2.6  23.8
+p.prob K3 k=0.75  64.7     0.6  15.9     1.0  17.9
+exacte K2 k=0.25  26.1    12.6  25.5     5.8  29.9
+exacte K2 k=0.5   46.4     5.3  21.3     1.8  25.2
+exacte K2 k=0.75  62.2     1.5  15.6     0.4  20.4
+exacte K3 k=0.25  21.8     6.6  37.0     5.0  29.7
+exacte K3 k=0.5   41.8     3.2  28.6     2.5  23.9
+exacte K3 k=0.75  64.3     0.6  16.4     0.8  17.9
+M' seul k=0.25    21.6    42.5          36.0      
+M' seul k=0.5     40.3    32.0          27.7      
+M' seul k=0.75    60.6    19.7          19.7      
+-- fin-V S3 (n = 26032) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  22.6     7.9  28.8     5.5  35.2
+p.prob K2 k=0.5   41.6     3.9  24.0     1.5  29.0
+p.prob K2 k=0.75  58.9     1.4  17.6     0.3  21.8
+p.prob K3 k=0.25  23.3     3.2  33.8     4.7  35.0
+p.prob K3 k=0.5   42.6     1.5  27.6     1.6  26.6
+p.prob K3 k=0.75  61.0     0.4  19.1     0.4  19.1
+exacte K2 k=0.25  22.5     7.6  29.6     5.4  34.9
+exacte K2 k=0.5   41.0     3.9  24.6     1.6  28.9
+exacte K2 k=0.75  58.0     1.5  18.3     0.3  21.9
+exacte K3 k=0.25  23.2     3.3  34.4     4.4  34.8
+exacte K3 k=0.5   42.1     1.6  28.4     1.5  26.4
+exacte K3 k=0.75  60.0     0.5  19.9     0.4  19.1
+M' seul k=0.25    23.9    38.1          38.1      
+M' seul k=0.5     43.3    28.6          28.1      
+M' seul k=0.75    60.7    19.7          19.5      
+-- fin-V S4 (n = 24722) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  22.8     7.2  29.8     4.6  35.5
+p.prob K2 k=0.5   42.2     3.5  24.7     0.9  28.7
+p.prob K2 k=0.75  59.0     1.3  18.0     0.1  21.5
+p.prob K3 k=0.25  23.9     2.1  34.3     3.6  36.1
+p.prob K3 k=0.5   43.8     0.7  27.6     1.0  26.8
+p.prob K3 k=0.75  61.3     0.2  19.2     0.2  19.2
+exacte K2 k=0.25  22.5     6.8  30.8     4.6  35.4
+exacte K2 k=0.5   41.4     3.4  25.6     1.0  28.7
+exacte K2 k=0.75  58.1     1.4  18.8     0.1  21.7
+exacte K3 k=0.25  23.7     2.2  35.0     3.4  35.8
+exacte K3 k=0.5   43.1     0.8  28.5     0.9  26.7
+exacte K3 k=0.75  60.5     0.2  20.1     0.1  19.1
+M' seul k=0.25    24.2    38.4          37.4      
+M' seul k=0.5     43.9    28.4          27.7      
+M' seul k=0.75    61.7    19.3          19.0      
+-- parc vivant S3 (n = 52322) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  23.9    10.3  26.6     6.1  33.1
+p.prob K2 k=0.5   43.5     4.7  22.1     2.0  27.8
+p.prob K2 k=0.75  59.8     1.5  16.5     0.5  21.8
+p.prob K3 k=0.25  22.6     5.0  34.8     5.0  32.6
+p.prob K3 k=0.5   42.7     2.3  27.1     2.2  25.7
+p.prob K3 k=0.75  62.5     0.5  17.1     0.8  19.1
+exacte K2 k=0.25  23.7    10.0  27.3     6.0  32.9
+exacte K2 k=0.5   42.8     4.6  22.8     2.0  27.7
+exacte K2 k=0.75  59.0     1.5  17.1     0.5  21.9
+exacte K3 k=0.25  22.5     5.0  35.3     4.7  32.5
+exacte K3 k=0.5   42.1     2.4  27.8     2.1  25.6
+exacte K3 k=0.75  61.8     0.6  17.8     0.7  19.1
+M' seul k=0.25    22.7    39.8          37.4      
+M' seul k=0.5     41.4    30.1          28.5      
+M' seul k=0.75    60.4    19.4          20.2      
+-- parc vivant S4 (n = 44470) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  24.4     9.7  27.6     5.2  33.0
+p.prob K2 k=0.5   44.4     4.3  22.9     1.3  27.1
+p.prob K2 k=0.75  60.7     1.4  16.7     0.3  21.0
+p.prob K3 k=0.25  22.9     4.1  35.3     4.5  33.2
+p.prob K3 k=0.5   43.2     1.8  27.8     1.7  25.5
+p.prob K3 k=0.75  62.8     0.4  17.7     0.5  18.6
+exacte K2 k=0.25  24.1     9.4  28.4     5.1  32.9
+exacte K2 k=0.5   43.6     4.2  23.7     1.3  27.1
+exacte K2 k=0.75  59.9     1.4  17.3     0.3  21.1
+exacte K3 k=0.25  22.9     4.1  35.9     4.1  33.1
+exacte K3 k=0.5   42.5     1.8  28.6     1.6  25.5
+exacte K3 k=0.75  62.2     0.4  18.4     0.4  18.6
+M' seul k=0.25    23.0    40.2          36.8      
+M' seul k=0.5     42.3    30.0          27.7      
+M' seul k=0.75    61.2    19.5          19.3      
+-- parc vivant (milieu+fin, S3+S4) (n = 96792) --
+variante          zone  n+ (+)    f+  n− (−)    f−
+p.prob K2 k=0.25  24.1    10.0  27.1     5.7  33.1
+p.prob K2 k=0.5   43.9     4.5  22.5     1.7  27.5
+p.prob K2 k=0.75  60.2     1.4  16.6     0.4  21.4
+p.prob K3 k=0.25  22.8     4.6  35.0     4.7  32.8
+p.prob K3 k=0.5   42.9     2.1  27.4     2.0  25.6
+p.prob K3 k=0.75  62.6     0.5  17.4     0.7  18.8
+exacte K2 k=0.25  23.9     9.7  27.8     5.6  32.9
+exacte K2 k=0.5   43.2     4.4  23.2     1.7  27.5
+exacte K2 k=0.75  59.4     1.5  17.2     0.4  21.5
+exacte K3 k=0.25  22.7     4.6  35.6     4.4  32.8
+exacte K3 k=0.5   42.3     2.1  28.2     1.9  25.5
+exacte K3 k=0.75  62.0     0.5  18.1     0.6  18.9
+M' seul k=0.25    22.8    40.0          37.1      
+M' seul k=0.5     41.8    30.0          28.1      
+M' seul k=0.75    60.8    19.4          19.8      
+
+-- partie type (milieu+fin, S3+S4) : par profil et par type (p.prob, k=0,5) : K2 | K3 --
+                     n  K2 zone   n+    f+   n−    f−  | K3 zone   n+    f+   n−    f−
+concentree       19005     41.7  3.5  28.2  2.6  24.0     | 42.9  1.2  21.8  3.0  31.1
+diversifiee      19005     38.7  6.4  19.8  4.0  31.1     | 39.3  3.3  31.1  2.3  24.1
+endettee         19005     44.3  7.5  15.6  2.2  30.4     | 45.1  1.6  28.3  1.0  23.9
+ordinaire        47557     41.6  3.3  24.6  2.9  27.7     | 44.2  2.7  24.9  2.1  26.2
+type garp        26134     41.8  4.6  23.0  2.9  27.6     | 43.2  2.4  26.2  2.2  26.1
+type dividende   26151     41.7  4.7  22.8  2.8  28.0     | 43.5  2.3  26.2  1.9  26.0
+type croissance  26152     41.1  4.8  22.5  3.0  28.6     | 43.0  2.3  25.8  2.2  26.7
+type momentum    26135     41.6  4.5  22.6  3.0  28.3     | 43.2  2.2  26.1  2.1  26.4
+-- parc vivant (milieu+fin, S3+S4) : par profil et par type (p.prob, k=0,5) : K2 | K3 --
+                     n  K2 zone   n+    f+   n−    f−  | K3 zone   n+    f+   n−    f−
+concentree       17458     41.6  3.8  29.3  1.3  24.0     | 43.9  0.6  21.8  4.3  29.4
+diversifiee      17458     42.6  8.7  13.3  2.3  33.1     | 37.6  4.2  33.0  0.5  24.7
+endettee         17458     48.2  3.1  20.1  1.2  27.4     | 45.0  1.5  29.4  1.1  23.0
+ordinaire        44418     43.6  3.7  24.4  1.8  26.6     | 43.8  2.1  26.6  2.1  25.5
+type garp        24199     43.8  4.3  22.4  1.7  27.8     | 42.9  2.0  27.2  2.0  25.9
+type dividende   24189     43.9  4.5  22.8  1.6  27.2     | 42.6  2.4  27.5  2.0  25.5
+type croissance  24197     44.5  4.4  22.2  1.7  27.2     | 43.3  2.1  27.2  2.1  25.3
+type momentum    24207     43.4  4.8  22.6  1.7  27.6     | 42.8  2.0  27.7  2.0  25.5
+
+== Deux premiers semestres : H0 (historien à 0 puis 2) contre H1 (historien absent, cible = milieu de M et K) ==
+-- debut S1 (n = 26400) --
+variante          H0 zone   n+    f+   n−   f−  |  H1 zone   n+    f+   n−   f−
+p.prob K2 k=0.25     80.0  0.0  11.3  0.0  8.8  |     79.7  0.0  11.8  0.0  8.5
+p.prob K2 k=0.5      80.0  0.0  11.3  0.0  8.8  |     79.7  0.0  11.8  0.0  8.5
+p.prob K2 k=0.75     80.0  0.0  11.3  0.0  8.8  |     79.7  0.0  11.8  0.0  8.5
+p.prob K3 k=0.25     80.3  0.0  11.4  0.0  8.3  |     80.3  0.0  11.4  0.0  8.3
+p.prob K3 k=0.5      80.3  0.0  11.4  0.0  8.3  |     80.3  0.0  11.4  0.0  8.3
+p.prob K3 k=0.75     80.3  0.0  11.4  0.0  8.3  |     80.3  0.0  11.4  0.0  8.3
+exacte K2 k=0.25     80.0  0.0  11.3  0.0  8.7  |     79.2  0.0  12.4  0.0  8.4
+exacte K2 k=0.5      80.0  0.0  11.3  0.0  8.7  |     79.2  0.0  12.4  0.0  8.4
+exacte K2 k=0.75     80.0  0.0  11.3  0.0  8.7  |     79.2  0.0  12.4  0.0  8.4
+exacte K3 k=0.25     79.6  0.0  12.1  0.0  8.3  |     79.6  0.0  12.1  0.0  8.3
+exacte K3 k=0.5      79.6  0.0  12.1  0.0  8.3  |     79.6  0.0  12.1  0.0  8.3
+exacte K3 k=0.75     79.6  0.0  12.1  0.0  8.3  |     79.6  0.0  12.1  0.0  8.3
+-- debut S2 (n = 26400) --
+variante          H0 zone    n+    f+    n−    f−  |  H1 zone   n+    f+   n−    f−
+p.prob K2 k=0.25     19.3  13.2  13.8  11.5  42.2  |     28.9  0.1  34.4  0.0  36.6
+p.prob K2 k=0.5      20.9  12.4  13.7  11.5  41.5  |     30.3  0.1  34.0  0.0  35.6
+p.prob K2 k=0.75     37.4   6.3  10.8  11.1  34.4  |     46.6  0.0  27.4  0.0  26.0
+p.prob K3 k=0.25     39.7  13.0  13.3   0.0  34.0  |     39.2  0.0  27.2  0.0  33.6
+p.prob K3 k=0.5      41.6  12.3  13.3   0.0  32.9  |     41.0  0.0  26.5  0.0  32.5
+p.prob K3 k=0.75     57.4   6.7  10.4   0.0  25.5  |     57.0  0.0  18.1  0.0  24.9
+exacte K2 k=0.25     19.2  13.5  13.9  11.3  42.2  |     28.9  0.1  34.6  0.0  36.4
+exacte K2 k=0.5      20.7  12.6  13.9  11.3  41.5  |     30.3  0.1  34.3  0.0  35.3
+exacte K2 k=0.75     37.4   6.4  11.1  10.9  34.3  |     46.3  0.0  27.9  0.0  25.7
+exacte K3 k=0.25     39.5  13.2  13.5   0.0  33.8  |     39.0  0.0  27.6  0.0  33.4
+exacte K3 k=0.5      41.4  12.4  13.5   0.0  32.7  |     40.9  0.0  26.8  0.0  32.3
+exacte K3 k=0.75     57.2   6.8  10.6   0.0  25.3  |     56.8  0.0  18.4  0.0  24.8
+ancien verdict, debut S1 : beat 46.9, miss 40.3, flat 12.8
+ancien verdict, debut S2 : miss 73.1, beat 16.1, flat 10.8
+ancien verdict, partie type (milieu+fin, S3+S4) : miss 20.3, sigMiss 6.9, beat 10.3, sigBeat 39.2, reallyMiss 23.1, flat 0.2
+ancien verdict, parc vivant (milieu+fin, S3+S4) : miss 16.4, sigBeat 42.2, reallyMiss 24.6, beat 9.3, sigMiss 7.3, flat 0.1
+
+== Mesure 3 : analyste marché (p.prob) — part des semestres où R bat K, médiane K/M (M > 0 seulement), analyste retenu comme cible (H/M/K) ==
+-- partie type (milieu+fin, S3+S4) --
+profil            n   R>H   R>M  R>K1  R>K2  R>K3  K1/M  K2/M  K3/M  cible K2 H/M/K  cible K3 H/M/K   ρ p10/méd/p90
+tous         104572  49.5  48.5  16.4  42.0  49.3  1.87  0.66  1.03  34.1/38.9/27.0   4.2/44.0/51.8  0.83/1.00/1.16
+concentree    19005  47.6  39.2  32.0  63.9  38.9  1.23  0.45  1.03  35.9/37.5/26.6   5.3/47.1/47.6  0.91/1.03/1.16
+diversifiee   19005  51.7  52.2   4.7  28.7  54.0  2.43  1.08  1.00  38.8/36.0/25.2   3.3/42.8/53.9  0.79/0.97/1.16
+endettee      19005  51.9  54.9   6.7  20.7  56.6  5.25  2.31  1.00  38.9/46.5/14.7   3.8/41.1/55.1  0.78/0.96/1.14
+ordinaire     47557  48.4  48.1  18.7  47.1  48.6  1.94  0.67  1.03  29.7/37.6/32.7   4.4/44.4/51.3  0.85/1.01/1.17
+-- parc vivant (milieu+fin, S3+S4) --
+profil           n   R>H   R>M  R>K1  R>K2  R>K3  K1/M  K2/M  K3/M  cible K2 H/M/K  cible K3 H/M/K   ρ p10/méd/p90
+tous         96792  51.5  50.1  24.6  40.5  50.9  1.36  0.63  1.03  41.8/32.2/25.9   3.5/46.8/49.7  0.83/1.00/1.16
+concentree   17458  52.7  39.4  42.6  59.8  39.2  1.02  0.47  1.03  37.5/25.9/36.6   3.7/50.6/45.6  0.91/1.03/1.16
+diversifiee  17458  48.3  55.8   4.8  20.3  57.7  5.30  3.19  1.00  56.6/32.9/10.6   3.3/45.2/51.5  0.78/0.97/1.16
+endettee     17458  54.7  55.6  18.2  29.4  57.4  2.89  1.67  0.99  38.3/39.3/22.4   2.7/44.5/52.9  0.80/0.97/1.15
+ordinaire    44418  51.0  49.8  27.8  45.2  50.3  1.35  0.61  1.03  39.1/31.7/29.2   3.8/46.9/49.3  0.84/1.01/1.17
+-- debut S2 --
+profil           n   R>H   R>M  R>K1  R>K2  R>K3  K1/M  K2/M  K3/M  cible K2 H/M/K  cible K3 H/M/K   ρ p10/méd/p90
+tous         26400  16.1  51.5   0.0  40.9  52.0  3.78  0.81  1.00   1.3/53.5/45.2   1.2/50.9/47.9  0.92/1.00/1.08
+concentree    4800   4.6  45.6   0.0  48.0  45.7  3.92  0.82  1.00   0.0/65.6/34.4   0.9/47.4/51.7  0.93/1.00/1.08
+diversifiee   4800  20.0  46.3   0.0  50.6  46.1  3.40  0.71  1.01   5.0/72.6/22.4   3.3/46.8/50.0  0.93/1.00/1.08
+endettee      4800   0.0  64.6   0.0   0.0  66.2     —     —     —   0.0/0.0/100.0   0.0/53.9/46.1  0.88/0.99/1.12
+ordinaire    12000  25.5  50.7   0.0  50.4  51.2  3.86  0.84  1.00   0.9/62.4/36.8   0.9/52.8/46.3  0.92/1.00/1.07
+
+== Tiers d'information (M' − M, formés dans chaque table × phase × semestre × profil) : sous la zone n− / f− (%) ==
+groupe                                      ensemble  tiers bas  tiers milieu  tiers haut        M'−M moyen
+debut S1 K2 k=0.5                            0.0/8.8    0.0/9.3       0.0/8.7     0.0/8.3    0.02/0.05/0.12
+debut S1 K3 k=0.5                            0.0/8.3    0.0/8.7       0.0/8.6     0.0/7.6    0.02/0.05/0.12
+debut S2 K2 k=0.5                          11.5/41.5  10.6/35.9     11.0/43.1   12.8/45.5  -0.19/-0.08/0.03
+debut S2 K3 k=0.5                           0.0/32.9   0.0/34.1      0.0/35.6    0.0/29.0  -0.19/-0.08/0.03
+milieu S3 K2 k=0.5                          4.4/27.4   5.6/37.6      4.9/27.7    2.6/16.8  -0.66/-0.08/0.50
+milieu S3 K3 k=0.5                          2.9/25.7   3.5/38.0      3.2/23.6    2.0/15.5  -0.66/-0.08/0.50
+milieu S4 K2 k=0.5                          4.2/27.8   5.3/39.0      4.7/28.3    2.7/16.2  -0.65/-0.05/0.52
+milieu S4 K3 k=0.5                          2.7/25.8   2.7/39.1      2.9/22.9    2.5/15.4  -0.65/-0.05/0.52
+fin S3 K2 k=0.5                             1.9/28.6   2.2/42.5      1.8/30.2    1.6/13.1  -5.39/-0.53/4.64
+fin S3 K3 k=0.5                             1.7/26.8   2.0/42.7      1.6/24.7    1.4/12.9  -5.39/-0.53/4.64
+fin S4 K2 k=0.5                             1.2/28.8   1.5/43.9      1.1/30.6    0.9/11.9  -5.60/-0.56/4.48
+fin S4 K3 k=0.5                             1.0/27.0   1.0/43.6      1.1/25.1    1.0/12.2  -5.60/-0.56/4.48
+partie type (milieu+fin, S3+S4) K2 k=0.25   6.9/33.1   8.1/46.8      7.1/34.1    5.5/18.6  -3.05/-0.30/2.52
+partie type (milieu+fin, S3+S4) K2 k=0.5    2.9/28.1   3.7/40.7      3.2/29.2    2.0/14.5  -3.05/-0.30/2.52
+partie type (milieu+fin, S3+S4) K2 k=0.75   1.0/21.6   1.3/32.5      1.0/22.7     0.5/9.7  -3.05/-0.30/2.52
+partie type (milieu+fin, S3+S4) K3 k=0.25   4.6/33.4   4.8/49.3      4.7/31.4    4.2/19.5  -3.05/-0.30/2.52
+partie type (milieu+fin, S3+S4) K3 k=0.5    2.1/26.3   2.3/40.8      2.2/24.1    1.7/14.0  -3.05/-0.30/2.52
+partie type (milieu+fin, S3+S4) K3 k=0.75   0.8/18.7   1.0/31.1      0.8/16.4     0.6/8.6  -3.05/-0.30/2.52
+milieu-T S4 K2 k=0.5                        1.3/19.8   2.3/33.5      1.1/21.1     0.5/4.8  -2.16/-0.17/1.85
+milieu-T S4 K3 k=0.5                        3.5/19.8   4.7/36.6      3.4/18.8     2.3/3.9  -2.16/-0.17/1.85
+fin-T S4 K2 k=0.5                           1.1/28.7   1.3/43.7      1.0/30.4    0.9/12.1  -5.91/-0.58/4.69
+fin-T S4 K3 k=0.5                           1.1/26.7   1.0/43.1      1.4/24.7    1.0/12.2  -5.91/-0.58/4.69
+parc vivant (milieu+fin, S3+S4) K2 k=0.5    1.7/27.5   1.9/39.5      1.8/29.8    1.3/13.0  -4.12/-0.35/3.33
+parc vivant (milieu+fin, S3+S4) K3 k=0.5    2.0/25.6   2.7/40.7      1.7/24.1    1.7/12.0  -4.12/-0.35/3.33
+
+== Mesure 6 : type Croissance (toutes entreprises « comme si » Croissance ; p.prob, K2 et K3) : axe des analystes (%) et dérive du sac type (%/sem.) ==
+Population commune = semestres où la règle actuelle a un axe (chiffre d'affaires > 0), pour les trois règles ; population entière pour (a) et (b).
+-- partie type (milieu+fin, S3+S4), K2 --
+population règle             bon  neutre  mauvais  dérive élevé  dérive très élevé
+commune (n=87037) actuelle  53.2     3.8     43.0          0.65               0.40
+commune (n=87037) a_k0.25   41.7    24.0     34.3          0.63               0.36
+commune (n=87037) b_k0.25   32.0    41.1     26.9          0.60               0.32
+commune (n=87037) a_k0.5    32.4    42.1     25.5          0.63               0.35
+commune (n=87037) b_k0.5    27.3    50.4     22.4          0.61               0.32
+commune (n=87037) a_k0.75   22.3    60.2     17.4          0.61               0.32
+commune (n=87037) b_k0.75   20.5    63.0     16.4          0.60               0.31
+entiere (n=104572) a_k0.25  35.5    24.5     40.1          0.05              -0.22
+entiere (n=104572) b_k0.25  26.7    40.2     33.1          0.03              -0.25
+entiere (n=104572) a_k0.5   27.4    41.6     31.1          0.08              -0.21
+entiere (n=104572) b_k0.5   22.7    49.1     28.1          0.05              -0.24
+entiere (n=104572) a_k0.75  18.6    58.8     22.6          0.07              -0.22
+entiere (n=104572) b_k0.75  17.1    61.3     21.6          0.06              -0.23
+-- partie type (milieu+fin, S3+S4), K3 --
+population règle             bon  neutre  mauvais  dérive élevé  dérive très élevé
+commune (n=87037) actuelle  53.2     3.8     43.0          0.65               0.40
+commune (n=87037) a_k0.25   42.5    23.3     34.1          0.62               0.36
+commune (n=87037) b_k0.25   37.6    33.2     29.2          0.63               0.36
+commune (n=87037) a_k0.5    33.0    42.2     24.7          0.64               0.35
+commune (n=87037) b_k0.5    30.4    47.1     22.5          0.64               0.35
+commune (n=87037) a_k0.75   21.9    62.1     16.0          0.61               0.32
+commune (n=87037) b_k0.75   21.0    63.9     15.2          0.61               0.32
+entiere (n=104572) a_k0.25  36.8    25.2     38.0          0.09              -0.18
+entiere (n=104572) b_k0.25  32.4    34.2     33.4          0.09              -0.18
+entiere (n=104572) a_k0.5   28.4    43.2     28.4          0.11              -0.18
+entiere (n=104572) b_k0.5   26.1    47.6     26.3          0.11              -0.18
+entiere (n=104572) a_k0.75  18.4    62.2     19.4          0.09              -0.20
+entiere (n=104572) b_k0.75  17.6    63.7     18.7          0.10              -0.20
+-- parc vivant (milieu+fin, S3+S4), K2 --
+population règle             bon  neutre  mauvais  dérive élevé  dérive très élevé
+commune (n=81679) actuelle  55.5     3.1     41.4          0.66               0.41
+commune (n=81679) a_k0.25   43.2    23.3     33.5          0.61               0.35
+commune (n=81679) b_k0.25   32.0    40.3     27.7          0.55               0.27
+commune (n=81679) a_k0.5    31.8    43.9     24.3          0.59               0.31
+commune (n=81679) b_k0.5    26.6    50.8     22.6          0.55               0.26
+commune (n=81679) a_k0.75   21.3    61.3     17.4          0.55               0.26
+commune (n=81679) b_k0.75   19.6    63.4     17.0          0.54               0.24
+entiere (n=96792) a_k0.25   37.1    24.1     38.8          0.10              -0.17
+entiere (n=96792) b_k0.25   27.1    39.9     33.1          0.04              -0.24
+entiere (n=96792) a_k0.5    27.0    43.9     29.1          0.09              -0.19
+entiere (n=96792) b_k0.5    22.5    50.1     27.5          0.06              -0.23
+entiere (n=96792) a_k0.75   18.0    60.2     21.8          0.07              -0.23
+entiere (n=96792) b_k0.75   16.6    62.0     21.4          0.06              -0.24
+-- parc vivant (milieu+fin, S3+S4), K3 --
+population règle             bon  neutre  mauvais  dérive élevé  dérive très élevé
+commune (n=81679) actuelle  55.5     3.1     41.4          0.66               0.41
+commune (n=81679) a_k0.25   44.9    20.9     34.2          0.61               0.34
+commune (n=81679) b_k0.25   40.2    30.7     29.2          0.62               0.35
+commune (n=81679) a_k0.5    34.0    41.7     24.3          0.60               0.32
+commune (n=81679) b_k0.5    31.7    46.1     22.2          0.61               0.32
+commune (n=81679) a_k0.75   21.1    62.5     16.4          0.55               0.25
+commune (n=81679) b_k0.75   20.5    63.8     15.7          0.55               0.26
+entiere (n=96792) a_k0.25   39.6    22.8     37.6          0.13              -0.14
+entiere (n=96792) b_k0.25   35.0    32.1     32.8          0.14              -0.14
+entiere (n=96792) a_k0.5    29.5    42.9     27.6          0.13              -0.16
+entiere (n=96792) b_k0.5    27.4    47.0     25.6          0.13              -0.16
+entiere (n=96792) a_k0.75   17.9    62.6     19.5          0.09              -0.21
+entiere (n=96792) b_k0.75   17.4    63.8     18.8          0.09              -0.21
+
+== Mesure 8 : tendances (tirages purs, volatilité 1) — effet net sur le cours (%, médiane du cas avec cubes − médiane sans cube) ==
+-- garp (sac 10V/10R/8B) ; bruit (écart type) : 1 sem. 6.46, 2 sem. 9.19, 3 sem. 11.26, 4 sem. 12.98, 6 sem. 15.93 --
+injection    1 sem.  2 sem.  3 sem.  4 sem.  6 sem.  effet moyen 6 sem.
+3R une fois   -1.06   -1.62   -1.60   -1.72   -1.54               -1.64
+5R une fois   -2.01   -3.04   -3.54   -3.68   -3.61               -3.68
+7R une fois   -2.94   -4.81   -5.71   -5.90   -5.88               -6.23
+2R par sem.   -0.94   -1.81   -2.75   -3.84   -6.13               -6.45
+3R par sem.   -1.06   -2.90   -4.81   -6.86  -12.06              -12.34
+5R par sem.   -2.01   -4.95   -8.69  -13.00  -21.97              -22.24
+3V une fois    1.02    1.22    1.56    1.62    1.62                1.56
+5V une fois    2.01    3.04    3.54    3.47    3.64                3.62
+7V une fois    2.96    4.92    5.90    6.13    6.14                6.22
+2V par sem.    0.85    1.73    2.73    3.92    6.34                6.48
+3V par sem.    1.02    2.92    4.99    7.29   13.59               13.40
+5V par sem.    2.01    5.14    9.37   14.78   27.93               27.87
+-- dividende (sac 10V/10R/8B) ; bruit (écart type) : 1 sem. 4.89, 2 sem. 6.89, 3 sem. 8.47, 4 sem. 9.79, 6 sem. 11.97 --
+injection    1 sem.  2 sem.  3 sem.  4 sem.  6 sem.  effet moyen 6 sem.
+3R une fois   -0.98   -1.02   -1.05   -1.05   -1.06               -1.19
+5R une fois   -1.91   -2.07   -2.83   -2.81   -2.80               -2.69
+7R une fois   -2.01   -3.25   -4.00   -4.11   -4.63               -4.55
+2R par sem.   -0.15   -1.03   -1.97   -2.86   -4.70               -4.68
+3R par sem.   -0.98   -1.99   -3.78   -4.97   -8.84               -9.04
+5R par sem.   -1.91   -3.87   -6.66   -9.51  -16.44              -16.61
+3V une fois    0.96    1.03    1.04    1.04    1.06                1.15
+5V une fois    1.08    2.08    2.22    2.67    2.71                2.64
+7V une fois    2.01    3.18    4.09    4.18    4.29                4.53
+2V par sem.    0.72    1.05    1.97    2.92    4.73                4.66
+3V par sem.    0.96    2.03    3.84    5.18    9.53                9.67
+5V par sem.    1.08    4.00    7.08   10.48   19.63               19.69
+-- croissance (sac 12V/12R/4B) ; bruit (écart type) : 1 sem. 7.25, 2 sem. 10.30, 3 sem. 12.63, 4 sem. 14.56, 6 sem. 17.88 --
+injection    1 sem.  2 sem.  3 sem.  4 sem.  6 sem.  effet moyen 6 sem.
+3R une fois   -1.02   -1.13   -1.23   -1.25   -1.33               -1.43
+5R une fois   -1.96   -2.89   -2.98   -3.06   -3.09               -3.28
+7R une fois   -2.87   -4.63   -5.06   -5.27   -5.34               -5.66
+2R par sem.   -0.89   -1.21   -2.13   -3.13   -5.10               -5.58
+3R par sem.   -1.02   -2.72   -4.22   -6.47  -10.92              -11.28
+5R par sem.   -1.96   -4.85   -8.46  -12.43  -21.21              -21.67
+3V une fois    1.03    1.19    1.25    1.38    1.31                1.41
+5V une fois    2.04    3.04    3.11    3.14    3.16                3.25
+7V une fois    2.98    4.86    5.33    5.80    5.72                5.69
+2V par sem.    0.83    1.25    2.20    3.19    5.35                5.42
+3V par sem.    1.03    2.87    4.51    6.87   12.19               11.96
+5V par sem.    2.04    5.17    9.35   14.00   26.85               26.84
+-- momentum (sac 10V/10R/8B) ; bruit (écart type) : 1 sem. 5.92, 2 sem. 8.36, 3 sem. 10.25, 4 sem. 11.84, 6 sem. 14.51 --
+injection    1 sem.  2 sem.  3 sem.  4 sem.  6 sem.  effet moyen 6 sem.
+3R une fois   -1.06   -1.31   -1.74   -1.71   -1.66               -1.65
+5R une fois   -1.99   -2.88   -3.10   -3.51   -3.66               -3.68
+7R une fois   -2.16   -3.98   -5.01   -5.72   -5.92               -6.11
+2R par sem.   -0.97   -1.76   -2.68   -3.78   -6.60               -6.58
+3R par sem.   -1.06   -2.76   -4.20   -6.66  -11.70              -11.79
+5R par sem.   -1.99   -4.19   -7.64  -11.39  -20.26              -20.33
+3V une fois    0.93    1.18    1.45    1.62    1.64                1.58
+5V une fois    1.90    2.96    3.21    3.42    3.48                3.61
+7V une fois    2.09    4.12    5.25    6.06    6.14                6.24
+2V par sem.    0.09    1.24    2.69    3.95    6.80                6.65
+3V par sem.    0.93    2.75    4.32    7.13   12.82               12.84
+5V par sem.    1.90    4.32    8.33   12.79   25.05               25.05
+repère GARP (contrat) : 3 rouges une fois ≈ −2 % → -1.54 ; 3 par semestre ≈ −12 % à 6 sem. → -12.06 ; 5 par semestre ≈ −22 % → -21.97 ; bruit 15,9 % à 6 sem. → 15.93
+durée mesure 8 : 92 s
+
+== Mesure 9 : dérive du cours sous le verdict, 10 semestres, un verdict tiré par semestre aux fréquences de la partie type (GARP, tirages purs) ==
+sans verdict : moyenne -0.23 %, médiane -2.26 %, écart type 20.58 %
+scénario                                moyenne %  médiane %  écart type %  effet moyen %  ± 95 %  par semestre (médiane) %
+K2 k=0.25 normal 3 fort 5                   -2.89      -5.05         21.65          -2.67    0.28                     -0.29
+K2 k=0.25 normal 3 fort 6                   -3.21      -6.16         24.06          -2.99    0.33                     -0.41
+K2 k=0.25 normal 2 fort 5                   -2.81      -5.11         21.60          -2.58    0.27                     -0.29
+K2 k=0.5 normal 3 fort 5                    -2.22      -4.32         21.15          -1.99    0.25                     -0.21
+K2 k=0.5 normal 3 fort 6                    -2.48      -5.00         22.86          -2.25    0.29                     -0.28
+K2 k=0.5 normal 2 fort 5                    -2.53      -4.71         20.91          -2.30    0.24                     -0.25
+K2 k=0.75 normal 3 fort 5                   -2.24      -4.25         20.62          -2.01    0.21                     -0.21
+K2 k=0.75 normal 3 fort 6                   -2.44      -4.98         21.80          -2.21    0.25                     -0.28
+K2 k=0.75 normal 2 fort 5                   -1.92      -3.96         20.55          -1.69    0.21                     -0.17
+K3 k=0.25 normal 3 fort 5                   -0.71      -3.02         22.37          -0.48    0.29                     -0.08
+K3 k=0.25 normal 3 fort 6                   -0.05      -3.08         25.32           0.17    0.34                     -0.08
+K3 k=0.25 normal 2 fort 5                   -0.72      -3.10         22.40          -0.49    0.29                     -0.09
+K3 k=0.5 normal 3 fort 5                    -0.18      -2.26         21.45           0.04    0.25                     -0.00
+K3 k=0.5 normal 3 fort 6                     0.36      -2.42         23.66           0.58    0.30                     -0.02
+K3 k=0.5 normal 2 fort 5                    -0.28      -2.65         21.67          -0.05    0.25                     -0.04
+K3 k=0.75 normal 3 fort 5                   -0.59      -2.72         20.73          -0.36    0.20                     -0.05
+K3 k=0.75 normal 3 fort 6                   -0.71      -2.98         21.82          -0.49    0.24                     -0.07
+K3 k=0.75 normal 2 fort 5                   -0.70      -2.84         20.88          -0.48    0.20                     -0.06
+ancien verdict (paliers 1-2, 3-5, 6-8)      -6.20      -8.66         22.23          -5.97    0.30                     -0.67
+
+== Mesure 10 : pari du PDG en cubes, en % du cours sur 4 semestres (GARP), partie type, p.prob ==
+Avertissement = −effet(1 rouge) + P(f−)·[E(fort) − E(normal)] + P(n−)·E(normal). Promesse = +effet(1 vert) − P(n−)·[E(fort) − E(normal)] − P(f−)·X ; X = 0 si le fort ne s'aggrave pas (A), X = E(2 fort − normal) − E(fort) sinon (B).
+effets à 4 sem. utilisés (|%|) : rouges 1:0.32 2:0.89 3:1.65 5:3.65 6:4.85 7:6.07 8:7.32 9:8.55 ; 1 vert : 0.29
+réglage          ensemble avert. / prom. A / prom. B            tiers bas         tiers milieu            tiers haut
+K2 k=0.25 n3 f5                  0.45 / 0.15 / -0.65  0.75 / 0.13 / -1.01  0.48 / 0.15 / -0.68   0.14 / 0.18 / -0.27
+K2 k=0.25 n3 f6                  0.85 / 0.07 / -1.16  1.31 / 0.03 / -1.70  0.88 / 0.06 / -1.20   0.36 / 0.11 / -0.57
+K2 k=0.25 n2 f5                  0.65 / 0.10 / -1.12  1.04 / 0.06 / -1.65  0.68 / 0.09 / -1.16   0.24 / 0.14 / -0.55
+K2 k=0.5 n3 f5                   0.29 / 0.23 / -0.45  0.55 / 0.21 / -0.77  0.31 / 0.23 / -0.48  -0.00 / 0.25 / -0.10
+K2 k=0.5 n3 f6                   0.63 / 0.19 / -0.85  1.04 / 0.17 / -1.33  0.66 / 0.19 / -0.89   0.17 / 0.23 / -0.31
+K2 k=0.5 n2 f5                   0.48 / 0.21 / -0.83  0.83 / 0.19 / -1.31  0.51 / 0.20 / -0.87   0.10 / 0.23 / -0.30
+K2 k=0.75 n3 f5                  0.13 / 0.27 / -0.25  0.35 / 0.26 / -0.53  0.15 / 0.27 / -0.28   -0.12 / 0.28 / 0.04
+K2 k=0.75 n3 f6                  0.39 / 0.26 / -0.54  0.74 / 0.25 / -0.96  0.42 / 0.26 / -0.58  -0.00 / 0.27 / -0.09
+K2 k=0.75 n2 f5                  0.28 / 0.26 / -0.53  0.59 / 0.25 / -0.94  0.31 / 0.26 / -0.57  -0.05 / 0.27 / -0.08
+K3 k=0.25 n3 f5                  0.42 / 0.20 / -0.61  0.74 / 0.19 / -1.00  0.38 / 0.19 / -0.56   0.14 / 0.20 / -0.27
+K3 k=0.25 n3 f6                  0.82 / 0.14 / -1.09  1.33 / 0.13 / -1.69  0.76 / 0.14 / -1.02   0.37 / 0.15 / -0.57
+K3 k=0.25 n2 f5                  0.64 / 0.16 / -1.06  1.08 / 0.15 / -1.65  0.58 / 0.16 / -0.99   0.25 / 0.17 / -0.55
+K3 k=0.5 n3 f5                   0.24 / 0.25 / -0.39  0.53 / 0.24 / -0.74  0.20 / 0.24 / -0.34  -0.01 / 0.25 / -0.08
+K3 k=0.5 n3 f6                   0.55 / 0.22 / -0.75  1.02 / 0.21 / -1.29  0.48 / 0.22 / -0.67   0.15 / 0.23 / -0.28
+K3 k=0.5 n2 f5                   0.42 / 0.23 / -0.73  0.83 / 0.22 / -1.27  0.36 / 0.23 / -0.66   0.08 / 0.24 / -0.27
+K3 k=0.75 n3 f5                  0.06 / 0.27 / -0.18  0.32 / 0.27 / -0.48  0.02 / 0.27 / -0.12   -0.14 / 0.28 / 0.07
+K3 k=0.75 n3 f6                  0.29 / 0.26 / -0.43  0.69 / 0.26 / -0.89  0.21 / 0.26 / -0.34  -0.04 / 0.27 / -0.05
+K3 k=0.75 n2 f5                  0.20 / 0.27 / -0.42  0.55 / 0.26 / -0.88  0.14 / 0.27 / -0.33  -0.08 / 0.27 / -0.04
+
+== Mesure 11 : pions neutres selon la règle de Julien (2-3 joueurs = 1, 4-7 = 2, 8+ = 3), tout le plateau possédé et réparti également, mêmes maisons ==
+table phase  moy R   sd R  loyers pions  loyers entr.  part pions %  salaire GO  taxes  bénéfice table
+2+1 debut     0.62   1.13          0.25          0.25          49.5        0.60   0.22            1.25
+2+1 milieu    1.58   1.94          0.86          0.85          50.2        0.92   0.20            3.16
+2+1 fin       6.36  10.84          5.66          5.96          48.7        0.91   0.21           12.72
+2+1 toutes    3.30   7.42          2.66          2.77          48.9        0.85   0.21            6.60
+3+1 debut     0.47   1.06          0.14          0.27          33.8        0.56   0.23            1.40
+3+1 milieu    1.23   1.93          0.53          1.06          33.1        0.91   0.21            3.70
+3+1 fin       4.50  11.61          3.75          7.64          32.9        0.95   0.20           13.49
+3+1 toutes    2.39   7.66          1.74          3.53          32.9        0.86   0.21            7.16
+4+2 debut     0.61   1.17          0.26          0.37          40.9        0.58   0.22            2.45
+4+2 milieu    1.53   2.15          0.82          1.23          40.1        0.91   0.20            6.11
+4+2 fin       6.46  12.93          5.74          8.52          40.2        0.91   0.19           25.83
+4+2 toutes    3.32   8.70          2.68          3.97          40.2        0.84   0.20           13.27
+6+2 debut     0.47   1.08          0.12          0.31          28.7        0.56   0.21            2.82
+6+2 milieu    1.28   2.15          0.55          1.36          28.7        0.92   0.19            7.67
+6+2 fin       4.60  12.96          3.87          9.61          28.7        0.92   0.19           27.57
+6+2 toutes    2.44   8.51          1.79          4.45          28.7        0.85   0.20           14.66
+7+2 debut     0.47   1.07          0.11          0.32          25.4        0.58   0.22            3.28
+7+2 milieu    1.18   2.12          0.45          1.39          24.7        0.92   0.20            8.24
+7+2 fin       4.01  12.83          3.29          9.71          25.3        0.92   0.20           28.07
+7+2 toutes    2.17   8.38          1.52          4.50          25.2        0.85   0.20           15.18
+8+3 debut     0.51   1.07          0.14          0.32          30.1        0.57   0.20            4.06
+8+3 milieu    1.33   2.18          0.61          1.44          29.9        0.92   0.20           10.66
+8+3 fin       4.94  13.37          4.21          9.89          29.9        0.92   0.19           39.50
+8+3 toutes    2.61   8.80          1.96          4.60          29.9        0.85   0.20           20.88
+durée mesure 11 : 69 s
+
+Durée : 537 s au total, dont 298 s de simulation des situations ; 316800 semestres jugés.

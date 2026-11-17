@@ -2609,3 +2609,119 @@ changement du code porte le commentaire « Section 322 ».
 l'ancien code). Suite : 85 fichiers, 4 278 vérifications et 53 cas multi-appareils. Vérifié à l'écran en mode local :
 textes des deux fenêtres, rachat par un vrai clic (un rachat d'une part n'ajoute aucun cube ; le second rachat de
 1 000 parts de la même ouverture n'ajoute que la base).
+
+## 323. Attentes du marché refondues : trois analystes, cible, zone acceptable, verdict en cubes fixes, pari du PDG ; émission et rachat au sac trading — 2026-11-17
+
+Contexte : remue-méninges ouvert par l'utilisateur, verbatim : « Actuellement les attentent du marché qui sont
+représentées par l'analyste financier c'est la moyenne des 3 derniers semestres avec des valeurs fixes dans les
+premiers tours. Comment est-ce qu'on peut améliorer cette donnée qui est un point centrale dans le pricing du jeu ».
+Défauts de l'ancienne règle (`companyExpectedNetIncome` + `netIncomeExpectationTier`) : elle ignorait ce que la table
+sait (maisons, hypothèques) ; la subvention de GO faisait alterner battu et manqué selon le pion ; un dollar d'écart
+suffisait ; la force du verdict venait du ratio revenus / dépenses, pas de la surprise ; l'attente fixe « 2 » du
+2e semestre faisait manquer la majorité des entreprises. La règle a été mesurée avant d'être construite (banc
+`tests/sim/analystes/`, relu deux fois), puis mesurée deux fois sur le vrai code. Contrat :
+`docs/contrats/section-323-analystes.md`. Chaque changement du code porte le commentaire « Section 323 ».
+
+### Mécanique retenue
+
+1. **Trois analystes** (idée de l'utilisateur, verbatim : « on pourrait avoir comme la vrai vie plusieurs analyste » ;
+   choix « Trois écoles »), publiés au début de chaque semestre pour le semestre qui commence :
+   - l'**historien** (`analystHistorian`) : moyenne du bénéfice net des 3 derniers semestres clos ; absent tant que
+     l'entreprise n'a pas 2 semestres clos (les valeurs fixes « 0 puis 2 » disparaissent : mesuré, le « 2 » imposé
+     donnait 41,5 % de verdicts forts négatifs contre 13,7 % de positifs au 2e semestre) ;
+   - le **modélisateur** (`analystModeller`, `analystModelAll`) : ce que le parc devrait rapporter en 3 lancers =
+     subvention probable (depuis la position réelle du pion) + loyers probables reçus − loyers probables payés − taxes
+     probables − intérêts et charges connus. Fréquences exactes de CE plateau, par tour, enquêtes ouvertes en cours de
+     semestre comprises (`analystBoardChain`, `analystTurnTables`, `analystPawnSchedule`) ; `p.prob` n'est plus lu ici
+     (il s'écarte du plateau jusqu'à 29 %). Visiteurs = pions des autres entreprises ET pions neutres. Angle mort
+     voulu : hors la subvention, il ne regarde pas la position des pions ; il ignore assurances, REIT, lot commercial
+     et accords de compensation. Il donne aussi l'irrégularité prévue σ ;
+   - le **marché** : capitalisation × rendement moyen du marché (somme des modélisateurs ÷ somme des capitalisations) ;
+     absent à moins de 2 entreprises à capitalisation positive.
+2. **Cible** = l'analyste du milieu (3 analystes : la médiane ; 2 : leur moyenne ; 1 : lui). Décision de
+   l'utilisateur après objection (avec la moyenne, on pouvait dépasser la cible en ne battant qu'un analyste).
+3. **Zone acceptable** = cible ± max(0,5 M$ ; 0,35 × σ) (`ANALYST_ZONE_K`, `ANALYST_ZONE_FLOOR`). Verbatim : « la
+   zone, ça me fait un peu peur. Je veux vraiment qu'elle ne soit pas trop large. » Mesuré : un tiers des semestres
+   dans la zone à 0,35 (43 % à 0,5), sans agitation de plus ni partie de plus finie au plancher.
+4. **Verdict à la clôture** (`applyAnalystVerdict`, `analystVerdict`, `analystVerdictCubes`), au sac fondamental,
+   quantités fixes : dans la zone, tirage de 0 ou 1 cube du côté de l'écart (verbatim : « Pour dans la zone, je
+   ferais 0 ou 1 cube ») ; hors de la zone, analystes divisés = verdict normal, 2 cubes ; analystes unanimes =
+   verdict fort, 5 cubes (verbatim : « Une division 2-1 serait un impact normale, une division 3-0 serait un impact
+   plus fort »). Verts au-dessus, rouges en dessous. Les anciens paliers (1-2, 3-5, 6-8) et l'égalité à un dollar
+   près disparaissent.
+5. **Moments** : chiffres provisoires pendant la fenêtre du début de semestre (recalculés à l'affichage : bâtir ou
+   hypothéquer dans la fenêtre les change) ; figés dans l'état au premier déplacement du semestre, après les
+   résolutions d'enchères du même lancer, dans l'action synchronisée (`freezeAnalystForecasts`) ; jugés à la clôture.
+   Pas de chiffres figés (entreprise créée ou partie migrée en cours de semestre) : pas de verdict.
+6. **Bénéfice jugé** : le verdict rejuge les intérêts hypothécaires de fin d'année tels qu'ils étaient figés
+   (bénéfice officiel + intérêt inscrit − intérêt figé ; champs `judged`, `adjust`). Ferme un contournement trouvé en
+   revue : rembourser une hypothèque après le premier lancer rapportait 0,7 à 2 cubes verts par an sans risque.
+7. **Type Croissance** : l'axe 2 de la matrice suit le même verdict (au-dessus de la zone = bon, dans la zone =
+   neutre, en dessous = mauvais) à la place de l'écart de ± 5 % du chiffre d'affaires. Sans chiffre d'affaires ou
+   sans verdict, le sac type reste inchangé, comme avant.
+8. **Pari du PDG** (`announceCeoCall`, `ceoCallRefusal`, `co.ceoCall`), une annonce par entreprise et par semestre,
+   pendant la fenêtre, sans retour, visible de tous, cube de l'annonce au sac fondamental :
+   - **avertissement** : 1 cube rouge tout de suite ; sous la zone, le verdict descend d'un cran (5 rouges → 2 ;
+     2 rouges → tirage de 0 ou 1). Idée de l'utilisateur, verbatim : « je prend 1 cubes rouges maintenant garantit
+     mais j'en sauve 3 si je manque la cible » ;
+   - **promesse** : 1 cube vert tout de suite ; sous la zone, 3 cubes rouges de plus. Verbatim : « Go avec reco sauf
+     que je veux cela 1 vert, 3 rouges si ratée ». Mesuré sur 12 semestres : promettre à chaque semestre −1,7 %,
+     promettre à bon escient +1,2 % ;
+   - refusée hors de la fenêtre, en fin de partie, pour un autre que le PDG et pour un semestre sans verdict.
+     L'annonce ne change ni le nom du verdict, ni l'axe Croissance, ni les chiffres ;
+   - permise pendant une enquête de l'AMF. La revue avait signalé qu'une entreprise sous enquête finit sous la zone
+     99 % du temps et qu'un avertissement y gagne 2 cubes presque à coup sûr ; un refus posé pour cette raison a été
+     retiré à la demande de l'utilisateur, verbatim : « Non le pdg peut ».
+9. **Émission et rachat d'actions** : leurs cubes (volume et bonus de la section 322) vont au sac trading au lieu du
+   fondamental. Verbatim : « l'émission d'actions et le rachat d'actions devraient influencer le sac trading ».
+   Quatre textes périmés des fiches « Émission » et « Rachat » de l'onglet Produits corrigés (« Oui corrige les deux
+   textes dans l'onglet Produits »).
+
+### Ce que les mesures ont montré (vrai code, 2 000 parties de 12 semestres par réglage)
+
+- Le cours suit la qualité de l'entreprise aussi bien qu'avant (corrélation de rang 0,794 à la zone de 0,35, contre
+  0,797 avec l'ancien verdict et 0,789 sans verdict) ; la dérive médiane du marché passe de −1,4 % (ancien verdict)
+  à environ 0.
+- Au-delà de 4 à 5 cubes pour un verdict fort, rien de mieux : seulement plus de dispersion.
+- Le verdict des analystes alterne d'un semestre à l'autre (séries de 1,2 à 1,3 semestre) : il mesure la surprise.
+  Les tendances viennent des cubes de semestre rentable ou déficitaire et du sac type. Principe rappelé par
+  l'utilisateur, verbatim : « si tu calculs les cubes en fonction du tour imédiats tu es dans le champ. Les
+  tendances s'installe. »
+- Il reste un léger penchant vers le rouge (28 % de forts négatifs contre 23 % de positifs à 0,5), dû à la forme des
+  bénéfices (souvent un peu au-dessus de la prévision, parfois très en dessous) ; accepté.
+- L'analyste « marché » penche selon le profil d'entreprise ; ce penchant se corrige de moitié en 12 semestres parce
+  que le cours suit ; gardé.
+- L'avertissement à 1 rouge rapporte un peu même joué à l'aveugle (+1,4 % en 12 semestres) : assurance peu coûteuse,
+  acceptée ; à surveiller en vraie partie (réglages possibles : 2 rouges, ou un fort adouci à 3 au lieu de 2).
+
+### Ce qui n'est PAS changé
+
+`p.prob` et `intrinsicValue` (qui ignore les pions neutres) ; les règles du sac type du GARP, de la Dividende et de
+la Momentum ; le nombre de pions neutres proposé à la création (idée notée : 1 pour 2-3 joueurs, 2 pour 4-7, 3 pour
+8 et plus) ; les cubes de l'AMF. Une entreprise sous enquête au début du semestre finit presque toujours en verdict
+fort négatif (son modélisateur vaut 0, l'historien et le marché ignorent l'enquête) : laissé tel quel, décision de
+l'utilisateur, verbatim : « Pour AMF ne rien faire laisser Intact Oui tu ne gagne plus de loyer mais tu en perd pas.
+Tu as aussi l'option de sortir donc c'est une décision consciente aucun changement ou modification ».
+`companyExpectedNetIncome`, `netIncomeExpectationTier` et `NET_INCOME_RATIO_*`
+restent dans le code sans commander de cube (le banc de mesure les appelle encore).
+
+### Tests
+
+`tests/section323.test.js` (526 vérifications, 46 versions cassées exprès attrapées), `section323-affichage.test.js`
+(155), `section323-pari.test.js` (810, 15 versions cassées), `section323-pari-affichage.test.js` (749, 18 versions
+cassées). Essais existants adaptés : `section315-cubes`, `section317b-entreprise`, `section317b-contre`,
+`section321-sac-fondamental` (ancien verdict et attente fixe), `section322-rachat` (sac trading). Suite : 89 fichiers,
+6 520 vérifications et 53 cas multi-appareils. Deux revues indépendantes (contournements d'abord, versions cassées),
+toutes deux suivies de corrections. Le banc du vrai SDK sur l'émulateur n'a pas été rejoué.
+
+### Vérification à l'écran (session principale, mode local sans Firebase)
+
+Partie à 4 entreprises et 2 pions neutres jouée dans un navigateur : bloc des trois analystes (provisoire, publié),
+gel au premier lancer, verdicts des trois sortes, ligne du résumé du tour, graphique, encadré du pari du PDG au bas
+du résumé du tour et dans l'onglet Entreprise, annonces par de vrais clics (promesse tenue, promesse non tenue à
+8 rouges, avertissement sans effet), refus pendant une enquête, argent total inchangé.
+
+### Changements visibles pour les joueurs (cahiers)
+
+Les cahiers et l'aide-mémoire décrivent encore l'ancien verdict des analystes et ne parlent ni de la zone ni du pari
+du PDG ; ils ne sont pas mis à jour.

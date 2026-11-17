@@ -2,7 +2,9 @@
 // marché et par entreprise, et seulement quand l'opération franchit une tranche d'impact (0,5 % des parts, soit 1 000
 // parts pour 200 000). Avant : à chaque appel, quelle que soit la quantité (20 rachats d'une part = 20 à 40 verts pour
 // 2 000 $). Et un rachat au-delà de la trésorerie est refusé (avant : accepté, trésorerie négative).
-// Vrai moteur, vrai tradeCubeRange ; injectStockCube est espionné pour compter les ajouts sans tirage.
+// Vrai moteur, vrai tradeCubeRange ; injectTradingCube est espionné pour compter les ajouts sans tirage.
+// Section 323 (décision D3 de Julien) : ces cubes vont au sac TRADING (avant : au sac fondamental) ; l'espion suit donc
+// injectTradingCube, et un second espion vérifie que le sac fondamental (injectStockCube) ne reçoit rien.
 const { loadEngine } = require('./helpers/engine');
 
 let compte = 0;
@@ -15,8 +17,10 @@ const pres = (a, b) => Math.abs(a - b) < 1e-9;
 async function partie(opts){
   const eng = loadEngine(opts || {});
   await eng.newGame(['Alice', 'Bob'], ['garp', 'garp']);
-  eng.run(`globalThis.__inj = []; globalThis.__vrai = injectStockCube;
-    injectStockCube = function(co, color, a, b){ __inj.push({co: co.id, color, min: a, max: b}); return __vrai.apply(this, arguments); };`);
+  eng.run(`globalThis.__inj = []; globalThis.__vrai = injectTradingCube;
+    injectTradingCube = function(co, color, a, b){ __inj.push({co: co.id, color, min: a, max: b}); return __vrai.apply(this, arguments); };
+    globalThis.__injF = []; globalThis.__vraiF = injectStockCube;
+    injectStockCube = function(co, color, a, b){ __injF.push({co: co.id, color, min: a, max: b}); return __vraiF.apply(this, arguments); };`);
   return eng;
 }
 const ajouts = eng => eng.json('__inj');
@@ -48,6 +52,7 @@ async function scenarios(opts, muet){
     v(r1.ok && a.length === 2 && a.every(x => x.color === 'green'), 'S2 : 1 000 parts = deux ajouts verts');
     v(estBonus(a[0]) && a[1].min === 1 && a[1].max === 2, 'S2 : le bonus (1 ou 2, fixe) puis la base d\'une tranche (1 à 2)');
     v(r1.cubesInjected >= 2 && r1.cubesInjected <= 4, 'S2 : entre 2 et 4 cubes au total');
+    v(eng.json('state.companies[0].tradingReserve.green') >= r1.cubesInjected && eng.json('__injF').length === 0, 'S2 : les cubes du rachat sont au sac trading ; le sac fondamental ne reçoit rien (section 323, D3)');
     vide(eng);
     rachat(eng, 1000);
     a = ajouts(eng);
@@ -117,6 +122,7 @@ async function scenarios(opts, muet){
     rachat(eng, 999);
     a = ajouts(eng);
     v(a.length === 2 && a.every(x => x.color === 'green') && estBonus(a[0]), 'S6 : le bonus du rachat reste dû dans la même fenêtre (bonus distincts)');
+    v(eng.json('__injF').length === 0, 'S6 : émission et rachat, bonus compris : aucun cube au sac fondamental (section 323, D3)');
     v(pres(eng.cashTotal(), t0), 'S6 : monnaie conservée');
   }
 
@@ -160,6 +166,8 @@ const MUTATIONS = [
   ['mémoire du bonus ignorée', s => s.replace('  if(budget.bonus[kind]) return false;\n', '')],
   ['rachat et émission confondus', s => s.replace("corpActionBonusDue(company, 'issuance', base)", "corpActionBonusDue(company, 'buyback', base)")],
   ['bonus supprimé', s => s.replace('  budget.bonus[kind] = true;\n  return true;', '  budget.bonus[kind] = true;\n  return false;')],
+  ['section 323, D3 : cubes du rachat au sac fondamental', s => s.split("cubesInjected += injectTradingCube(company, 'green'").join("cubesInjected += injectStockCube(company, 'green'")],
+  ['section 323, D3 : cubes de l\'émission au sac fondamental', s => s.split("cubesInjected += injectTradingCube(company, 'red'").join("cubesInjected += injectStockCube(company, 'red'")],
   ['rachat sans contrôle de la trésorerie', s => s.replace('if(amount > (company.cash||0) + 1e-9) return {ok:false, error:`Montant du rachat', 'if(false) return {ok:false, error:`Montant du rachat')],
 ];
 

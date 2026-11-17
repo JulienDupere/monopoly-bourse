@@ -1,0 +1,3 @@
+# Résultats bruts des passes de mesure : gros fichiers, refabriqués par les scripts (mesures.js, mesures323.js,
+# mesures323b.js). Les résumés lisibles (resultats*.txt) sont gardés dans le dépôt.
+resultats*.json

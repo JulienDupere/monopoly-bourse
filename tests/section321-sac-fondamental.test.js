@@ -38,6 +38,7 @@ function classify(text){
   if(/interestCoverage|STOCK_INTEREST_COVERAGE/.test(text)) return 'couverture';
   if(/bookPerShare0/.test(text)) return 'valorisation';
   if(/tier==='/.test(text)) return 'attendu';
+  if(/injectStockCube\(co, cubes\.color/.test(text)) return 'attendu'; // Section 323 — verdict des analystes (applyAnalystVerdict)
   if(/STOCK_TRIGGER_NEGATIVE_CASH/.test(text)) return 'encaisse';
   if(/STOCK_DISTRESS_INJECT/.test(text)) return 'detresse';
   if(/STOCK_TRIGGER_GO_ADVANCE_RED/.test(text)) return 'avanceGO';
@@ -104,6 +105,9 @@ async function partie(transform){
       if(c.cash !== undefined) o.bs.cash = c.cash;
       if(c.prevBook !== undefined) o.prevBs = { equity: c.prevBook * S };
       eng.run(`__ov[${JSON.stringify(id)}] = ${JSON.stringify(o)}; companyById(${JSON.stringify(id)}).stockPrice = ${c.price === undefined ? 10 : c.price};`);
+      // Section 323 — cfg.forecast : chiffres des analystes figés pour le semestre clos (le verdict remplace l'ancien
+      // « bénéfice contre attendu » ; companyExpectedNetIncome ne sert plus à la clôture).
+      if(c.forecast) eng.run(`companyById(${JSON.stringify(id)}).analystForecast = ${JSON.stringify(Object.assign({ semester: CLOSE_SEM, sigma: 0, parts: {}, frozenAtRoll: CLOSE_SEM * 3 }, c.forecast))};`);
     });
   };
   // Clôture du semestre CLOSE_SEM ; rend les injections de la clôture par entreprise, et vérifie la monnaie.
@@ -232,23 +236,27 @@ SCENARIOS.push({ key: 'valorisation', fails: ['P6'], title: '6. Cours contre val
   }
 }});
 
-SCENARIOS.push({ key: 'inchange', fails: [], title: '7. Règles inchangées : bénéfice contre attendu, encaisse négative, grosses marges des Croissance, subvention d\'avance', fn: async (tf) => {
+// Section 323 — le « bénéfice contre attendu » (paliers 1-2 / 3-5 / 6-8, netIncomeExpectationTier) est remplacé par le
+// verdict des analystes (2 cubes normal, 5 fort, quantités fixes ; tailles fixées par Julien le 2026-11-17, avant 3 et
+// 5 provisoires) : ce scénario l'épingle désormais ; il n'a donc plus
+// cours sur le commit de base de la section 321 (notOnBase).
+SCENARIOS.push({ key: 'inchange', fails: [], notOnBase: true, title: '7. Règles inchangées : verdict des analystes (section 323), encaisse négative, grosses marges des Croissance, subvention d\'avance', fn: async (tf) => {
   for(const mode of ['min', 'max']){
     const T = await partie(tf);
     T.setup([
-      { is: PROFIT, expect: { expected: 0, semestersUsed: 0, bootstrap: true }, cash: -1 },   // attendu « beat » 1 à 2 ; encaisse < 0 : 1 à 2
-      { is: { rev: 10, exp: 6 }, expect: { expected: 1, semestersUsed: 3 } },                // « sigBeat » 3 à 5 (ratio 1,67)
-      { is: { rev: 10, exp: 30 }, expect: { expected: 0, semestersUsed: 3 } },               // « reallyMiss » 6 à 8 ; marge −200 % : 5 à 8 rouges
-      { is: { rev: 10, exp: 15 }, expect: { expected: 0, semestersUsed: 3 } },               // « sigMiss » 3 à 5 (ratio 0,67)
+      { is: PROFIT, forecast: { h: null, m: 0, k: null, target: 0, zone: 0.5 }, cash: -1 },        // 1 contre 0 ± 0,5, un seul analyste : normal, 2 verts ; encaisse < 0 : 1 à 2
+      { is: { rev: 10, exp: 6 }, forecast: { h: 1, m: 2, k: 3, target: 2, zone: 0.5 } },           // 4, 3 battus sur 3 : fort, 5 verts
+      { is: { rev: 10, exp: 30 }, forecast: { h: 0, m: 1, k: -1, target: 0, zone: 0.5 } },         // −20, aucun battu : fort, 5 rouges ; marge −200 % : 5 à 8 rouges
+      { is: { rev: 10, exp: 15 }, forecast: { h: -10, m: 0, k: 1, target: 0, zone: 0.5 } },        // −5, 1 battu sur 3 : normal, 2 rouges
     ]);
     const res = T.close(mode, `règles inchangées (${mode})`);
     const pick = (list, rule) => list.filter(x => x.rule === rule).map(x => x.color + ' ' + x.q).join(',');
-    ok(pick(res[0], 'attendu') === `green ${lo(mode, 1, 2)}`, `dividende : bénéfice au-dessus de l'attendu : vert ${lo(mode, 1, 2)} — obtenu ${fmtInj(res[0])}`);
+    ok(pick(res[0], 'attendu') === 'green 2', `dividende : au-dessus de la zone, un seul analyste (normal) : vert 2 — obtenu ${fmtInj(res[0])}`);
     ok(pick(res[0], 'encaisse') === `red ${lo(mode, 1, 2)}`, `dividende : encaisse négative : rouge ${lo(mode, 1, 2)}`);
-    ok(pick(res[1], 'attendu') === `green ${lo(mode, 3, 5)}`, `GARP : bénéfice nettement au-dessus de l'attendu : vert ${lo(mode, 3, 5)} — obtenu ${fmtInj(res[1])}`);
-    ok(pick(res[2], 'attendu') === `red ${lo(mode, 6, 8)}`, `Croissance : choc majeur sous l'attendu : rouge ${lo(mode, 6, 8)} — obtenu ${fmtInj(res[2])}`);
+    ok(pick(res[1], 'attendu') === 'green 5', `GARP : au-dessus de la zone, 3 analystes battus (fort) : vert 5 — obtenu ${fmtInj(res[1])}`);
+    ok(pick(res[2], 'attendu') === 'red 5', `Croissance : sous la zone, aucun analyste battu (fort) : rouge 5 — obtenu ${fmtInj(res[2])}`);
     ok(pick(res[2], 'grosseMarge') === `red ${lo(mode, 5, 8)}` && pick(res[2], 'benefice') === '', `Croissance : grosse perte (marge −200 %) : rouge ${lo(mode, 5, 8)}, pas de règle ordinaire`);
-    ok(pick(res[3], 'attendu') === `red ${lo(mode, 3, 5)}`, `Momentum : bénéfice nettement sous l'attendu : rouge ${lo(mode, 3, 5)} — obtenu ${fmtInj(res[3])}`);
+    ok(pick(res[3], 'attendu') === 'red 2', `Momentum : sous la zone, 1 analyste battu sur 3 (normal) : rouge 2 — obtenu ${fmtInj(res[3])}`);
     const T2 = await partie(tf);
     T2.setup([null, null, { is: { rev: 10, exp: 6 } }, null]);
     const res2 = T2.close(mode, `grosse marge (${mode})`);
@@ -363,6 +371,7 @@ async function partieDAvant(oldTransform){
     quiet = true;
     let bad = 0;
     for(const sc of SCENARIOS){
+      if(sc.notOnBase){ console.log(`ignoré (section 323, absent du commit de base) : ${sc.title}`); continue; }
       const err = await runScenario(sc, () => baseSrc);
       const expectFail = sc.fails.length > 0;
       console.log(`${(!!err) === expectFail ? 'attendu' : 'INATTENDU'} : ${sc.title} — ${err ? 'échoue : ' + err.slice(0, 160) : 'passe'}`);

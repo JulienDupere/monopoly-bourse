@@ -104,7 +104,9 @@ async function s41(eng){
     A.croissanceTier = 'eleve'; A.typeReserve = {green:0, red:0, white:20};
     const __is = incomeStatementFor;
     incomeStatementFor = function(id, s){ const m = id===A.id ? {r:2, e:3} : {r:10, e:7}; return {companyId:id, semesterIndex:s, revenues:{}, expenses:{}, totalRevenue:m.r, totalExpense:m.e, netIncome:m.r-m.e}; };
-    companyExpectedNetIncome = function(co){ return {expected: co.id===A.id ? -2 : 3, semestersUsed:3}; };`);
+    // Section 323 — l'axe des analystes suit le verdict des analystes : chiffres figés du semestre 0 avec une cible de
+    // −2 ± 0,5 ; le bénéfice de −1 est au-dessus de la zone → « bon ». Avant : companyExpectedNetIncome remplacé (−2).
+    A.analystForecast = {semester:0, h:null, m:-2, k:null, sigma:0, target:-2, zone:0.5, parts:{}, frozenAtRoll:0};`);
   eng2.run(`advanceGameClock()`);
   const tp = eng2.json(`A.typeReserve`);
   ok(tp.green === 5 && tp.red === 10 && tp.white === 5, `intégration : Croissance à −50 % de marge battant l'attente → matrice mauvais/bon = 5V/10R/5B — obtenu ${JSON.stringify(tp)} (avant : 20 verts)`);

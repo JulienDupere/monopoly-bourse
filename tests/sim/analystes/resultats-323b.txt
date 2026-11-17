@@ -1,0 +1,93 @@
+BANC « SECTION 323 », 2e MESURE — moteur corrigé (modélisateur par tour, bénéfice jugé, gel après les enchères, marché à 2 entreprises au moins), tailles 2 / 5, 0 ou 1 cube dans la zone
+Suites de 12 semestres, départ « milieu », parc vivant, tables 8 + 3 et 4 + 2, 4 rotations des types ; 250 suites par table et rotation pour les zones (2000 par variante), 100 pour le pari (800). Mêmes graines partout : mêmes dés et mêmes achats d'une variante à l'autre.
+Vérification : tour du banc = vrai performRollForAllCompanies (rendu neutralisé), 12 lancers : 8+3 rot.0 5/5 ; 8+3 rot.2 5/5 ; 4+2 rot.1 5/5 ; 4+2 rot.3 5/5 ; gel = chiffres provisoires 4/4.
+
+== Mesure 1 : le verdict après les corrections — tailles (2,5), 0 ou 1 cube dans la zone, k 0,5 ==
+groupe                             n  zone   n+    f+   n−    f−
+avant correction (3,5), tout  143768  43.8  3.5  22.5  2.3  27.8
+tout                          143748  43.1  3.3  23.1  2.3  28.1
+8+3                            95768  43.3  3.6  22.4  2.7  28.1
+4+2                            47980  42.8  2.8  24.7  1.5  28.2
+concentree                     23966  38.0  3.2  33.3  2.2  23.3
+diversifiee                    23966  44.2  3.0  19.6  2.6  30.7
+endettee                       23966  46.5  3.6  17.7  1.8  30.4
+ordinaire                      71850  43.3  3.4  22.8  2.4  28.1
+S1-2                           24000  42.1  0.5  24.9  0.8  31.9
+S3-6                           48000  43.0  3.8  22.9  3.0  27.3
+S7-12                          71748  43.5  3.9  22.7  2.4  27.4
+Biais du modélisateur, bénéfice jugé − M (M$, moyenne ± 95 %) et part des semestres au-dessus de la cible : concentree 0.02 ± 0.07 (56.6 %) ; diversifiee -0.02 ± 0.03 (46.0 %) ; endettee 0.02 ± 0.04 (46.6 %) ; ordinaire -0.02 ± 0.03 (49.0 %)
+                                rouges du verdict %  cubes verdict / sem.  dérive méd. 8+3 %  4+2 %  Spearman 8+3    4+2  intra-profil 8+3  plancher /1000 (8+3 / 4+2)  série moy.
+avant, (3,5), 0 dans la zone            55.0 / 52.6                     —              -1.66  17.24         0.803  0.729             0.605                     50 / 12        1.22
+avant, verdict coupé                              —                     0               4.63  23.01         0.789  0.705             0.580                      35 / 6        1.22
+après, verdict coupé                            0.0                  0.00                4.6   23.0         0.789  0.705             0.580                      35 / 6        1.23
+après, (2,5), 0-1 dans la zone                 53.7                  2.89               -1.2   17.7         0.800  0.728             0.602                     52 / 13        1.23
+Alternance : après un fort+ → z 42.6, u 2.4, U 16.6, d 3.9, D 34.4 (n=24597) ; après un fort− → z 43.2, u 5.3, U 30.5, d 2.1, D 18.9 (n=29474) ; séries de même signe 1.23 semestre, 4.0 % de 3 ou plus. (Avant : après fort+ f− 34,5 %, après fort− f+ 30,3 %.)
+Cubes nets du verdict par entreprise et par semestre : -0.213 (négatif = rouge) ; dans la zone 0.489 cube en moyenne.
+
+== Mesure 2 : largeur de la zone (tailles 2,5 ; 0 ou 1 cube dans la zone) ==
+réglage                        zone   n+    f+   n−    f−  normal / hors zone  rouges %  cubes / sem.  écart type y 8+3    4+2  dérive méd. 8+3 %  4+2 %  Spearman 8+3    4+2  intra 8+3  plancher 8+3  4+2
+k 0,5 plancher 0,5 (moteur)    43.1  3.3  23.1  2.3  28.1                 9.9      53.7          2.89             0.802  0.708               -1.2   17.7         0.800  0.728      0.602            52   13
+k 0,35 plancher 0,5            31.6  6.4  26.7  4.4  30.9                15.8      52.5          3.25             0.795  0.701                0.2   17.4         0.794  0.719      0.600            51   12
+k 0,35 plancher 0,25           31.2  6.4  26.7  4.5  31.2                15.9      52.6          3.27             0.795  0.701                0.0   17.3         0.794  0.720      0.600            51   12
+k 0,25 plancher 0,5            24.6  8.8  28.4  6.2  32.1                19.8      51.9          3.44             0.790  0.697                0.1   17.7         0.791  0.717      0.599            51   12
+verdict coupé (0 cube), k 0,5  43.1  3.4  23.1  2.3  28.1                10.0       0.0          0.00             0.749  0.663                4.6   23.0         0.789  0.705      0.580            35    6
+-- part des semestres dans la zone, par profil et par phase (%) --
+réglage                      concentree  diversifiee  endettee  ordinaire  S1-2  S3-6  S7-12
+k 0,5 plancher 0,5 (moteur)        38.0         44.2      46.5       43.3  42.1  43.0   43.5
+k 0,35 plancher 0,5                27.1         32.9      34.5       31.8  31.7  31.7   31.6
+k 0,35 plancher 0,25               27.0         32.3      33.7       31.4  30.5  31.2   31.4
+k 0,25 plancher 0,5                19.5         26.3      27.8       24.6  28.2  24.7   23.3
+-- cours médian à 12 semestres par profil (%), 8+3 --
+réglage                        concentree  diversifiee  endettee  ordinaire
+k 0,5 plancher 0,5 (moteur)          62.6        -22.6     -47.6       -2.7
+k 0,35 plancher 0,5                  61.9        -21.9     -45.9       -1.5
+k 0,35 plancher 0,25                 61.9        -22.0     -46.0       -1.7
+k 0,25 plancher 0,5                  61.5        -19.3     -45.4       -1.1
+verdict coupé (0 cube), k 0,5        61.4        -16.8     -43.5        3.0
+-- alternance --
+réglage                        après f+ : f−  après f+ : f+  après f− : f+  après f− : f−  série moy.  ≥ 3 %
+k 0,5 plancher 0,5 (moteur)             34.4           16.6           30.5           18.9        1.23    4.0
+k 0,35 plancher 0,5                     36.8           19.3           34.3           21.8        1.32    6.3
+k 0,35 plancher 0,25                    36.9           19.3           34.1           22.1        1.32    6.3
+k 0,25 plancher 0,5                     37.9           21.3           35.8           23.6        1.38    8.3
+verdict coupé (0 cube), k 0,5           34.3           16.6           30.3           18.9        1.23    4.0
+
+== Mesure 3 : pari du PDG (simulé), tailles (2,5), 0 ou 1 cube dans la zone, zone k 0.35 plancher 0.5 ; gain sur le cours à 12 semestres contre « jamais », mêmes suites ==
+gain = moyenne de log(cours ÷ cours « jamais ») par entreprise (%), ± 95 %. Annonces = nombre moyen par entreprise sur 12 semestres. Informé : avertit si M' − M < −0,5 zone, promet si M' − M > +0,5 zone.
+-- cube de l'annonce : sac fondamental --
+stratégie                                                             n  gain % ± 95 %  annonces  avertit %  promet %  sous zone si avert. %  si prom. %  si rien %  gain par annonce (pts %)
+toujours avertir (1 R)                                             4664      1.4 ± 0.3     12.00      100.0       0.0                   35.3           —          —                         —
+toujours avertir (2 R)                                             4640    -10.8 ± 0.3     12.00      100.0       0.0                   35.3           —          —                         —
+informé, avertissements seuls (1 R)                                4664      1.6 ± 0.2      3.15       26.3       0.0                   49.0           —       30.4               0.50 ± 0.06
+informé, avertissements seuls (2 R)                                4656     -1.6 ± 0.2      3.15       26.3       0.0                   49.0           —       30.4              -0.52 ± 0.07
+toujours promettre, P-A (2 V, ratée +5 R)                          4648      1.9 ± 0.5     12.00        0.0     100.0                      —        35.3          —                         —
+informé, avert. 1 R + P-A (2 V, ratée +5 R)                        4664      4.8 ± 0.3      6.34       26.3      26.5                   49.0        17.7       37.5               0.74 ± 0.05
+informé, promesses seules, P-A (2 V, ratée +5 R)                   4664      3.2 ± 0.3      3.18        0.0      26.5                      —        17.7       41.6               0.98 ± 0.10
+toujours promettre, P-B (3 V, ratée +5 R)                          4656     14.0 ± 0.7     12.00        0.0     100.0                      —        35.3          —                         —
+informé, avert. 1 R + P-B (3 V, ratée +5 R)                        4656      8.1 ± 0.4      6.34       26.3      26.5                   49.0        17.7       37.5               1.22 ± 0.06
+informé, promesses seules, P-B (3 V, ratée +5 R)                   4656      6.4 ± 0.4      3.18        0.0      26.5                      —        17.7       41.6               1.95 ± 0.12
+toujours promettre, P-C (2 V, ratée +5 R, réussie +1 cran)         4648     10.7 ± 0.6     12.00        0.0     100.0                      —        35.3          —                         —
+informé, avert. 1 R + P-C (2 V, ratée +5 R, réussie +1 cran)       4664      8.6 ± 0.4      6.34       26.3      26.5                   49.0        17.7       37.5               1.30 ± 0.07
+informé, promesses seules, P-C (2 V, ratée +5 R, réussie +1 cran)  4664      7.0 ± 0.4      3.18        0.0      26.5                      —        17.7       41.6               2.12 ± 0.13
+toujours promettre, P-D (1 V, ratée +3 R)                          4616     -1.7 ± 0.4     12.00        0.0     100.0                      —        35.2          —                         —
+informé, avert. 1 R + P-D (1 V, ratée +3 R)                        4664      2.8 ± 0.3      6.34       26.3      26.5                   49.0        17.7       37.6               0.44 ± 0.04
+informé, promesses seules, P-D (1 V, ratée +3 R)                   4664      1.2 ± 0.2      3.18        0.0      26.5                      —        17.7       41.6               0.37 ± 0.07
+toujours promettre, P-E (2 V, ratée +7 R)                          4608     -5.3 ± 0.5     12.00        0.0     100.0                      —        35.2          —                         —
+informé, avert. 1 R + P-E (2 V, ratée +7 R)                        4664      3.7 ± 0.4      6.34       26.3      26.5                   49.0        17.7       37.5               0.57 ± 0.06
+informé, promesses seules, P-E (2 V, ratée +7 R)                   4664      2.1 ± 0.3      3.18        0.0      26.5                      —        17.7       41.6               0.65 ± 0.10
+informé, avert. 2 R + P-A (2 V, ratée +5 R)                        4656      1.5 ± 0.3      6.34       26.3      26.5                   49.0        17.7       37.6               0.24 ± 0.05
+-- cube de l'annonce : sac trading vide --
+stratégie                                            n  gain % ± 95 %  annonces  avertit %  promet %  sous zone si avert. %  si prom. %  si rien %  gain par annonce (pts %)
+toujours avertir (1 R)                            4656     -1.8 ± 0.3     12.00      100.0       0.0                   35.3           —          —                         —
+toujours promettre, P-A (2 V, ratée +5 R)         4648      4.7 ± 0.7     12.00        0.0     100.0                      —        35.3          —                         —
+informé, avert. 1 R + P-A (2 V, ratée +5 R)       4664      4.6 ± 0.4      6.34       26.3      26.5                   49.0        17.7       37.5               0.71 ± 0.07
+informé, promesses seules, P-A (2 V, ratée +5 R)  4664      3.7 ± 0.4      3.18        0.0      26.5                      —        17.7       41.6               1.13 ± 0.12
+informé, avertissements seuls (1 R)               4664      0.7 ± 0.2      3.15       26.3       0.0                   49.0           —       30.4               0.24 ± 0.06
+-- cube de l'annonce : sac trading chargé (10 V, 6 R entretenus) --
+stratégie                                            n  gain % ± 95 %  annonces  avertit %  promet %  sous zone si avert. %  si prom. %  si rien %  gain par annonce (pts %)
+toujours avertir (1 R)                            4744      3.2 ± 0.6     12.00      100.0       0.0                   35.3           —          —                         —
+toujours promettre, P-A (2 V, ratée +5 R)         4740     -5.0 ± 0.6     12.00        0.0     100.0                      —        35.3          —                         —
+informé, avert. 1 R + P-A (2 V, ratée +5 R)       4768      2.3 ± 0.4      6.33       26.3      26.5                   49.0        17.7       37.6               0.36 ± 0.06
+informé, promesses seules, P-A (2 V, ratée +5 R)  4752      0.1 ± 0.3      3.18        0.0      26.5                      —        17.7       41.7               0.03 ± 0.10
+informé, avertissements seuls (1 R)               4768      2.1 ± 0.3      3.15       26.3       0.0                   49.0           —       30.4               0.66 ± 0.10
+

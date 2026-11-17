@@ -1,0 +1,304 @@
+BANC « SECTION 323 » — vrai code (index.html de la copie de travail) et ancien moteur (HEAD)
+Suites de 12 semestres, départ « milieu » du prototype, parc vivant, tables 8 + 3 et 4 + 2, 4 rotations des types ; 250 suites par table et par rotation pour les tailles (2000 suites par variante), 100 pour le pari du PDG.
+Mêmes graines pour toutes les variantes : mêmes dés, mêmes achats du parc vivant ; tirages de cubes appariés lancer par lancer.
+Durées des variantes (s) : n00 92, n24 92, n35 93, n36 94, n47 113, ancien 84, deuxA 106
+
+== Vérifications ==
+Tour du banc (avec ses espions) contre le vrai performRollForAllCompanies d'un moteur sans espions (rendu et journal neutralisés), même graine, 12 lancers : nouveau 8+3 rot.0 5/5 ; nouveau 8+3 rot.2 5/5 ; nouveau 4+2 rot.1 5/5 ; nouveau 4+2 rot.3 5/5 ; ancien 8+3 rot.0 5/5 ; ancien 8+3 rot.2 5/5 ; ancien 4+2 rot.1 5/5 ; ancien 4+2 rot.3 5/5
+Gel : chiffres figés au premier lancer égaux aux chiffres provisoires de la fenêtre 4/4 semestres ; semestres jugés par entreprise : 0,1,2,3 (une fois chacun).
+Appariement : bénéfices semestriels identiques entre (0,0) et (3,5) pour 12000/12000 entreprises-suites.
+
+== Suites avec saisie (hypothèque reprise par le moteur) et fins anticipées (plancher du cours, entreprise inactive) ==
+variante table  suites   avec saisie                                                                               fins anticipées  achats/suite
+n00 8+3           1000  553 (55.3 %)  35 {"stockFloor":35,"plancher ordinaire":21,"plancher endettee":11,"plancher diversifiee":3}          7.04
+n00 4+2           1000  602 (60.2 %)                             6 {"stockFloor":6,"plancher endettee":5,"plancher diversifiee":1}          9.38
+n24 8+3           1000  553 (55.3 %)  48 {"stockFloor":48,"plancher ordinaire":25,"plancher diversifiee":7,"plancher endettee":16}          7.04
+n24 4+2           1000  602 (60.2 %)                           10 {"stockFloor":10,"plancher endettee":9,"plancher diversifiee":1}          9.38
+n35 8+3           1000  553 (55.3 %)  50 {"stockFloor":50,"plancher ordinaire":27,"plancher diversifiee":8,"plancher endettee":15}          7.04
+n35 4+2           1000  602 (60.2 %)                          12 {"stockFloor":12,"plancher endettee":11,"plancher diversifiee":1}          9.38
+n36 8+3           1000  553 (55.3 %)  53 {"stockFloor":53,"plancher ordinaire":32,"plancher diversifiee":6,"plancher endettee":15}          7.03
+n36 4+2           1000  602 (60.2 %)                          13 {"stockFloor":13,"plancher endettee":12,"plancher diversifiee":1}          9.38
+n47 8+3           1000  553 (55.3 %)  56 {"stockFloor":56,"plancher ordinaire":33,"plancher diversifiee":6,"plancher endettee":17}          7.04
+n47 4+2           1000  602 (60.2 %)                          14 {"stockFloor":14,"plancher endettee":13,"plancher diversifiee":1}          9.38
+ancien 8+3        1000  553 (55.3 %)  50 {"stockFloor":50,"plancher ordinaire":25,"plancher diversifiee":5,"plancher endettee":20}          7.04
+ancien 4+2        1000  602 (60.2 %)                             9 {"stockFloor":9,"plancher endettee":8,"plancher diversifiee":1}          9.38
+deuxA 8+3         1000  553 (55.3 %)  35 {"stockFloor":35,"plancher ordinaire":21,"plancher diversifiee":3,"plancher endettee":11}          7.04
+deuxA 4+2         1000  602 (60.2 %)                             7 {"stockFloor":7,"plancher endettee":6,"plancher diversifiee":1}          9.38
+Les tableaux gardent les suites avec saisie (sinon 2 suites sur 3 seraient perdues, surtout celles où l'endettée va mal) ; A et C sont aussi donnés « sans saisie ». Les mesures de cours n'utilisent que les suites allées au bout des 12 semestres.
+
+== A. Fréquences du verdict avec le vrai code, tailles (3,5) — dans la zone / normal+ / fort+ / normal− / fort− (%) ==
+Repère du prototype (partie type milieu + fin, zone 0,5 σ, plancher 0,5) : 41,6 / 4,6 / 22,7 / 2,9 / 28,1.
+groupe                   n  zone   n+    f+   n−    f−
+tout                143768  43.8  3.5  22.5  2.3  27.8
+tout sans saisie     62004  44.3  3.2  22.8  2.6  27.2
+8+3                  95792  44.0  3.8  21.7  2.7  27.7
+4+2                  47976  43.5  3.0  24.1  1.4  27.9
+phase S1-2           24000  43.0  0.5  23.9  0.9  31.7
+phase S3-6           48000  43.7  4.0  22.4  3.0  27.0
+phase S7-12          71768  44.2  4.2  22.2  2.3  27.0
+profil concentree    23968  39.0  3.8  31.5  2.3  23.4
+profil diversifiee   23968  44.9  3.1  19.3  2.5  30.1
+profil endettee      23968  47.2  3.7  17.7  1.8  29.7
+profil ordinaire     71864  44.0  3.5  22.2  2.4  27.8
+concentree S3-6       8000  37.8  5.7  31.1  2.4  23.0
+concentree S7-12     11968  39.6  3.4  29.4  3.0  24.6
+diversifiee S3-6      8000  45.3  1.7  20.1  4.0  28.8
+diversifiee S7-12    11968  45.6  5.1  17.2  2.4  29.7
+endettee S3-6         8000  48.5  6.5  16.2  2.0  26.9
+endettee S7-12       11968  46.3  2.7  22.9  1.3  26.8
+ordinaire S3-6       24000  43.6  3.3  22.3  3.1  27.7
+ordinaire S7-12      35864  44.5  4.8  21.2  2.4  27.0
+type garp            29942  44.3  4.2  22.1  2.5  26.9
+type dividende       29942  43.7  4.1  22.5  2.6  27.1
+type croissance      29942  43.7  4.1  22.1  2.6  27.4
+type momentum        29942  44.3  4.1  22.3  2.6  26.7
+-- Analyste retenu comme cible (%) et analystes absents (%) --
+groupe                  n  cible H  cible M  cible K  moy. M-K  moy. H-M  H absent  K absent
+S1-2                24000      0.0      0.0      0.0     100.0       0.0     100.0       0.0
+S3-12              119768     45.2     33.4     21.4       0.0       0.0       0.0       0.0
+concentree S3-12    19968     43.5     32.2     24.4       0.0       0.0       0.0       0.0
+diversifiee S3-12   19968     46.8     34.5     18.7       0.0       0.0       0.0       0.0
+endettee S3-12      19968     41.8     38.3     19.9       0.0       0.0       0.0       0.0
+ordinaire S3-12     59864     46.4     31.9     21.7       0.0       0.0       0.0       0.0
+
+== B. Le penchant du marché se corrige-t-il ? Par profil et par semestre (tailles 3,5 ; suites complètes) ==
+-- part des semestres où le marché K est battu (R > K), % --
+profil         S1    S2    S3    S4    S6    S8   S10   S12
+concentree   73.6  73.4  68.8  69.4  67.1  63.4  63.5  63.1
+diversifiee  37.9  37.9  30.8  34.9  28.6  26.7  24.9  27.1
+endettee      7.1   5.4  13.2  17.0  30.5  35.9  37.8  38.6
+ordinaire    45.2  44.0  42.1  41.0  39.1  38.2  37.5  38.1
+-- médiane de K / M (M > 0,05) --
+profil         S1    S2    S3    S4    S6    S8   S10   S12
+concentree   0.41  0.39  0.41  0.42  0.44  0.42  0.44  0.45
+diversifiee  0.92  0.83  1.33  1.24  1.82  2.10  2.20  2.31
+endettee        —     —  1.44  1.77  0.92  0.71  0.61  0.53
+ordinaire    0.84  0.77  0.85  0.82  0.79  0.63  0.58  0.54
+-- écart cible − modélisateur, moyenne (M$) --
+profil          S1     S2     S3     S4     S6     S8    S10    S12
+concentree   -1.15  -1.08  -1.82  -1.47  -1.56  -1.52  -1.60  -1.56
+diversifiee   0.27   0.22   0.58   0.54   0.72   0.80   0.88   0.93
+endettee      0.75   0.81   0.40   0.44   0.37   0.57   0.64   0.69
+ordinaire     0.04   0.02  -0.03   0.05   0.06   0.03   0.02  -0.04
+-- cours médian (fin du semestre ÷ départ), trois analystes --
+profil          S1     S2     S3     S4     S6     S8    S10    S12
+concentree   1.006  1.027  1.064  1.100  1.192  1.299  1.423  1.562
+diversifiee  0.997  0.996  1.002  0.999  0.996  0.977  0.930  0.849
+endettee     0.981  0.940  0.864  0.816  0.733  0.655  0.578  0.522
+ordinaire    0.998  1.004  1.012  1.026  1.049  1.062  1.084  1.087
+Écart concentrée − endettée de la part « marché battu » : S3-4 54.0 pts, S11-12 23.6 pts.
+-- variante deux analystes (historien + modélisateur, marché retiré), même tailles : cours médian --
+profil          S1     S2     S3     S4     S6     S8    S10    S12
+concentree   1.005  1.022  1.053  1.080  1.160  1.250  1.349  1.477
+diversifiee  0.998  0.997  1.009  1.015  1.025  1.026  0.998  0.952
+endettee     0.986  0.954  0.904  0.867  0.804  0.752  0.681  0.635
+ordinaire    0.999  1.005  1.016  1.032  1.062  1.084  1.118  1.130
+-- deux analystes : écart cible − modélisateur, moyenne (M$) --
+profil         S1    S2     S3     S4     S6     S8    S10    S12
+concentree   0.00  0.00  -0.65  -0.46  -0.51  -0.47  -0.57  -0.45
+diversifiee  0.00  0.00   0.21   0.12   0.16   0.13   0.12   0.09
+endettee     0.00  0.00   0.01   0.06  -0.07   0.12   0.18   0.21
+ordinaire    0.00  0.00  -0.02  -0.03  -0.06  -0.09  -0.08  -0.12
+-- deux analystes : fréquences du verdict, semestres 3 à 12 --
+groupe            n  zone   n+    f+   n−    f−
+tout         119868  41.3  0.8  29.6  0.3  28.0
+concentree    19982  39.0  0.3  28.3  0.4  32.0
+diversifiee   19982  41.4  1.0  30.4  0.3  26.9
+endettee      19982  42.0  1.0  31.5  0.2  25.3
+ordinaire     59922  41.9  0.8  29.1  0.3  27.9
+   (trois analystes, mêmes semestres : 44.0 / 4.1 / 22.3 / 2.6 / 27.0 ; concentree 38.9/4.3/30.1/2.7/24.0 ; diversifiee 45.5/3.7/18.4/3.0/29.4 ; endettee 47.2/4.2/20.2/1.6/26.8 ; ordinaire 44.2/4.2/21.6/2.7/27.3)
+
+== C/D. Tailles (normal, fort) sur 12 semestres, vrai moteur ; « ancien » = moteur d'avant la section 323 (paliers 1-2 / 3-5 / 6-8) ==
+y = log(cours au semestre 12 ÷ cours de départ) ; q = bénéfice cumulé sur 12 semestres ÷ capitalisation de départ (le cours de départ est la valeur comptable par action).
+-- 8+3 : tout le marché (cours en %, médiane de exp(y) − 1 ; dispersion = écart type de y) --
+tailles          n  dérive moy. %  dérive méd. %  écart type y  IQR y  Spearman q-y  tiers haut − bas %  Spearman intra-profil  tiers intra-profil %  | sans saisie : n  Spearman  tiers %
+(0,0)         7720          -13.9            4.6         0.749  0.989         0.789               249.9                  0.580                 140.9             | 3536     0.730    169.2
+(2,4)         7616          -17.9           -0.5         0.794  1.069         0.804               289.3                  0.605                 154.5             | 3528     0.753    202.8
+(3,5)         7600          -18.7           -1.7         0.800  1.071         0.803               294.6                  0.605                 154.8             | 3520     0.752    202.3
+(3,6)         7576          -19.6           -2.7         0.805  1.094         0.804               297.1                  0.609                 159.8             | 3520     0.755    214.1
+(4,7)         7552          -20.4           -3.7         0.811  1.106         0.801               304.0                  0.610                 165.3             | 3520     0.752    222.8
+ancien        7600          -17.4           -1.4         0.777  1.048         0.797               276.1                  0.595                 144.7             | 3536     0.744    192.6
+(3,5) sans K  7720          -12.2            6.6         0.734  0.920         0.749               217.7                  0.573                 133.7             | 3536     0.686    148.9
+-- 8+3 : cours médian par profil après 4 / 8 / 12 semestres (%) et écart type de y à 12 --
+tailles                      concentree                 diversifiee                      endettee                ordinaire
+(0,0)          9.2 / 29.0 / 61.4 (0.24)   0.8 / -1.0 / -16.8 (0.69)  -15.2 / -27.8 / -43.6 (0.80)   2.5 / 5.9 / 3.0 (0.73)
+(2,4)         10.3 / 32.7 / 63.0 (0.26)  -0.8 / -3.7 / -21.8 (0.71)  -17.8 / -33.3 / -46.9 (0.81)  1.4 / 3.0 / -1.4 (0.77)
+(3,5)         10.4 / 32.5 / 62.3 (0.26)  -1.0 / -4.6 / -23.5 (0.72)  -18.1 / -34.0 / -46.2 (0.82)  1.2 / 2.4 / -3.9 (0.78)
+(3,6)         10.5 / 31.2 / 60.7 (0.27)  -1.4 / -4.4 / -24.3 (0.73)  -18.7 / -33.7 / -45.9 (0.82)  1.1 / 1.2 / -4.5 (0.79)
+(4,7)         10.5 / 32.2 / 61.3 (0.27)  -1.5 / -5.5 / -24.5 (0.74)  -19.3 / -34.9 / -47.9 (0.82)  0.8 / 0.2 / -6.0 (0.79)
+ancien        10.5 / 31.9 / 62.6 (0.26)   0.9 / -5.1 / -23.4 (0.70)  -17.0 / -32.0 / -45.8 (0.77)  2.2 / 2.8 / -2.6 (0.76)
+(3,5) sans K   8.1 / 25.9 / 50.7 (0.25)   0.8 / -0.3 / -13.3 (0.71)  -13.4 / -24.1 / -35.5 (0.79)   2.2 / 5.6 / 5.0 (0.72)
+-- 8+3 : cours médian par type après 4 / 8 / 12 semestres (%) et écart type de y à 12 --
+tailles                           garp                   dividende               croissance                  momentum
+(0,0)         6.0 / 14.6 / 10.3 (0.85)   -1.0 / -0.4 / -1.6 (0.63)   3.6 / 8.9 / 7.7 (0.83)    1.7 / 5.3 / 6.6 (0.65)
+(2,4)          4.9 / 12.3 / 7.9 (0.87)   -1.6 / -2.4 / -6.9 (0.69)  2.2 / 4.2 / -0.5 (0.88)   0.6 / 2.8 / -0.5 (0.70)
+(3,5)          4.5 / 11.3 / 6.4 (0.87)   -2.0 / -3.4 / -8.6 (0.71)  2.1 / 2.7 / -2.1 (0.89)   0.4 / 2.7 / -0.5 (0.70)
+(3,6)          4.5 / 10.5 / 6.0 (0.87)   -2.1 / -3.4 / -9.5 (0.71)  1.6 / 1.6 / -2.1 (0.90)   0.1 / 1.7 / -1.8 (0.71)
+(4,7)           3.8 / 9.2 / 3.4 (0.87)  -2.2 / -4.2 / -10.2 (0.73)  1.1 / 1.0 / -4.7 (0.91)  -0.2 / 0.6 / -2.5 (0.71)
+ancien         5.6 / 11.6 / 7.4 (0.86)   -1.1 / -2.4 / -8.8 (0.69)   3.6 / 3.8 / 0.8 (0.84)   1.1 / 2.7 / -1.4 (0.69)
+(3,5) sans K  5.5 / 15.0 / 13.5 (0.81)   -0.7 / -0.5 / -1.5 (0.64)  3.5 / 7.7 / 11.5 (0.81)    1.3 / 4.9 / 8.2 (0.64)
+-- 4+2 : tout le marché (cours en %, médiane de exp(y) − 1 ; dispersion = écart type de y) --
+tailles          n  dérive moy. %  dérive méd. %  écart type y  IQR y  Spearman q-y  tiers haut − bas %  Spearman intra-profil  tiers intra-profil %  | sans saisie : n  Spearman  tiers %
+(0,0)         3976            1.7           23.0         0.663  0.778         0.705               169.5                  0.444                  70.1             | 1588     0.592     85.9
+(2,4)         3960           -2.2           19.5         0.703  0.848         0.728               196.7                  0.490                  81.7             | 1588     0.618    102.8
+(3,5)         3952           -3.1           17.2         0.705  0.857         0.729               195.2                  0.491                  82.8             | 1588     0.619    104.1
+(3,6)         3948           -4.4           16.1         0.714  0.879         0.727               194.9                  0.493                  85.2             | 1588     0.617    107.4
+(4,7)         3944           -5.4           15.5         0.719  0.884         0.729               196.3                  0.500                  87.3             | 1588     0.619    109.0
+ancien        3964           -3.8           15.3         0.692  0.832         0.724               185.8                  0.466                  72.5             | 1588     0.617     99.6
+(3,5) sans K  3972            2.9           20.1         0.634  0.713         0.663               137.9                  0.451                  70.6             | 1588     0.534     73.7
+-- 4+2 : cours médian par profil après 4 / 8 / 12 semestres (%) et écart type de y à 12 --
+tailles                      concentree                 diversifiee                      endettee                 ordinaire
+(0,0)          8.4 / 26.5 / 52.7 (0.25)     2.5 / 4.6 / -0.7 (0.63)  -15.5 / -30.3 / -44.4 (0.68)  7.1 / 23.0 / 43.9 (0.31)
+(2,4)          9.7 / 27.9 / 52.9 (0.27)     0.7 / 1.4 / -5.9 (0.65)  -18.0 / -34.3 / -48.2 (0.72)  7.2 / 21.6 / 41.0 (0.35)
+(3,5)          9.7 / 27.3 / 50.8 (0.28)    0.4 / -0.5 / -7.6 (0.66)  -18.6 / -34.7 / -48.9 (0.72)  7.3 / 21.2 / 39.8 (0.36)
+(3,6)          9.6 / 27.1 / 49.8 (0.28)    0.1 / -1.6 / -9.5 (0.67)  -19.1 / -35.7 / -50.1 (0.73)  7.4 / 20.9 / 39.5 (0.37)
+(4,7)          9.6 / 26.7 / 48.6 (0.29)  -0.1 / -2.0 / -11.0 (0.68)  -20.0 / -37.1 / -50.1 (0.74)  7.3 / 20.5 / 38.8 (0.37)
+ancien        10.1 / 26.3 / 49.9 (0.27)    1.0 / -0.4 / -8.4 (0.64)  -16.8 / -33.2 / -47.4 (0.70)  6.9 / 20.4 / 40.6 (0.35)
+(3,5) sans K   7.9 / 23.4 / 43.1 (0.26)      2.2 / 5.2 / 2.7 (0.64)  -13.0 / -25.4 / -37.3 (0.69)  6.3 / 20.2 / 40.5 (0.34)
+-- 4+2 : cours médian par type après 4 / 8 / 12 semestres (%) et écart type de y à 12 --
+tailles                           garp                 dividende                croissance                 momentum
+(0,0)         6.5 / 23.0 / 44.9 (0.72)  -0.5 / 3.5 / 13.7 (0.53)  6.1 / 19.4 / 35.0 (0.77)  2.3 / 7.5 / 16.3 (0.60)
+(2,4)         6.7 / 22.1 / 42.0 (0.75)  -1.0 / 2.5 / 11.4 (0.57)  5.7 / 18.3 / 27.7 (0.80)  2.2 / 5.3 / 12.6 (0.65)
+(3,5)         6.5 / 21.1 / 39.4 (0.75)   -1.2 / 1.2 / 9.8 (0.58)  5.7 / 18.1 / 24.2 (0.81)  2.2 / 4.4 / 10.7 (0.65)
+(3,6)         6.4 / 20.8 / 40.2 (0.76)   -1.3 / 0.8 / 9.4 (0.59)  4.9 / 16.4 / 23.9 (0.82)  2.1 / 3.7 / 10.1 (0.65)
+(4,7)         5.6 / 20.3 / 37.1 (0.76)   -1.3 / 0.6 / 8.6 (0.59)  4.3 / 14.7 / 21.2 (0.83)   2.1 / 2.0 / 8.0 (0.66)
+ancien        6.5 / 20.9 / 34.5 (0.74)   -0.7 / 0.7 / 6.6 (0.56)  5.6 / 17.5 / 23.6 (0.80)   1.1 / 4.3 / 9.9 (0.63)
+(3,5) sans K  6.8 / 23.1 / 44.2 (0.68)  -0.4 / 3.0 / 10.2 (0.51)  5.3 / 17.7 / 31.5 (0.72)  2.4 / 6.6 / 14.0 (0.58)
+-- cubes injectés au sac fondamental pendant advanceGameClock, (3,5), 8+3 (827409 cubes sur 1000 suites) --
+source                                     verts  rouges  part %
+semestre rentable / déficitaire (3-5)     172756  106129    33.7
+verdict des analystes (ou ancien palier)  114935  140707    30.9
+grosse marge Croissance (5-9 / 5-8)        92525   55320    17.9
+cours contre valeur comptable (1-2)        59027   28562    10.6
+détresse (dette)                               0   23525     2.8
+encaisse négative                              0   22877     2.8
+couverture des intérêts                      828   10218     1.3
+-- cubes injectés au sac fondamental pendant advanceGameClock, (3,5), 4+2 (403312 cubes sur 1000 suites) --
+source                                    verts  rouges  part %
+verdict des analystes (ou ancien palier)  62269   69001    32.5
+semestre rentable / déficitaire (3-5)     87781   42545    32.3
+grosse marge Croissance (5-9 / 5-8)       49169   22715    17.8
+cours contre valeur comptable (1-2)       35620    9879    11.3
+couverture des intérêts                     699   11196     2.9
+encaisse négative                             0    7176     1.8
+détresse (dette)                              0    5262     1.3
+-- cubes injectés au sac fondamental pendant advanceGameClock, ancien, 8+3 (917036 cubes sur 1000 suites) --
+source                                     verts  rouges  part %
+verdict des analystes (ou ancien palier)  153949  190719    37.6
+semestre rentable / déficitaire (3-5)     172950  106198    30.4
+grosse marge Croissance (5-9 / 5-8)        92844   55141    16.1
+cours contre valeur comptable (1-2)        58376   29224     9.6
+détresse (dette)                               0   23574     2.6
+encaisse négative                              0   22970     2.5
+couverture des intérêts                      836   10255     1.2
+-- cubes injectés au sac fondamental pendant advanceGameClock, ancien, 4+2 (448951 cubes sur 1000 suites) --
+source                                    verts  rouges  part %
+verdict des analystes (ou ancien palier)  81165   95736    39.4
+semestre rentable / déficitaire (3-5)     87976   42525    29.1
+grosse marge Croissance (5-9 / 5-8)       49046   22741    16.0
+cours contre valeur comptable (1-2)       35456    9988    10.1
+couverture des intérêts                     693   11194     2.6
+encaisse négative                             0    7149     1.6
+détresse (dette)                              0    5282     1.2
+-- cubes injectés au sac fondamental pendant advanceGameClock, (0,0), 8+3 (573158 cubes sur 1000 suites) --
+source                                  verts  rouges  part %
+semestre rentable / déficitaire (3-5)  173054  106434    48.8
+grosse marge Croissance (5-9 / 5-8)     93029   55201    25.9
+cours contre valeur comptable (1-2)     56826   31018    15.3
+détresse (dette)                            0   23649     4.1
+encaisse négative                           0   22976     4.0
+couverture des intérêts                   819   10152     1.9
+-- cubes injectés au sac fondamental pendant advanceGameClock, (0,0), 4+2 (271683 cubes sur 1000 suites) --
+source                                 verts  rouges  part %
+semestre rentable / déficitaire (3-5)  87949   42607    48.1
+grosse marge Croissance (5-9 / 5-8)    49047   22585    26.4
+cours contre valeur comptable (1-2)    34710   10599    16.7
+couverture des intérêts                  683   11140     4.4
+encaisse négative                          0    7169     2.6
+détresse (dette)                           0    5194     1.9
+
+== E. Alternance des verdicts (même entreprise, semestre suivant), semestres 3 à 12 ==
+                             zone   n+    f+   n−    f−
+(3,5) après fort+ (n=24004)  43.4  2.5  15.5  4.2  34.5
+(3,5) après fort− (n=29091)  43.6  5.9  30.3  1.9  18.3
+(3,5) ensemble               44.0  4.1  22.3  2.6  27.0
+(0,0) après fort+ (n=23911)  43.4  2.5  15.5  4.3  34.3
+(0,0) après fort− (n=29084)  43.6  6.1  30.2  1.9  18.3
+(0,0) ensemble               44.0  4.2  22.1  2.6  27.0
+-- ancien verdict (paliers) : après « nettement battu » (B) et « vraiment raté » (R) — battu b, nettement B, raté m, nettement M, vraiment R --
+                      b     B     m    M     R    f
+après B (n=45047)   6.0  35.5  21.4  8.6  28.4  0.1
+après R (n=25798)  19.2  51.3   5.5  7.2  16.6  0.1
+ensemble           10.8  41.7  15.3  8.2  24.0  0.1
+-- longueur des séries de même signe (une zone coupe la série) : nombre, longueur moyenne, part de 3 ou plus --
+variante  séries +  moy.  ≥ 3 %  séries −  moy.  ≥ 3 %
+(3,5)        25981  1.22    3.5     28793  1.23    3.8
+(0,0)        25995  1.22    3.5     28830  1.23    3.8
+ancien       37575  1.67   19.4     37098  1.53   13.8
+
+== F. Type Croissance : cases de la matrice (axe des marges / axe des analystes), % des clôtures où le sac type est recomposé ==
+marges/analystes      nouveau (3,5) eleve  nouveau (3,5) tres_eleve  ancien eleve  ancien tres_eleve
+bon/bon                              29.7                      22.8          44.3               34.7
+bon/neutre                           26.0                      20.2           2.4                1.4
+bon/mauvais                           3.3                       1.3          12.4                8.2
+neutre/bon                            0.0                       2.3           0.0                5.8
+neutre/neutre                         0.0                       5.8           0.0                0.4
+neutre/mauvais                        0.0                       0.9           0.0                2.8
+mauvais/bon                           2.7                       2.2          11.8               12.4
+mauvais/neutre                       17.5                      18.5           1.2                1.2
+mauvais/mauvais                      20.7                      26.1          27.9               33.2
+recomposé / clôtures                 83.6                      89.9          83.6               89.9
+-- cours médian d'une Croissance après 4 / 8 / 12 semestres (%), toutes tables --
+variante                           élevé                  très élevé
+(0,0)         3.3 / 11.8 / 25.1 (n=1466)  5.6 / 14.1 / 14.0 (n=1458)
+(2,4)          2.6 / 9.1 / 15.5 (n=1443)    4.1 / 9.9 / 7.0 (n=1451)
+(3,5)          2.2 / 8.0 / 15.3 (n=1440)    4.1 / 9.0 / 4.2 (n=1448)
+(3,6)          2.3 / 7.3 / 14.6 (n=1436)    3.6 / 8.3 / 2.8 (n=1445)
+(4,7)          1.7 / 6.2 / 14.3 (n=1432)    3.5 / 6.5 / 0.4 (n=1442)
+ancien         3.3 / 7.1 / 14.0 (n=1446)   5.2 / 10.6 / 4.7 (n=1445)
+(3,5) sans K   3.6 / 9.9 / 22.1 (n=1453)  4.5 / 12.2 / 14.3 (n=1470)
+
+== G. Pari du PDG simulé (tailles 3,5), gain sur le cours après 12 semestres contre « jamais », mêmes suites ==
+gain = moyenne de log(cours stratégie ÷ cours « jamais ») par entreprise, en % ; ± = demi-largeur de l'intervalle à 95 %. « informé » : avertit si M' − M < −θ × zone, promet si M' − M > +θ × zone.
+-- sac trading vide (personne n'échange) --
+stratégie                             n  gain % ± 95 %  avertit %  promet %  sous zone si avert. %  si prom. %  si rien %  gain par profil conc / div / endet / ord
+toujours avertir (coût 1)          4644     -6.4 ± 0.3      100.0       0.0                   30.1           —          —                 -7.1 / -6.4 / -6.8 / -6.0
+toujours avertir (coût 2)          4600    -17.9 ± 0.4      100.0       0.0                   30.1           —          —             -16.6 / -19.0 / -19.6 / -17.3
+toujours promettre (gain 1)        4660      6.3 ± 0.5        0.0     100.0                      —        30.1          —                    1.3 / 7.2 / 11.2 / 6.1
+toujours promettre (gain 2)        4672     20.5 ± 0.7        0.0     100.0                      —        30.1          —                  7.0 / 24.6 / 32.5 / 20.0
+toujours promettre (gain 3)        4672     31.2 ± 0.9        0.0     100.0                      —        30.1          —                 11.3 / 37.2 / 50.2 / 30.4
+informé θ=1 (avert. 1, prom. 1)    4676      0.1 ± 0.1        5.2       3.3                   49.6         7.6       29.8                   -0.0 / -0.0 / 0.1 / 0.1
+informé θ=1 (avert. 1, prom. 2)    4676      0.3 ± 0.1        5.2       3.3                   49.6         7.6       29.8                     0.3 / 0.1 / 0.2 / 0.5
+informé θ=1 (avert. 1, prom. 3)    4676      0.6 ± 0.2        5.2       3.3                   49.6         7.7       29.8                     0.6 / 0.2 / 0.4 / 0.8
+informé θ=1 (avert. 2, prom. 1)    4676     -0.6 ± 0.1        5.2       3.3                   49.5         7.6       29.8                 -1.7 / -0.2 / -0.2 / -0.5
+informé θ=1 (avert. 2, prom. 2)    4676     -0.3 ± 0.2        5.2       3.3                   49.6         7.6       29.8                 -1.3 / -0.1 / -0.0 / -0.1
+informé θ=1 (avert. 2, prom. 3)    4676     -0.1 ± 0.2        5.2       3.3                   49.6         7.7       29.8                   -0.9 / -0.0 / 0.2 / 0.1
+informé θ=0.5 (avert. 1, prom. 1)  4668      1.6 ± 0.3       19.3      19.5                   43.9        11.2       31.8                    -0.8 / 2.7 / 2.8 / 1.7
+informé θ=0.5 (avert. 1, prom. 2)  4664      4.2 ± 0.4       19.3      19.5                   43.9        11.1       31.8                     0.6 / 5.3 / 6.7 / 4.2
+informé θ=0.5 (avert. 2, prom. 2)  4664      1.3 ± 0.4       19.3      19.5                   43.9        11.2       31.8                    -3.0 / 2.7 / 3.8 / 1.5
+-- sac trading chargé (10 verts et 6 rouges entretenus à chaque semestre) --
+stratégie                             n  gain % ± 95 %  avertit %  promet %  sous zone si avert. %  si prom. %  si rien %  gain par profil conc / div / endet / ord
+toujours avertir (coût 1)          4728     -1.3 ± 0.5      100.0       0.0                   30.1           —          —                 -1.9 / -1.1 / -2.1 / -1.0
+toujours avertir (coût 2)          4696     -9.6 ± 0.6      100.0       0.0                   30.1           —          —               -7.6 / -10.6 / -12.1 / -9.1
+toujours promettre (gain 1)        4732     -1.3 ± 0.4        0.0     100.0                      —        30.1          —                  -1.2 / -2.1 / 1.0 / -1.8
+toujours promettre (gain 2)        4740      5.9 ± 0.5        0.0     100.0                      —        30.2          —                    2.0 / 6.2 / 11.0 / 5.5
+toujours promettre (gain 3)        4740     11.3 ± 0.6        0.0     100.0                      —        30.1          —                  5.0 / 12.4 / 18.4 / 10.8
+informé θ=1 (avert. 1, prom. 1)    4752      0.1 ± 0.1        5.2       3.3                   49.4         7.5       29.9                   0.4 / -0.1 / -0.1 / 0.2
+informé θ=1 (avert. 1, prom. 2)    4752      0.2 ± 0.1        5.2       3.3                   49.4         7.5       29.9                   0.6 / -0.1 / -0.0 / 0.3
+informé θ=1 (avert. 1, prom. 3)    4752      0.4 ± 0.1        5.2       3.3                   49.5         7.5       29.9                    0.8 / -0.0 / 0.1 / 0.5
+informé θ=1 (avert. 2, prom. 1)    4752     -0.3 ± 0.2        5.2       3.3                   49.4         7.5       29.9                 -0.4 / -0.3 / -0.4 / -0.3
+informé θ=1 (avert. 2, prom. 2)    4752     -0.2 ± 0.2        5.2       3.3                   49.4         7.5       29.9                 -0.2 / -0.3 / -0.3 / -0.2
+informé θ=1 (avert. 2, prom. 3)    4752     -0.1 ± 0.2        5.2       3.3                   49.5         7.5       29.9                   0.1 / -0.2 / -0.2 / 0.0
+informé θ=0.5 (avert. 1, prom. 1)  4752      0.8 ± 0.3       19.2      19.5                   44.0        11.0       31.8                     0.3 / 0.9 / 1.1 / 0.8
+informé θ=0.5 (avert. 1, prom. 2)  4752      2.1 ± 0.3       19.2      19.5                   44.0        11.1       31.8                     1.1 / 1.9 / 2.9 / 2.3
+informé θ=0.5 (avert. 2, prom. 2)  4752      0.3 ± 0.3       19.2      19.5                   44.0        11.1       31.8                    -1.1 / 0.2 / 1.5 / 0.4
+-- 2e passe : tailles (2,5), sac trading vide, promesse non tenue aggravée de A cubes (normal → fort ; fort → 5 + A) --
+stratégie                                 n  gain % ± 95 %  avertit %  promet %  sous zone si avert. %  si prom. %  si rien %  gain par profil conc / div / endet / ord
+toujours avertir (coût 1)              4660     -3.3 ± 0.3      100.0       0.0                   30.1           —          —                 -5.7 / -2.6 / -3.0 / -2.9
+toujours promettre (gain 1) A=3        4640      2.5 ± 0.5        0.0     100.0                      —        30.1          —                    -1.0 / 2.7 / 6.1 / 2.5
+informé θ=0.5 (avert. 1, prom. 1) A=3  4668      2.1 ± 0.3       19.3      19.5                   43.9        11.1       31.8                    -0.3 / 3.1 / 2.8 / 2.4
+informé θ=1 (avert. 1, prom. 1) A=3    4676      0.3 ± 0.1        5.2       3.3                   49.6         7.6       29.8                     0.2 / 0.1 / 0.1 / 0.4
+toujours promettre (gain 1) A=5        4620     -3.9 ± 0.5        0.0     100.0                      —        30.1          —                 -5.1 / -4.9 / -1.7 / -3.9
+informé θ=0.5 (avert. 1, prom. 1) A=5  4668      1.7 ± 0.3       19.3      19.5                   43.9        11.1       31.8                    -0.7 / 2.8 / 2.2 / 2.0
+informé θ=1 (avert. 1, prom. 1) A=5    4676      0.2 ± 0.1        5.2       3.3                   49.6         7.6       29.8                     0.0 / 0.1 / 0.1 / 0.4
+

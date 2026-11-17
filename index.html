@@ -1917,6 +1917,13 @@ function migrateState(s){
     if(co.dividendPenaltyRefNetIncome===undefined) co.dividendPenaltyRefNetIncome = null; // Section 320 — bénéfice de référence mémorisé à l'annonce (section 321 : repris)
     // Section 321 — dividendPerShareBySemester (cumul par action d'une version précédente du lot) n'est plus lu (ignoré s'il existe).
     if(co.dividendRecurrentChangedSemesterIdx===undefined) co.dividendRecurrentChangedSemesterIdx = -1; // Section 320 — un changement de niveau du récurrent par semestre
+    // Section 323 — chiffres figés des analystes (aucun pour une partie migrée : pas de verdict au semestre en cours),
+    // historique des verdicts, et place réservée au pari du PDG (lots 6 et 7).
+    if(co.analystForecast===undefined) co.analystForecast = null;
+    if(!Array.isArray(co.analystHistory)) co.analystHistory = [];
+    // Section 323 (pari du PDG) — annonce du semestre en cours ou null ; une forme illisible est ramenée à null (elle ne
+    // s'appliquerait jamais : ceoCallFor ne lit qu'une annonce de son propre semestre).
+    if(co.ceoCall===undefined || (co.ceoCall!==null && (typeof co.ceoCall!=='object' || Array.isArray(co.ceoCall)))) co.ceoCall = null;
     if(co.dividendPenaltyTier===undefined) co.dividendPenaltyTier = 0;
     if(co.dividendPenaltyRedAdded===undefined) co.dividendPenaltyRedAdded = 0;
     
@@ -3318,6 +3325,9 @@ async function createCompany(playerId, name, description, type, dividendPromised
   company.dividendPenaltyRedAdded = 0;
   company.dividendRecurrentChangedSemesterIdx = -1; // Section 320 — semestre du dernier changement de niveau du récurrent
   company.dividendPenaltyRefNetIncome = null; // Section 320 — bénéfice de référence mémorisé à l'annonce (section 321 : repris)
+  company.analystForecast = null; // Section 323 — chiffres des analystes figés au premier lancer du semestre
+  company.analystHistory = [];    // Section 323 — verdicts des analystes (40 au plus)
+  company.ceoCall = null;         // Section 323 — pari du PDG : annonce du semestre en cours (announceCeoCall), sinon null
   
   
   
@@ -4748,7 +4758,7 @@ function renderEntrepriseFinancials(company){
   
   
   bodyHtml += `
-  <div class="section-title" style="margin-top:22px;">Bénéfice net attendu (analystes) vs réel</div>
+  <div class="section-title" style="margin-top:22px;">Bénéfice net : cible des analystes et résultat réel</div>
   ${expectationVsActualChartHtml(company, periods)}`;
 
   
@@ -4927,15 +4937,8 @@ function renderEntreprise(){
   
   
   
-  const netIncomeExpectation = companyExpectedNetIncome(company, Math.floor(state.gameClock.rollCount/3));
-  const expectationHtml = netIncomeExpectation
-    ? (()=>{
-        const exp = netIncomeExpectation.expected;
-        const expColor = exp<0 ? 'var(--brick)' : '#047857';
-        const expSigned = (exp>=0?'+':'') + fmt(exp);
-        return `<span class="money" style="font-size:16px;font-weight:700;color:${expColor};">${expSigned}</span> <span class="small">(${netIncomeExpectation.bootstrap ? (netIncomeExpectation.semestersUsed===0 ? "attente de départ : aucun semestre clos encore pour l'entreprise" : "attente fixe de départ pour le 2e semestre de l'entreprise, sans lien avec ses résultats") : (netIncomeExpectation.semestersUsed===1 ? 'résultat net du dernier semestre clos' : 'moyenne des '+netIncomeExpectation.semestersUsed+' derniers semestres clos')})</span>`; // Section 317 — bogue 90 : l'attente fixe de départ n'est plus présentée comme une moyenne de résultats réels
-      })()
-    : `<span class="small">Pas encore assez d'historique pour former une attente.</span>`;
+  // Section 323 — trois analystes, cible et zone (analystForecastFor) à la place du chiffre unique d'avant (companyExpectedNetIncome).
+  const expectationHtml = analystExpectationBlockHtml(company);
 
   
   
@@ -6154,8 +6157,9 @@ function renderEntreprise(){
   </div>
   ${stockChartHtml}
 
-  <div class="small" style="font-weight:600;margin-top:16px;">📊 Bénéfice net attendu par les analystes (ce semestre)</div>
+  <div class="small" style="font-weight:600;margin-top:16px;">📊 Attentes des analystes (ce semestre)</div>
   <div style="margin:6px 0 4px;">${expectationHtml}</div>
+  ${ceoCallBoxHtml(company, 'ent')}<!-- Section 323 (pari du PDG) -->
   `)}
 
   ${entrepriseAccordion('terrains', `Terrains possédés (valeur totale: ${fmt(companyRealEstateValue(company))})`, `
@@ -6526,25 +6530,27 @@ const PRODUCTS_MATRIX = [
       `La banque finance l'opération, comme à l'IPO.`,
     ], moins:[
       `Plafonnée à 10 % des parts de départ, net des rachats déjà faits.`,
-      `Injecte toujours 1 à 2 cubes rouges, plus l'impact de taille — même sur une quantité minuscule.`,
+      `À partir d'une tranche (0,5 % des parts, cumul compris), ajoute 1 à 2 cubes rouges à l'impact de taille — une seule fois par ouverture du marché.`, // Section 323 — texte mis à jour (règle de la section 322)
       `À éviter quand votre cours est bas : vous levez moins pour la même pression.`,
     ], facts:[
       `Aux frontières de semestre seulement`,
       `Accumulateur de cubes dédié aux actions corporatives`,
+      `Cubes rouges au sac trading, comme une vente d'actions`, // Section 323 (D3)
     ]},
   {f:'equity', nm:`Rachat d'actions`, sub:`Acheter du vert avec de la trésorerie`, poche:['entreprise'], fen:'semestre', dette:false, cubes:true,
     contre:`La banque`, cout:`Quantité × cours`, duree:`Aucune`,
     plus:[
       `Injecte des cubes verts — pression haussière sur votre propre cours.`,
-      `Aucun plafond.`,
+      `Aucun plafond en nombre de parts, dans la limite de votre trésorerie.`, // Section 323 — texte mis à jour (règle de la section 322)
       `Devient une arme défensive quand quelqu'un accumule vos parts.`,
     ], moins:[
       `Sort du comptant réel de votre trésorerie.`,
-      `Peut vous mettre en encaisse négative — ce qui vous bloque au semestre suivant.`,
+      `Limité à votre trésorerie : un rachat qui la dépasserait est refusé.`, // Section 323 — texte mis à jour (règle de la section 322)
       `Restaure le plafond d'émission, ce qui a déjà servi à autre chose.`,
     ], facts:[
       `Symétrique de l'émission`,
-      `Encaisse négative permise sauf pour une enchère REIT`,
+      `Refusé au-delà de la trésorerie de l'entreprise`, // Section 323 — texte mis à jour (règle de la section 322)
+      `Cubes verts au sac trading, comme un achat d'actions`, // Section 323 (D3)
     ]},
   {f:'equity', nm:`Parts privilégiées`, sub:`Un revenu contractuel, plafonné et rachetable`, poche:['joueur'], fen:'semestre', dette:false, cubes:false,
     contre:`Les joueurs, encaisse perso`, cout:`Dividende annuel`, duree:`Jusqu'au rappel`,
@@ -10482,12 +10488,15 @@ function advanceGameClock(){
       
       
       
+      // Section 323 — verdict des analystes calculé UNE seule fois par clôture (cubes au sac fondamental, historique,
+      // journal) ; il sert aussi à l'axe des analystes des Croissance ci-dessous. Aucun verdict sans chiffres figés
+      // pour ce semestre. Avant : companyExpectedNetIncome + croissanceAnalystAxis ici, netIncomeExpectationTier plus bas.
+      const analystResult = applyAnalystVerdict(co, semesterBefore);
       if(co.type==='croissance'){
         const marginPercentile = croissanceMarginPercentile(co.id, netMarginById);
         const marginAxis = croissanceMarginAxis(marginPercentile, co.croissanceTier);
         const isForAnalystAxis = incomeStatementFor(co.id, semesterBefore);
-        const expectationForAnalystAxis = companyExpectedNetIncome(co, semesterBefore);
-        const analystAxis = croissanceAnalystAxis(isForAnalystAxis, expectationForAnalystAxis);
+        const analystAxis = croissanceAnalystAxis(isForAnalystAxis, analystResult); // Section 323
         if(marginAxis!==null && analystAxis!==null){
           const composition = croissanceTypeMatrix(marginAxis, analystAxis);
           if(composition) co.typeReserve = Object.assign({}, composition);
@@ -10719,13 +10728,8 @@ function advanceGameClock(){
       
       
       
-      const expectation = companyExpectedNetIncome(co, semesterBefore);
-      const tier = netIncomeExpectationTier(is, expectation);
-      if(tier==='sigBeat') injectStockCube(co, 'green', STOCK_EXPECTATION_SIGNIFICANT_MIN, STOCK_EXPECTATION_SIGNIFICANT_MAX);
-      else if(tier==='beat') injectStockCube(co, 'green', STOCK_EXPECTATION_STANDARD_MIN, STOCK_EXPECTATION_STANDARD_MAX);
-      else if(tier==='reallyMiss') injectStockCube(co, 'red', STOCK_EXPECTATION_REALLY_MISSED_MIN, STOCK_EXPECTATION_REALLY_MISSED_MAX);
-      else if(tier==='sigMiss') injectStockCube(co, 'red', STOCK_EXPECTATION_SIGNIFICANT_MIN, STOCK_EXPECTATION_SIGNIFICANT_MAX);
-      else if(tier==='miss') injectStockCube(co, 'red', STOCK_EXPECTATION_STANDARD_MIN, STOCK_EXPECTATION_STANDARD_MAX);
+      // Section 323 — les paliers « bénéfice contre attendu » (1-2 / 3-5 / 6-8 cubes, netIncomeExpectationTier) sont
+      // retirés : le verdict des analystes (applyAnalystVerdict, plus haut) les remplace.
       
       
       
@@ -11661,18 +11665,13 @@ function netIncomeExpectationRatio(is){
 
 
 
+// Section 323 — netIncomeExpectationTier et ses seuils NET_INCOME_RATIO_* ne servent plus ni à la clôture ni à
+// l'affichage ; ils ne sont gardés que pour le banc de mesure hors jeu (tests/sim/analystes/moteur.js, « ancien verdict »).
+const NET_INCOME_RATIO_SIG_MISS_MAX = 0.85, NET_INCOME_RATIO_REALLY_MISSED_MAX = 0.4, NET_INCOME_RATIO_SIG_BEAT_MIN = 1.5;
 function netIncomeExpectationTier(is, expectation){
   if(!expectation) return null;
   const diff = is.netIncome - expectation.expected;
   if(Math.abs(diff)<1e-9) return 'flat';
-  
-  
-  
-  
-  
-  
-  
-  
   if(expectation.bootstrap) return diff>0 ? 'beat' : 'miss';
   const r = netIncomeExpectationRatio(is);
   if(diff>0) return r>NET_INCOME_RATIO_SIG_BEAT_MIN ? 'sigBeat' : 'beat';
@@ -11680,12 +11679,602 @@ function netIncomeExpectationTier(is, expectation){
   return r<NET_INCOME_RATIO_SIG_MISS_MAX ? 'sigMiss' : 'miss';
 }
 
+// ===================================================================================================================
+// Section 323 — trois analystes, une cible, une zone acceptable et un verdict hors zone (contrat
+// docs/contrats/section-323-analystes.md, décisions de Julien des 16 et 17 novembre 2026). Calcul porté du prototype
+// mesuré et relu (tests/sim/analystes/analystes.js et plateau.js). Tout est PUR et DÉTERMINISTE : aucun Math.random,
+// aucune écriture dans l'état (sauf freezeAnalystForecasts et applyAnalystVerdict), donc deux appareils obtiennent les
+// mêmes chiffres.
+//   Historien H : moyenne du bénéfice net des 3 derniers semestres clos (2 s'il n'y en a que 2) ; absent avant.
+//   Modélisateur M = S + E_recus − E_payes − E_taxes − I (parc tel qu'il est au moment du calcul, 3 lancers).
+//   Marché K = capitalisation × (Σ M ÷ Σ capitalisations des entreprises actives) ; absent si Σ capitalisations ≤ 0.
+//   Cible = analyste du milieu (médiane à 3, moyenne à 2, lui seul à 1) ; zone = cible ± max(0,5 ; 0,35 × σ) (D4).
+// Angle mort voulu : hors la subvention, le modélisateur ignore la position des pions ; il ignore aussi les assurances,
+// les REIT (revenus des parts), le lot commercial et les accords de compensation de loyer.
+// ===================================================================================================================
+// Section 323 (décision D4 de Julien du 2026-11-17, après mesure) : zone à 0,35 × σ (avant : 0,5), plancher 0,5 inchangé ;
+// un tiers des semestres dans la zone au lieu de 43 %.
+const ANALYST_ZONE_K = 0.35, ANALYST_ZONE_FLOOR = 0.5, ANALYST_HISTORIAN_MIN_SEMESTERS = 2;
+const ANALYST_VERDICT_NORMAL_CUBES = 2, ANALYST_VERDICT_STRONG_CUBES = 5; // Section 323 — tailles fixées par Julien le 2026-11-17
+const ANALYST_ZONE_CUBES_MIN = 0, ANALYST_ZONE_CUBES_MAX = 1; // Section 323 — dans la zone : 0 ou 1 cube du côté de l'écart (décision de Julien du 2026-11-17)
+const ANALYST_HISTORIAN_MAX_SEMESTERS = 3; // Section 323 — l'historien regarde au plus les 3 derniers semestres clos
+const ANALYST_HISTORY_MAX = 40;            // Section 323 — lignes gardées dans co.analystHistory
+const ANALYST_ROLLS_PER_SEMESTER = 3;      // Section 323 — lancers d'un semestre
+const ANALYST_GO_SUBSIDY = 2;              // Section 323 — subvention du passage par GO (applyPassGoEffect : 2 M$)
+const ANALYST_SERVICE_DICE = 7;            // Section 323 — services : total des dés attendu
+const ANALYST_MARKET_MIN_COMPANIES = 2;    // Section 323 (C3) — entreprises à capitalisation positive pour que le marché soit présent
+// Section 323 — pari du PDG (contrat section 7, décisions de Julien du 2026-11-17) : cube immédiat de l'annonce au sac
+// fondamental (avertissement : 1 rouge ; promesse : 1 vert), et 3 rouges de plus à la clôture si la promesse est ratée.
+const CEO_WARNING_COST_CUBES = 1, CEO_PROMISE_GAIN_CUBES = 1, CEO_PROMISE_BROKEN_RED_CUBES = 3;
+const CEO_CALL_KINDS = ['warning', 'promise'];
+const CEO_CALL_LABELS = {warning:'avertissement', promise:'promesse'};
 
+// Section 323 — fréquence exacte d'arrivée sur chaque case, PAR LANCER RÉELLEMENT JOUÉ (chaîne de Markov du plateau :
+// 2 dés, la case 30 renvoie en 10). Comme le prototype (plateau.js, stationnaire), vérifiée contre le vrai moteur par
+// lancer joué. La suite des lancers joués, donc cette loi, ne dépend pas de jailTurns ; la mémoire est rangée par
+// jailTurns parce que les tables par tour (analystTurnTables) en dépendent. Rend une copie (40 valeurs). Depuis la ronde
+// de corrections (C4), le modélisateur lit les tables par tour, plus cette loi directement.
+let analystBoardFreqCache = null;
+// Section 323 (ronde de corrections, C4) — la chaîne du plateau, mémorisée selon jailTurns : `pi` = loi stationnaire de
+// la position d'un pion LIBRE avant son lancer (chaîne des lancers joués, 30 renvoie en 10), `land` = fréquence
+// d'arrivée par lancer joué, `turns` = tables par tour du semestre (analystTurnTables).
+function analystBoardChain(){
+  const jt = (state && state.settings && state.settings.jailTurns!=null) ? state.settings.jailTurns : null;
+  if(!analystBoardFreqCache || analystBoardFreqCache.jailTurns!==jt){
+    const P = r => DICE_PROB_36[r]/36;
+    const isGoToJail = d => !!(SPECIAL_SQUARES[d] && SPECIAL_SQUARES[d].kind==='gotojail');
+    let pi = new Array(40).fill(1/40);
+    for(let it=0; it<5000; it++){
+      const nx = new Array(40).fill(0);
+      for(let k=0;k<40;k++){ if(!pi[k]) continue; for(let r=2;r<=12;r++){ let d=(k+r)%40; if(isGoToJail(d)) d=10; nx[d]+=pi[k]*P(r); } }
+      let diff = 0; for(let k=0;k<40;k++) diff += Math.abs(nx[k]-pi[k]);
+      pi = nx; if(diff < 1e-15) break;
+    }
+    const land = new Array(40).fill(0);
+    for(let k=0;k<40;k++) for(let r=2;r<=12;r++) land[(k+r)%40] += pi[k]*P(r);
+    analystBoardFreqCache = {jailTurns: jt, pi, land, turns:{}};
+  }
+  return analystBoardFreqCache;
+}
+function boardLandingFrequencies(){
+  return analystBoardChain().land.slice();
+}
 
+// Section 323 (ronde de corrections, C4) — tables PAR TOUR du semestre pour un pion, sans regarder sa position :
+//   arrive[t][d] = probabilité qu'il arrive sur la case d au tour t (arrivée sur 30 comptée sur 30) ;
+//   free[t]      = probabilité qu'il ne soit pas sous enquête au tour t (il lance, et une entreprise touche ses loyers).
+// Règle de performRollForAllCompanies : arrivé sur 30 au tour t, le pion part en 10 ; l'enquête ne prend effet qu'après
+// tous les déplacements du tour (les loyers du tour t sont encore touchés) ; il saute les tours t+1 … t+max(1, jailTurns)
+// (décompte en fin de tour) et rejoue de la case 10 ensuite. Départ : loi stationnaire `pi` pour un pion libre au moment
+// du calcul (fromJail = false), case 10 pour un pion qui sort d'une enquête en cours (fromJail = true : la règle de
+// l'enquête le met là). Les tables couvrent ANALYST_ROLLS_PER_SEMESTER tours ; un pion encore enquêté au calcul les
+// prend décalées de ses tours restants (analystPawnSchedule).
+function analystTurnTables(fromJail){
+  const ch = analystBoardChain();
+  const key = fromJail ? 'jail' : 'free';
+  if(!ch.turns[key]){
+    const n = ANALYST_ROLLS_PER_SEMESTER;
+    const skip = Math.max(1, (state.settings && state.settings.jailTurns)||0);
+    const P = r => DICE_PROB_36[r]/36;
+    let dist = fromJail ? new Array(40).fill(0) : ch.pi.slice();
+    if(fromJail) dist[10] = 1;
+    const reentry = {}, arrive = [], free = [];
+    for(let t=0;t<n;t++){
+      if(reentry[t]) dist[10] += reentry[t];
+      free.push(dist.reduce((s,x)=>s+x, 0));
+      const arr = new Array(40).fill(0), nx = new Array(40).fill(0);
+      for(let k=0;k<40;k++){
+        const m = dist[k]; if(!m) continue;
+        for(let r=2;r<=12;r++){
+          const d = (k+r)%40, w = m*P(r);
+          arr[d] += w;
+          if(SPECIAL_SQUARES[d] && SPECIAL_SQUARES[d].kind==='gotojail') reentry[t+1+skip] = (reentry[t+1+skip]||0) + w;
+          else nx[d] += w;
+        }
+      }
+      arrive.push(arr);
+      dist = nx;
+    }
+    ch.turns[key] = {arrive, free};
+  }
+  return ch.turns[key];
+}
 
+// Section 323 (ronde de corrections, C4) — calendrier d'un pion (entreprise ou pion neutre) pour le semestre : j = tours
+// d'enquête restants (analystJailSkip, connus) ; ensuite, les tables par tour (au tour t ≥ j : table[t − j]).
+function analystPawnSchedule(x){
+  const j = analystJailSkip(x);
+  const T = analystTurnTables(j>0);
+  return {
+    j,
+    arrive: t => t<j ? null : T.arrive[t-j],
+    free:   t => t<j ? 0 : T.free[t-j],
+  };
+}
 
+// Section 323 — probabilité exacte que le pion passe par GO pendant ses n lancers, depuis sa position réelle (même règle
+// que corePerformDiceRoll : nouvelle case < ancienne). Arrivée sur la case 30 : le pion part en 10 et saute
+// max(1, jailTurns) lancers (décompte de performRollForAllCompanies) avant de rejouer ; avec 3 tours d'enquête il ne
+// rejoue plus dans le semestre (cas du prototype).
+function analystPassGoProbability(pos0, n){
+  const skip = Math.max(1, (state.settings && state.settings.jailTurns)||0);
+  let dist = new Array(40).fill(0);
+  dist[(((pos0|0)%40)+40)%40] = 1;
+  const reentry = {};
+  let passGo = 0;
+  for(let t=0;t<n;t++){
+    if(reentry[t]) dist[10] += reentry[t];
+    const nx = new Array(40).fill(0);
+    for(let k=0;k<40;k++){
+      const m = dist[k]; if(!m) continue;
+      for(let r=2;r<=12;r++){
+        const d = (k+r)%40, w = m*DICE_PROB_36[r]/36;
+        if(d < k) passGo += w;
+        if(SPECIAL_SQUARES[d] && SPECIAL_SQUARES[d].kind==='gotojail') reentry[t+1+skip] = (reentry[t+1+skip]||0) + w;
+        else nx[d] += w;
+      }
+    }
+    dist = nx;
+  }
+  return passGo;
+}
 
-const NET_INCOME_RATIO_SIG_MISS_MAX = 0.85, NET_INCOME_RATIO_REALLY_MISSED_MAX = 0.4, NET_INCOME_RATIO_SIG_BEAT_MIN = 1.5;
+// Section 323 — l'historien : moyenne du bénéfice net des 3 derniers semestres clos avant `semester` (2 s'il n'y en a
+// que 2) ; null (absent) tant que l'entreprise n'a pas ANALYST_HISTORIAN_MIN_SEMESTERS semestres clos derrière elle.
+// Premier semestre compté comme companyExpectedNetIncome (création de l'entreprise, début du registre financier).
+function analystHistorian(co, semester){
+  if(!co) return null;
+  const earliestSem = Math.max(Math.floor((co.createdAtRoll||0)/3), Math.floor((state.finLedgerStartedAtRoll||0)/3));
+  const prior = semester - earliestSem;
+  if(!(prior >= ANALYST_HISTORIAN_MIN_SEMESTERS)) return null;
+  const values = [];
+  for(let s=semester-1; s>=earliestSem && values.length<ANALYST_HISTORIAN_MAX_SEMESTERS; s--) values.push(incomeStatementFor(co.id, s).netIncome);
+  return values.reduce((a,b)=>a+b, 0) / values.length;
+}
+
+// Section 323 — loyer qu'un visiteur paierait en s'arrêtant sur p, selon les règles de settlePropertyRent (entreprise)
+// et settleNeutralPawnRent (pion neutre), sans rien modifier. null : aucun loyer (terrain sans propriétaire, ou
+// visiteur seul propriétaire). Sinon { cuts:[{ownerId, amount}], extra } : parts des propriétaires dont la part n'est
+// pas hypothéquée (le filtre de l'enquête AMF dépend du lancer et s'applique plus loin) et ce que le visiteur paie en
+// plus des parts (part de la banque quand elle perçoit les loyers, part réservée VENDUE des REIT). Le visiteur paie
+// alors parts des propriétaires libres + extra, exactement le `payable` du moteur.
+function analystRentCuts(p, visitorId, isPawn){
+  if(!p || !p.owners || p.owners.length===0) return null;
+  const visitorShare = isPawn ? 0 : propertyOwnedShare(p, visitorId);
+  if(visitorShare>=100) return null;
+  const mortgagedIds = state.settings.mortgageRentContinues ? [] : mortgagedCompanyIds(p);
+  const collected = etfReservedCollectedPct(p);
+  let cuts, extra = 0;
+  if(p.type==='airport' || p.type==='service'){
+    const dice = p.type==='service' ? ANALYST_SERVICE_DICE : null;
+    cuts = groupRentSettlement(p, visitorId, dice).cuts.filter(c=>!mortgagedIds.includes(c.companyId)).map(c=>({ownerId:c.companyId, amount:c.amount}));
+    if(collected>0) extra = etfFloorAirportServiceRate(p) * (p.type==='service' ? dice : 1) * (collected/100);
+  } else {
+    const rentTotal = colorRentAt(p, p.houses);
+    cuts = p.owners.filter(o=>o.companyId!==visitorId && !mortgagedIds.includes(o.companyId)).map(o=>({ownerId:o.companyId, amount:rentTotal*(o.share/100)}));
+    extra = rentTotal * (collected/100 + (state.settings.bankCollectsRent ? purchasableBankShare(p)/100 : 0));
+  }
+  return {cuts, extra};
+}
+
+// Section 323 — flux d'une part de loyer cédée à une ABS (mêmes règles que distributeAbsCashflow et creditAbsHolder,
+// sans rien modifier) : `paid` = montant versé aux porteurs existants (charge d'intérêt d'ABS de l'émettrice),
+// `companies` = [[companyId, montant]] reçus par les porteurs qui sont des entreprises (revenu ABS).
+function analystAbsFlows(deal, ceded){
+  const out = {paid:0, companies:[]};
+  if(!(ceded>1e-9)) return out;
+  const credit = (h, amt)=>{
+    if(!(amt>1e-9)) return;
+    const exists = h.holderType==='company' ? !!companyById(h.holderId) : !!state.players.find(x=>x.id===h.holderId);
+    if(!exists) return;
+    out.paid += amt;
+    if(h.holderType==='company') out.companies.push([h.holderId, amt]);
+  };
+  let remaining = ceded;
+  const toSenior = Math.min(remaining, Math.max(0, (deal.seniorCapTotal||0) - (deal.seniorPaidSoFar||0)));
+  if(toSenior>1e-9 && deal.seniorRaised>1e-9){
+    (deal.seniorHolders||[]).forEach(h=>credit(h, toSenior*(h.amount/deal.seniorRaised)));
+    remaining -= toSenior;
+  }
+  if(remaining>1e-9){
+    const juniorTarget = (deal.juniorHolders||[]).reduce((s,h)=>s+h.amount, 0);
+    if(juniorTarget>1e-9) (deal.juniorHolders||[]).forEach(h=>credit(h, remaining*(h.amount/juniorTarget)));
+  }
+  return out;
+}
+
+// Section 323 — où va la part `amount` du propriétaire ownerId (comme settlePropertyRent) : terrain cédé à une ABS =
+// loyer entier inscrit par le propriétaire, part cédée versée aux porteurs (intérêt d'ABS) ; sinon swap de loyer
+// (swapSplit, sans modifier le budget consommé).
+function analystCutRecipients(p, ownerId, visitorId, amount){
+  const deal = (state.revenueSwaps||[]).find(s=>s.sellerId===ownerId && (s.propertyIds||[]).some(pid=>samePropertyOrLot(pid, p.id)));
+  if(deal){
+    const flows = analystAbsFlows(deal, amount * (deal.cededPctOfShare||0));
+    return {revenue:[[ownerId, amount]], absOut:flows.paid, absIn:flows.companies};
+  }
+  const sp = swapSplit(p.id, ownerId, visitorId, amount, {dryRun:true});
+  const revenue = [];
+  if(sp.toOwner>0) revenue.push([ownerId, sp.toOwner]);
+  if(sp.toPartner>0) revenue.push([sp.partnerId, sp.toPartner]);
+  return {revenue, absOut:0, absIn:[]};
+}
+
+// Section 323 — intérêts hypothécaires que processYearEnd prélèvera (processMortgageInterest) si le semestre contient la
+// fin d'année (2e semestre de l'année : indice impair), dette inchangée : { companyId: montant } (positif = charge de
+// l'emprunteur, négatif = intérêt reçu par une entreprise prêteuse). Supposés payés (le moteur saisit la part d'un
+// emprunteur à court d'encaisse au lieu de facturer l'intérêt : non prévu ici).
+function analystYearEndMortgageCharges(semester){
+  const out = {};
+  if(semester % 2 !== 1) return out;
+  state.properties.forEach(p=>{
+    if(!p.mortgages || p.mortgages.length===0) return;
+    if(p.groupMergeId && lotMortgageHost(p.groupMergeId)!==p) return;
+    p.mortgages.forEach(m=>{
+      if(!companyById(m.companyId)) return;
+      const interest = m.principal * m.rate;
+      out[m.companyId] = (out[m.companyId]||0) + interest;
+      if(m.lenderId && m.lenderId!=='BANK' && companyById(m.lenderId)) out[m.lenderId] = (out[m.lenderId]||0) - interest;
+    });
+  });
+  return out;
+}
+
+// Section 323 — tours d'enquête qui restent à un pion : lancers sautés dans le semestre (3 au plus). Un pion enquêté
+// avec 0 tour restant saute quand même son prochain lancer (il est libéré au décompte du tour).
+function analystJailSkip(x){
+  if(!x || !x.inJail) return 0;
+  return Math.min(ANALYST_ROLLS_PER_SEMESTER, Math.max(1, x.jailTurnsLeft||0));
+}
+
+// Section 323 — le modélisateur pour toutes les entreprises actives en un passage : { [companyId]: {expected, sigma,
+// parts:{subsidy, rentsIn, rentsOut, taxes, charges, mortgage}} } (`mortgage` : intérêts hypothécaires de fin d'année,
+// déjà compris dans `charges`, gardés à part pour être rejugés à la clôture — applyAnalystVerdict). Visiteurs d'une
+// entreprise : pions des autres entreprises actives et pions neutres.
+// Ronde de corrections (C4) : calcul PAR TOUR (analystPawnSchedule) au lieu de « n lancers × fréquence par lancer
+// joué » : un pion libre peut être envoyé en enquête pendant le semestre (il ne lance plus), et un propriétaire envoyé
+// en enquête ne touche plus ses loyers aux tours suivants (jailedCompanyIds dans settlePropertyRent). Au tour t, le
+// visiteur arrive sur la case avec la probabilité a = arrive[t][case], chaque propriétaire est libre avec la probabilité
+// f = free(t), indépendamment (pions différents). Avant : 3 × π et la case 30 ignorée, d'où un biais R − M ≈ −0,3 pour
+// un gros propriétaire.
+// σ² (arrivées traitées comme indépendantes) : pour chaque arrivée possible, montant net N de l'entreprise =
+// h + Σ F_o g_o (F_o ~ Bernoulli(f_o)) : Var = a Var(N) + a (1 − a) E[N]², soit Σ f(1−f) g² et E[N] = h + Σ f g ; avec
+// tous les propriétaires libres, a (1 − a) montant² comme avant. + 4 q (1 − q) pour la subvention.
+function analystModelAll(){
+  const n = ANALYST_ROLLS_PER_SEMESTER;
+  const sem = Math.floor((state.gameClock.rollCount||0)/3);
+  const cos = activeCompanies();
+  const out = {}, sched = {};
+  state.companies.forEach(c=>{ sched[c.id] = analystPawnSchedule(c); });
+  cos.forEach(c=>{ out[c.id] = {subsidy:0, rentsIn:0, rentsOut:0, taxes:0, charges:0, v:0}; });
+  const add = (id, key, val)=>{ if(out[id]) out[id][key] += val; };
+  const visitors = cos.map(c=>({id:c.id, pawn:false, s:sched[c.id]}))
+    .concat((state.neutralPawns||[]).map(pw=>({id:pw.id, pawn:true, s:analystPawnSchedule(pw)})));
+  state.properties.forEach(p=>{
+    visitors.forEach(v=>{
+      const rc = analystRentCuts(p, v.id, v.pawn);
+      if(!rc) return;
+      const cuts = rc.cuts.map(c=>({c, r:analystCutRecipients(p, c.ownerId, v.id, c.amount)}));
+      for(let t=0; t<n; t++){
+        const arr = v.s.arrive(t);
+        const a = arr ? (arr[p.pos]||0) : 0;
+        if(!(a>0)) continue;
+        const mean = {}, varN = {};
+        const addMean = (id, val)=>{ mean[id] = (mean[id]||0) + val; };
+        // Ce que le visiteur paie sans condition (part de la banque, part réservée vendue des REIT) ; un pion neutre ne
+        // paie rien lui-même (la banque règle pour lui).
+        if(!v.pawn){ add(v.id, 'rentsOut', a*rc.extra); addMean(v.id, -rc.extra); }
+        cuts.forEach(({c, r})=>{
+          // Propriétaire sous enquête à ce tour : sa part ne rapporte rien et le visiteur ne la paie pas.
+          const f = sched[c.ownerId] ? sched[c.ownerId].free(t) : 1;
+          if(!(f>0)) return;
+          const g = {};
+          const addG = (id, val)=>{ g[id] = (g[id]||0) + val; };
+          r.revenue.forEach(([id, amt])=>{ add(id, 'rentsIn', a*f*amt); addG(id, amt); });
+          if(r.absOut>0){ add(c.ownerId, 'charges', a*f*r.absOut); addG(c.ownerId, -r.absOut); }
+          r.absIn.forEach(([id, amt])=>{ add(id, 'charges', -a*f*amt); addG(id, amt); });
+          if(!v.pawn){ add(v.id, 'rentsOut', a*f*c.amount); addG(v.id, -c.amount); }
+          Object.keys(g).forEach(id=>{ addMean(id, f*g[id]); varN[id] = (varN[id]||0) + f*(1-f)*g[id]*g[id]; });
+        });
+        Object.keys(mean).forEach(id=>{ if(out[id]) out[id].v += a*(varN[id]||0) + a*(1-a)*mean[id]*mean[id]; });
+      }
+    });
+  });
+  const mortgage = analystYearEndMortgageCharges(sem);
+  const taxPositions = Object.keys(SPECIAL_SQUARES).filter(k=>SPECIAL_SQUARES[k].kind==='tax').map(Number);
+  const res = {};
+  cos.forEach(c=>{
+    const o = out[c.id], s = sched[c.id];
+    taxPositions.forEach(pos=>{
+      const cost = taxSquareCost(pos, c.id);
+      for(let t=0; t<n; t++){
+        const arr = s.arrive(t);
+        const a = arr ? (arr[pos]||0) : 0;
+        o.taxes += a*cost; o.v += a*(1-a)*cost*cost;
+      }
+    });
+    // Subvention : depuis la position RÉELLE du pion (seule exception à l'angle mort), comme avant.
+    const q = analystPassGoProbability(c.position||0, n - s.j);
+    if(!(c.goAdvancesOwed>0)){ o.subsidy = ANALYST_GO_SUBSIDY*q; o.v += ANALYST_GO_SUBSIDY*ANALYST_GO_SUBSIDY*q*(1-q); }
+    const mort = mortgage[c.id]||0;
+    o.charges += mort;
+    const parts = {subsidy:o.subsidy, rentsIn:o.rentsIn, rentsOut:o.rentsOut, taxes:o.taxes, charges:o.charges, mortgage:mort};
+    res[c.id] = {expected: parts.subsidy + parts.rentsIn - parts.rentsOut - parts.taxes - parts.charges, sigma: Math.sqrt(Math.max(0, o.v)), parts};
+  });
+  return res;
+}
+function analystModeller(co){
+  const all = analystModelAll();
+  return (co && all[co.id]) || {expected:0, sigma:0, parts:{subsidy:0, rentsIn:0, rentsOut:0, taxes:0, charges:0, mortgage:0}};
+}
+
+function analystMarketCap(co){ return (co.stockPrice||0) * (co.totalShares||0); }
+
+// Section 323 — cible (analyste du milieu) et demi-largeur de la zone acceptable.
+function analystTargetAndZone(h, m, k, sigma){
+  const vals = [h, m, k].filter(x=>typeof x==='number' && isFinite(x)).sort((a,b)=>a-b);
+  const target = vals.length===3 ? vals[1] : vals.length===2 ? (vals[0]+vals[1])/2 : vals.length===1 ? vals[0] : 0;
+  return {target, zone: Math.max(ANALYST_ZONE_FLOOR, ANALYST_ZONE_K * (sigma||0))};
+}
+
+// Section 323 — chiffres provisoires de toutes les entreprises actives, recalculés sur l'état courant.
+function analystForecastsLive(){
+  const sem = Math.floor((state.gameClock.rollCount||0)/3);
+  const cos = activeCompanies();
+  const model = analystModelAll();
+  let sumM = 0, sumCap = 0, nCap = 0;
+  cos.forEach(c=>{ sumM += model[c.id].expected; const cap = analystMarketCap(c); sumCap += cap; if(cap>0) nCap++; });
+  // Ronde de corrections (C3) — le marché n'est un deuxième avis qu'avec au moins 2 entreprises actives à capitalisation
+  // positive dans le rendement moyen : avec une seule, K = M exactement (deux « analystes » toujours d'accord).
+  const marketPresent = sumCap>0 && nCap>=ANALYST_MARKET_MIN_COMPANIES;
+  // Ronde finale (R3) : raison de l'absence du marché, gardée avec les chiffres (figée avec eux) pour que l'affichage dise
+  // la vraie : capitalisation du marché pas positive, ou moins de 2 entreprises à capitalisation positive.
+  const kAbsent = marketPresent ? null : (sumCap<=0 ? 'capNotPositive' : 'fewCompanies');
+  const out = {};
+  cos.forEach(c=>{
+    const md = model[c.id];
+    const h = analystHistorian(c, sem);
+    const k = marketPresent ? analystMarketCap(c) * (sumM/sumCap) : null;
+    const tz = analystTargetAndZone(h, md.expected, k, md.sigma);
+    out[c.id] = {semester:sem, h, m:md.expected, k, sigma:md.sigma, target:tz.target, zone:tz.zone, parts:Object.assign({}, md.parts), kAbsent}; // Section 323 (R3) : kAbsent
+  });
+  return out;
+}
+
+// Section 323 — copie propre d'une prévision (null pour un analyste absent, même si le champ a disparu à l'enregistrement).
+function analystNormalizeForecast(f){
+  const num = x => (typeof x==='number' && isFinite(x)) ? x : null;
+  return {semester:f.semester, h:num(f.h), m:num(f.m), k:num(f.k), sigma:num(f.sigma)||0, target:num(f.target)||0, zone:num(f.zone)||0,
+    parts:Object.assign({subsidy:0, rentsIn:0, rentsOut:0, taxes:0, charges:0, mortgage:0}, f.parts||{})};
+}
+
+// Section 323 — ce que l'affichage lit : les chiffres FIGÉS s'ils sont du semestre courant (frozen: true), sinon les
+// chiffres provisoires recalculés maintenant (frozen: false). verdictPossible : un verdict tombera à la clôture de ce
+// semestre (chiffres figés, ou fenêtre du début de semestre encore ouverte) ; false = semestre commencé sans chiffres
+// figés (entreprise créée ou partie migrée en cours de semestre) : pas de verdict à cette clôture.
+function analystForecastFor(co){
+  if(!co) return null;
+  const sem = Math.floor((state.gameClock.rollCount||0)/3);
+  const f = co.analystForecast;
+  if(f && f.semester===sem) return Object.assign(analystNormalizeForecast(f), {frozenAtRoll:f.frozenAtRoll, frozen:true, verdictPossible:true,
+    kAbsent: (f.kAbsent==='capNotPositive' || f.kAbsent==='fewCompanies') ? f.kAbsent : null}); // Section 323 (R3) : null aussi pour une prévision figée avant R3
+  const live = analystForecastsLive()[co.id];
+  if(!live) return null;
+  return Object.assign(live, {frozen:false, verdictPossible: rollsInCurrentSemester()===0});
+}
+
+// Section 323 — au premier déplacement du semestre (appelé au début de l'action du lancer, avant tout déplacement) :
+// fige les chiffres de toutes les entreprises actives dans l'état. Sans effet hors de la fenêtre du début de semestre
+// (lancer déjà joué ce semestre) ou si les chiffres de ce semestre sont déjà figés. Rend true s'il a figé.
+function freezeAnalystForecasts(){
+  if(!state || !state.gameClock || rollsInCurrentSemester()!==0) return false;
+  const sem = Math.floor((state.gameClock.rollCount||0)/3);
+  const cos = activeCompanies();
+  if(cos.length===0 || cos.some(c=>c.analystForecast && c.analystForecast.semester===sem)) return false;
+  const live = analystForecastsLive();
+  cos.forEach(c=>{
+    const L = live[c.id];
+    if(L) c.analystForecast = Object.assign({}, L, {parts:Object.assign({}, L.parts), frozenAtRoll: state.gameClock.rollCount});
+  });
+  return true;
+}
+
+// Section 323 — verdict d'un résultat R contre une prévision : { verdict, beaten, of }. Dans la zone (|R − cible| ≤
+// demi-largeur) : 'zone'. Sinon, sens du côté de la cible ; analystes strictement battus (R > chiffre) : tous ou aucun
+// (avec au moins 2 analystes) = fort, divisés ou un seul analyste = normal.
+function analystVerdict(forecast, actual){
+  const f = analystNormalizeForecast(forecast);
+  const vals = [f.h, f.m, f.k].filter(x=>x!==null);
+  const of = vals.length;
+  const beaten = vals.filter(x=>actual > x).length;
+  if(Math.abs(actual - f.target) <= f.zone) return {verdict:'zone', beaten, of};
+  if(actual > f.target) return {verdict: (of>1 && beaten===of) ? 'strongUp' : 'normalUp', beaten, of};
+  return {verdict: (of>1 && beaten===0) ? 'strongDown' : 'normalDown', beaten, of};
+}
+
+// Section 323 — cubes d'un verdict au sac fondamental : { color, qtyMin, qtyMax }, tirés par injectStockCube à la
+// clôture. Seul endroit où les tailles sont lues (le pari du PDG s'y greffera, d'où `co`). `gap` = bénéfice jugé − cible
+// (ne sert que dans la zone). Hors zone : quantité fixe (qtyMin = qtyMax), 2 (normal) ou 5 (fort). Décision de Julien
+// du 2026-11-17 : dans la zone, 0 ou 1 cube du côté de l'écart (vert au-dessus de la cible, rouge en dessous), rien en
+// cas d'égalité exacte ou de verdict inconnu (avant : la zone ne donnait jamais rien).
+// Section 323 (pari du PDG, contrat section 7) — l'annonce valable pour ce semestre s'y greffe (4e paramètre facultatif
+// `semester` : par défaut, le semestre des chiffres figés de l'entreprise) ; elle ne change que les cubes, jamais le
+// verdict. Avertissement, et seulement sous la zone : fort → taille normale (5 → 2 rouges), normal → tirage de la zone
+// (0 ou 1 rouge). Promesse, et seulement sous la zone : CEO_PROMISE_BROKEN_RED_CUBES rouges de plus. Dans la zone ou
+// au-dessus : rien. Le résultat porte alors `call` ('warning' | 'promise') et `callEffect` (texte, ou null sans effet).
+function analystVerdictCubes(verdict, co, gap, semester){
+  const base = (()=>{ switch(verdict){
+    case 'normalUp':   return {color:'green', qtyMin:ANALYST_VERDICT_NORMAL_CUBES, qtyMax:ANALYST_VERDICT_NORMAL_CUBES};
+    case 'strongUp':   return {color:'green', qtyMin:ANALYST_VERDICT_STRONG_CUBES, qtyMax:ANALYST_VERDICT_STRONG_CUBES};
+    case 'normalDown': return {color:'red', qtyMin:ANALYST_VERDICT_NORMAL_CUBES, qtyMax:ANALYST_VERDICT_NORMAL_CUBES};
+    case 'strongDown': return {color:'red', qtyMin:ANALYST_VERDICT_STRONG_CUBES, qtyMax:ANALYST_VERDICT_STRONG_CUBES};
+    case 'zone':
+      if(gap>0) return {color:'green', qtyMin:ANALYST_ZONE_CUBES_MIN, qtyMax:ANALYST_ZONE_CUBES_MAX};
+      if(gap<0) return {color:'red', qtyMin:ANALYST_ZONE_CUBES_MIN, qtyMax:ANALYST_ZONE_CUBES_MAX};
+      return {color:null, qtyMin:0, qtyMax:0};
+    default:           return {color:null, qtyMin:0, qtyMax:0};
+  } })();
+  const sem = semester!==undefined ? semester : (co && co.analystForecast ? co.analystForecast.semester : null);
+  const call = ceoCallFor(co, sem);
+  if(!call) return base;
+  const out = Object.assign({}, base, {call: call.kind, callEffect: null});
+  const down = verdict==='normalDown' || verdict==='strongDown';
+  if(!down) return out;
+  if(call.kind==='warning'){
+    if(verdict==='strongDown'){
+      out.qtyMin = out.qtyMax = ANALYST_VERDICT_NORMAL_CUBES;
+      out.callEffect = `avertissement du PDG : ${ANALYST_VERDICT_NORMAL_CUBES} cubes rouges au lieu de ${ANALYST_VERDICT_STRONG_CUBES}`;
+    } else {
+      out.qtyMin = ANALYST_ZONE_CUBES_MIN; out.qtyMax = ANALYST_ZONE_CUBES_MAX;
+      out.callEffect = `avertissement du PDG : tirage de la zone, ${ANALYST_ZONE_CUBES_MIN} ou ${ANALYST_ZONE_CUBES_MAX} cube rouge, au lieu de ${ANALYST_VERDICT_NORMAL_CUBES} cubes rouges`;
+    }
+  } else {
+    out.qtyMin += CEO_PROMISE_BROKEN_RED_CUBES; out.qtyMax += CEO_PROMISE_BROKEN_RED_CUBES;
+    out.callEffect = `promesse du PDG non tenue : ${CEO_PROMISE_BROKEN_RED_CUBES} cubes rouges de plus`;
+  }
+  return out;
+}
+
+const ANALYST_VERDICT_LABELS = {
+  zone:'dans la zone', normalUp:'au-dessus de la zone (verdict normal)', strongUp:'au-dessus de la zone (verdict fort)',
+  normalDown:'sous la zone (verdict normal)', strongDown:'sous la zone (verdict fort)',
+};
+
+// Section 323 (ronde de corrections, C1) — intérêts hypothécaires réellement inscrits au compte de résultat `is`, en
+// charge nette signée comme parts.mortgage : payés (emprunteur) moins reçus (entreprise prêteuse).
+function analystMortgageInterestBooked(is){
+  if(!is) return 0;
+  return ((is.expenses && is.expenses.mortgage_interest_expense)||0) - ((is.revenues && is.revenues.mortgage_interest_revenue)||0);
+}
+
+// Section 323 — à la clôture du semestre `semester` (advanceGameClock) : juge le bénéfice net contre les chiffres FIGÉS
+// de ce semestre, ajoute les cubes, une ligne d'historique (40 au plus) et une ligne de journal. Rend la ligne
+// d'historique, ou null sans chiffres figés pour ce semestre (aucun verdict). Appliqué une seule fois : un 2e appel pour
+// le même semestre rend la ligne existante (repeated: true) sans rien ajouter.
+// Ronde de corrections (C1) — bénéfice JUGÉ = bénéfice officiel + (intérêts hypothécaires inscrits ce semestre − ceux
+// figés au premier lancer, parts.mortgage) : rembourser, prendre une hypothèque ou se faire saisir après le gel ne
+// déplace plus le verdict (sur le modèle du rejugement des dividendes de la section 320). L'historique garde les deux :
+// `actual` = officiel (affiché tel quel), `judged` = jugé, `adjust` = écart (0 le plus souvent). Prévision sans
+// parts.mortgage (figée avant cette ronde) : aucun ajustement.
+// Section 323 (pari du PDG) — l'annonce du semestre clos (ceoCallFor) est lue AVANT d'être effacée ; co.ceoCall est remis
+// à null à cette clôture sur tous les chemins (verdict, pas de verdict, verdict déjà appliqué), comme toute annonce
+// périmée d'un semestre plus ancien (partie rechargée) : une annonce ne s'applique jamais à un autre semestre que le sien.
+// Sans verdict (pas de chiffres figés) : l'annonce est effacée sans autre effet que son cube déjà donné.
+function applyAnalystVerdict(co, semester){
+  if(!co) return null;
+  const call = ceoCallFor(co, semester);
+  const dropCall = ()=>{ if(co.ceoCall!==null && co.ceoCall!==undefined && !(co.ceoCall && typeof co.ceoCall.semester==='number' && co.ceoCall.semester>semester)) co.ceoCall = null; };
+  const f = co.analystForecast;
+  if(!f || f.semester!==semester){
+    dropCall();
+    if(call) log(`📣 ${co.name} — l'annonce du PDG (${CEO_CALL_LABELS[call.kind]}) reste sans effet à la clôture : pas de verdict des analystes ce semestre (seul le cube de l'annonce a compté).`);
+    return null;
+  }
+  if(!Array.isArray(co.analystHistory)) co.analystHistory = [];
+  const done = co.analystHistory.find(e=>e && e.semester===semester);
+  if(done){ dropCall(); return Object.assign({repeated:true}, done); }
+  const fc = analystNormalizeForecast(f);
+  const is = incomeStatementFor(co.id, semester);
+  const actual = is.netIncome;
+  const frozenMortgage = f.parts && f.parts.mortgage;
+  let adjust = (typeof frozenMortgage==='number' && isFinite(frozenMortgage)) ? analystMortgageInterestBooked(is) - frozenMortgage : 0;
+  if(Math.abs(adjust)<1e-9) adjust = 0;
+  const judged = actual + adjust;
+  const v = analystVerdict(fc, judged);
+  // Section 323 (décision D2) — cubes tirés dans la fourchette { qtyMin, qtyMax } (dans la zone : 0 ou 1). L'historique
+  // garde la couleur du côté (même si 0 cube est tiré) et la quantité réellement tirée. Une forme { color, qty } (banc
+  // de mesure qui remplace analystVerdictCubes) est encore comprise : qty fixe.
+  // Section 323 (pari du PDG) — l'annonce s'applique dans analystVerdictCubes (semestre passé explicitement) ; qty = total
+  // réellement tiré (verdict et effet de l'annonce ensemble) ; call et callEffect gardés dans l'historique.
+  const cubes = analystVerdictCubes(v.verdict, co, judged - fc.target, semester);
+  const qMin = typeof cubes.qtyMin==='number' ? cubes.qtyMin : (cubes.qty||0), qMax = typeof cubes.qtyMax==='number' ? cubes.qtyMax : (cubes.qty||0);
+  const qty = (cubes.color && qMax>0) ? injectStockCube(co, cubes.color, qMin, qMax) : 0;
+  dropCall();
+  const entry = {semester, h:fc.h, m:fc.m, k:fc.k, target:fc.target, zone:fc.zone, actual, judged, adjust, verdict:v.verdict, beaten:v.beaten, of:v.of, color:cubes.color, qty,
+    call: call ? call.kind : null, callEffect: (call && typeof cubes.callEffect==='string') ? cubes.callEffect : null};
+  co.analystHistory.push(entry);
+  if(co.analystHistory.length>ANALYST_HISTORY_MAX) co.analystHistory.splice(0, co.analystHistory.length-ANALYST_HISTORY_MAX);
+  log(`📊 ${co.name} — analystes : ${analystVerdictLineText(entry, true)}`);
+  return entry;
+}
+
+// ===================================================================================================================
+// Section 323 — pari du PDG (lots 6 et 7, contrat section 7, décisions de Julien du 2026-11-17). Pendant la fenêtre du
+// début de semestre (chiffres des analystes encore provisoires), le PDG d'une entreprise peut faire UNE annonce pour le
+// semestre qui commence : avertissement (1 rouge tout de suite ; à la clôture, sous la zone, verdict adouci d'un cran)
+// ou promesse (1 vert tout de suite ; à la clôture, sous la zone, 3 rouges de plus). Effet de clôture :
+// analystVerdictCubes ; remise à null : applyAnalystVerdict.
+// ===================================================================================================================
+function analystCurrentSemester(){ return Math.floor(((state && state.gameClock && state.gameClock.rollCount)||0)/3); }
+function analystSemesterName(sem){ return `semestre ${(sem%2)+1} de l'année ${Math.floor(sem/2)+1}`; }
+
+// Annonce de l'entreprise valable pour le semestre `semester`, sinon null (aucune, forme illisible, ou annonce d'un autre
+// semestre restée dans l'état : elle ne s'applique jamais ailleurs que dans son semestre).
+function ceoCallFor(co, semester){
+  const c = co && co.ceoCall;
+  if(!c || typeof c!=='object' || typeof semester!=='number' || c.semester!==semester || !CEO_CALL_KINDS.includes(c.kind)) return null;
+  return c;
+}
+
+// Fenêtre des annonces : aucun lancer joué ce semestre ET chiffres des analystes pas encore figés (le gel, au premier
+// déplacement du semestre, la ferme sur tous les chemins : lancer pour tous, lancer d'une entreprise, pion neutre).
+function ceoCallWindowOpen(){
+  if(!state || !state.gameClock || rollsInCurrentSemester()!==0) return false;
+  const sem = analystCurrentSemester();
+  return !activeCompanies().some(c=>c.analystForecast && c.analystForecast.semester===sem);
+}
+
+// null si `playerId` peut faire une annonce pour `co` maintenant, sinon le texte du refus (pour l'écran et pour l'action,
+// qui le revérifie sur l'état frais). « Qui dirige l'entreprise » : co.ceoId === playerId, la règle de myCompany()
+// (annonce d'un dividende, sortie publique du CEO).
+function ceoCallRefusal(co, playerId){
+  if(!co) return 'Entreprise introuvable.';
+  if(state.gameEndedReason) return 'La partie est terminée — plus aucune annonce du PDG n’est possible.';
+  if(!activeCompanies().some(c=>c.id===co.id)) return `${co.name} n’est pas une entreprise active : pas d’annonce du PDG.`;
+  if(!playerId || co.ceoId!==playerId) return `Seul le PDG de ${co.name} peut faire une annonce pour cette entreprise.`;
+  const sem = analystCurrentSemester();
+  const done = ceoCallFor(co, sem);
+  if(done) return `${co.name} a déjà fait son annonce pour ce semestre (${CEO_CALL_LABELS[done.kind]}) — une seule par semestre, sans retour possible.`;
+  // Section 323 — décision de Julien (2026-11-17, « Non le pdg peut ») : une entreprise sous enquête de l'AMF PEUT
+  // annoncer. La revue avait signalé qu'un avertissement y adoucit presque à coup sûr un verdict fort (sous enquête au
+  // gel, le modélisateur vaut 0 mais l'historien et le marché l'ignorent) ; un refus avait été posé, puis retiré à la
+  // demande de Julien : rester sous enquête est un choix (on peut payer pour en sortir), et rien de l'AMF ne change.
+  if(!ceoCallWindowOpen()){
+    const frozen = co.analystForecast && co.analystForecast.semester===sem;
+    if(!frozen) return `Ce semestre n’aura pas de verdict des analystes pour ${co.name} (le semestre a commencé sans ses chiffres) : pas d’annonce possible. Prochaine occasion : au début du semestre suivant, avant le premier lancer.`;
+    return 'Trop tard pour ce semestre : les chiffres des analystes sont publiés depuis le premier lancer. Prochaine occasion : au début du semestre suivant, avant le premier lancer.';
+  }
+  return null;
+}
+
+// Corps de l'action (dans une action synchronisée) : revérifie tout sur l'état frais, donne le cube immédiat au sac
+// fondamental (quantité fixe), pose co.ceoCall et écrit une ligne de journal visible de tous. Rend
+// {ok:true, kind, semester, color, qty} ou {ok:false, error}. Jamais appliquée deux fois : une 2e application (double
+// clic, 2e appareil, rejeu après conflit) trouve l'annonce déjà posée et refuse sans rien changer.
+function ceoCallApply(companyId, kind, playerId){
+  if(!CEO_CALL_KINDS.includes(kind)) return {ok:false, error:'Annonce inconnue : choisir un avertissement ou une promesse.'};
+  const co = companyById(companyId);
+  const refusal = ceoCallRefusal(co, playerId);
+  if(refusal) return {ok:false, error:refusal};
+  const sem = analystCurrentSemester();
+  const color = kind==='warning' ? 'red' : 'green';
+  const n = kind==='warning' ? CEO_WARNING_COST_CUBES : CEO_PROMISE_GAIN_CUBES;
+  const qty = injectStockCube(co, color, n, n);
+  co.ceoCall = {semester: sem, kind, atRoll: state.gameClock.rollCount, playerId};
+  const cubeTxt = `${qty} cube${qty>1?'s':''} ${color==='red'?'rouge':'vert'}${qty>1?'s':''}`;
+  const effect = kind==='warning'
+    ? `à la clôture, si le bénéfice finit sous la zone des analystes, le verdict sera adouci d'un cran (fort : ${ANALYST_VERDICT_NORMAL_CUBES} rouges au lieu de ${ANALYST_VERDICT_STRONG_CUBES} ; normal : tirage de la zone au lieu de ${ANALYST_VERDICT_NORMAL_CUBES} rouges)`
+    : `à la clôture, si le bénéfice finit sous la zone des analystes, ${CEO_PROMISE_BROKEN_RED_CUBES} cubes rouges de plus`;
+  log(`📣 ${co.name} — ${CEO_CALL_LABELS[kind]} du PDG pour le ${analystSemesterName(sem)} : ${cubeTxt} au sac fondamental tout de suite ; ${effect}.`);
+  return {ok:true, kind, semester: sem, color, qty};
+}
+
+// Action synchronisée (attemptActionWithRetry : file, adoptée seulement si enregistrée, idempotence). Le joueur est
+// celui de l'appareil au moment du clic (myPlayerId) ; attemptActionWithRetry refuse aussi si « Vous êtes » change
+// pendant l'enregistrement. opts : passés à attemptActionWithRetry (label, onRetry, maxAttempts).
+function announceCeoCall(companyId, kind, opts){
+  const playerId = myPlayerId;
+  return attemptActionWithRetry(()=>ceoCallApply(companyId, kind, playerId), Object.assign({label: 'Annonce du PDG'}, opts||{}));
+}
 
 
 
@@ -12311,9 +12900,8 @@ const STOCK_TRIGGER_GO_ADVANCE_RED_MIN = 1, STOCK_TRIGGER_GO_ADVANCE_RED_MAX = 2
 
 
 const STOCK_EXPECTATION_HISTORY_MAX = 3; 
-const STOCK_EXPECTATION_STANDARD_MIN = 1, STOCK_EXPECTATION_STANDARD_MAX = 2; 
-const STOCK_EXPECTATION_SIGNIFICANT_MIN = 3, STOCK_EXPECTATION_SIGNIFICANT_MAX = 5; 
-const STOCK_EXPECTATION_REALLY_MISSED_MIN = 6, STOCK_EXPECTATION_REALLY_MISSED_MAX = 8; 
+// Section 323 — paliers STOCK_EXPECTATION_STANDARD / SIGNIFICANT / REALLY_MISSED (1-2, 3-5, 6-8 cubes) retirés :
+// remplacés par ANALYST_VERDICT_NORMAL_CUBES et ANALYST_VERDICT_STRONG_CUBES (verdict des analystes).
 
 
 const STOCK_TRIGGER_NEGATIVE_CASH_MIN = 1, STOCK_TRIGGER_NEGATIVE_CASH_MAX = 2;
@@ -12654,13 +13242,17 @@ function croissanceMarginAxis(percentile, tier){
   return percentile>=50 ? 'bon' : 'mauvais';
 }
 
-const CROISSANCE_ANALYST_TOLERANCE_PCT = 0.05;
-function croissanceAnalystAxis(is, expectation){
-  if(!expectation || !(is.totalRevenue>1e-9)) return null;
-  const devPct = (is.netIncome - expectation.expected) / is.totalRevenue;
-  if(devPct > CROISSANCE_ANALYST_TOLERANCE_PCT) return 'bon';
-  if(devPct < -CROISSANCE_ANALYST_TOLERANCE_PCT) return 'mauvais';
-  return 'neutre';
+// Section 323 — l'axe des analystes (axe 2 de la matrice) suit le verdict des analystes (applyAnalystVerdict, ou son
+// nom de verdict) : au-dessus de la zone = bon, dans la zone = neutre, en dessous = mauvais. Sans chiffre d'affaires ce
+// semestre, ou sans verdict (pas de chiffres figés), aucun axe : le sac type reste inchangé. Avant : bénéfice contre
+// l'historien à ± 5 % du chiffre d'affaires (CROISSANCE_ANALYST_TOLERANCE_PCT, retiré).
+function croissanceAnalystAxis(is, analystResult){
+  if(!analystResult || !(is && is.totalRevenue>1e-9)) return null;
+  const v = typeof analystResult==='string' ? analystResult : analystResult.verdict;
+  if(v==='zone') return 'neutre';
+  if(v==='normalUp' || v==='strongUp') return 'bon';
+  if(v==='normalDown' || v==='strongDown') return 'mauvais';
+  return null;
 }
 
 const CROISSANCE_TYPE_MATRIX = {
@@ -13071,11 +13663,13 @@ function issueNewShares(company, qty){
   
   const base = tradeCubeRange(company, qty, 'red', 'corpActionImpactAccum', company.id); // Section 314 — bogue 67 : budget de l'entreprise
   let cubesInjected = 0;
+  // Section 323 (décision D3 de Julien, 2026-11-17) : les cubes de l'émission (volume et bonus de la section 322) vont
+  // au sac TRADING, comme une vente d'actions ; avant : au sac fondamental. Mêmes couleurs, quantités et règles.
   if(corpActionBonusDue(company, 'issuance', base)){ // Section 322 — une fois par fenêtre, à partir d'une tranche
     const bonus = STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MIN + Math.floor(Math.random()*(STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MAX-STOCK_TRIGGER_SHARE_ISSUANCE_BONUS_MIN+1));
-    cubesInjected += injectStockCube(company, 'red', bonus, bonus);
+    cubesInjected += injectTradingCube(company, 'red', bonus, bonus);
   }
-  if(base) cubesInjected += injectStockCube(company, 'red', base.qtyMin, base.qtyMax);
+  if(base) cubesInjected += injectTradingCube(company, 'red', base.qtyMin, base.qtyMax);
   
   
   
@@ -13108,11 +13702,13 @@ function buybackShares(company, qty){
   
   const base = tradeCubeRange(company, qty, 'green', 'corpActionImpactAccum', company.id); // Section 314 — bogue 67
   let cubesInjected = 0;
+  // Section 323 (décision D3 de Julien, 2026-11-17) : les cubes du rachat (volume et bonus de la section 322) vont au
+  // sac TRADING, comme un achat d'actions ; avant : au sac fondamental. Mêmes couleurs, quantités et règles.
   if(corpActionBonusDue(company, 'buyback', base)){ // Section 322 — une fois par fenêtre, à partir d'une tranche
     const bonus = STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MIN + Math.floor(Math.random()*(STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MAX-STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MIN+1));
-    cubesInjected += injectStockCube(company, 'green', bonus, bonus);
+    cubesInjected += injectTradingCube(company, 'green', bonus, bonus);
   }
-  if(base) cubesInjected += injectStockCube(company, 'green', base.qtyMin, base.qtyMax);
+  if(base) cubesInjected += injectTradingCube(company, 'green', base.qtyMin, base.qtyMax);
   
   const entries = [{label:`${company.name} (rachat de ${fmtShares(qty)} action(s) @ ${fmtPrice(price)})`, amount:-amount}, {label:`Banque (contrepartie du rachat — ${company.name})`, amount}];
   log(`${company.name} rachète ${fmtShares(qty)} action(s) à ${fmtPrice(price)}/part pour ${fmt(amount)} (versé à la banque).`, entries);
@@ -14917,6 +15513,7 @@ async function passGo(companyId){
 // case 10, mais l'effet AMF (enquête, cubes rouges, loyers suspendus) est appliqué par l'appelant APRÈS tous les
 // déplacements du tour, pour que le résultat ne dépende pas de l'ordre de création des entreprises.
 async function corePerformDiceRoll(co, opts){
+  freezeAnalystForecasts(); // Section 323 — quel que soit le chemin du lancer (sans effet si déjà figé ou hors de la fenêtre)
   const d1 = 1 + Math.floor(Math.random()*6);
   const d2 = 1 + Math.floor(Math.random()*6);
   const total = d1 + d2;
@@ -14988,6 +15585,7 @@ async function corePerformDiceRoll(co, opts){
 }
 
 async function corePerformNeutralPawnRoll(pawn){
+  freezeAnalystForecasts(); // Section 323 — idem pour un pion neutre
   const d1 = 1 + Math.floor(Math.random()*6);
   const d2 = 1 + Math.floor(Math.random()*6);
   const total = d1 + d2;
@@ -15111,20 +15709,23 @@ async function rollDiceAndMove(companyId){
     
     
     if(co.inJail) return {ok:false, error:`${co.name} est enquêtée par l'AMF — laissez l'enquête se poursuivre ou concluez un règlement avant de relancer les dés.`};
-    
-    
+
     const portfolioSnap = snapshotPlayerBondsAndLoans();
-    
-    
-    
+
+
+
     maybeResolveTerrainLotAuction();
-    
-    
+
+
     maybeResolveEtfAuctions();
-    
-    
-    
+
+
+
     maybeResolveRevenueSwapListings();
+    // Section 323 (ronde de corrections, C2) — premier déplacement du semestre : chiffres des analystes figés APRÈS les
+    // enchères résolues à ce lancer (un ABS ou une part de REIT attribués ici entrent dans les chiffres) et avant tout
+    // déplacement, dans la même action.
+    freezeAnalystForecasts();
     const localResult = await corePerformDiceRoll(co);
     
     
@@ -15218,16 +15819,19 @@ async function performRollForAllCompanies(opts){
     const alreadyJailedPawnsBeforeThisTurn = (state.neutralPawns||[]).filter(pw=>pw.inJail);
     const pawnRollers = (state.neutralPawns||[]).filter(pw=>!pw.inJail);
     if(rollers.length===0 && alreadyJailedBeforeThisTurn.length===0 && pawnRollers.length===0 && alreadyJailedPawnsBeforeThisTurn.length===0){ return {ok:false, error:"Aucune entreprise active pour lancer les dés."}; }
-    
-    
+
+
     const portfolioSnap = snapshotPlayerBondsAndLoans();
-    
-    
+
+
     maybeResolveTerrainLotAuction();
-    
+
     maybeResolveEtfAuctions();
-    
+
     maybeResolveRevenueSwapListings();
+    // Section 323 (ronde de corrections, C2) — premier déplacement du semestre : chiffres des analystes figés APRÈS les
+    // enchères résolues à ce lancer et avant tout déplacement, même si toutes les entreprises sont sous enquête.
+    freezeAnalystForecasts();
     const localResults = [];
     for(const co of rollers){
       const r = await corePerformDiceRoll(co, {deferJail:true}); // Section 315 — bogue 69
@@ -15545,6 +16149,15 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
   
   
   
+  // Section 323 — à la clôture d'un semestre (ce lancer était le dernier du semestre), le verdict des analystes de cette
+  // entreprise, lu dans la dernière ligne de co.analystHistory (rien sans chiffres figés : pas de verdict ce semestre).
+  const closedSemesterForAnalysts = ((roll+1)%3===0) ? Math.floor(roll/3) : null;
+  const analystClosedEntry = closedSemesterForAnalysts!==null ? (co.analystHistory||[]).find(e=>e && e.semester===closedSemesterForAnalysts) : null;
+  const analystVerdictSectionHtml = analystClosedEntry ? `
+    <div class="small" style="margin-top:8px;">📊 <b>Analystes, fin de semestre :</b> ${analystVerdictLineText(analystClosedEntry)}</div>` : '';
+  // Section 323 (pari du PDG) — encadré seulement quand ce lancer a clos un semestre et que le semestre qui commence est encore le
+  // semestre en cours (une fenêtre revue bien plus tard ne propose plus rien) ; jamais pour une entreprise qu'on ne dirige pas.
+  const ceoCallBoxPopupHtml = (closedSemesterForAnalysts!==null && analystCurrentSemester()===closedSemesterForAnalysts+1) ? ceoCallBoxHtml(co, 'pop') : '';
   const preferredSectionHtml = (co.preferredDividendDueThisYear || co.preferredDividendArrears>0) ? `
     <div class="section-title" style="margin-top:16px;">🎫 Parts privilégiées</div>
     <table>
@@ -15556,11 +16169,18 @@ function showDiceRollTurnPopup(co, roll, skippedRolls){
     ${skippedRolls>0 ? `<div class="small" style="margin-bottom:8px;">${skippedRolls} autre(s) lancer(s) ont eu lieu pendant qu'une fenêtre était ouverte sur cet appareil : leur détail est au journal.</div>` : ''}
     ${portefeuilleSectionHtml}
     ${entrepriseSectionHtml}
+    ${analystVerdictSectionHtml}
+    ${ceoCallBoxPopupHtml}
     ${terrainLotSectionHtml}
     ${etfSectionHtml}
     ${preferredSectionHtml}
     <div class="modal-actions"><button class="btn btn-primary" id="mRentTurnOk">OK</button></div>
   `);
+  // Section 323 (pari du PDG) : après l'annonce, la fenêtre se rouvre à jour. Ronde finale (R5) : l'entreprise est relue
+  // par son identifiant au moment de rouvrir ; l'objet `co` capturé ici peut être périmé si l'état a été remplacé entre-temps
+  // (adoption de l'état enregistré ou d'un autre appareil), et la fenêtre aurait remontré les boutons d'une annonce déjà faite.
+  const ceoCallCoId = co.id;
+  bindCeoCallBox('pop', co, ()=>{ const fresh = companyById(ceoCallCoId); if(fresh) showDiceRollTurnPopup(fresh, roll); });
   const btn = document.getElementById('mRentTurnOk');
   if(btn) btn.addEventListener('click', closeModal);
   const payPreferredDueBtn = document.getElementById('mPopupPayPreferredDue');
@@ -17038,7 +17658,8 @@ function rentSwapBudgetSideExhausted(s, sideIsA){
   if(!s.budgetMode) return false;
   return sideIsA ? (s.disbursedB||0) >= (s.budgetCapB||0) - 1e-9 : (s.disbursedA||0) >= (s.budgetCapA||0) - 1e-9;
 }
-function swapSplit(propId, ownerId, visitorId, cutAmount){
+// Section 323 — opts.dryRun : même partage, sans consommer le budget d'un swap à budget ni le clore (modélisateur des analystes).
+function swapSplit(propId, ownerId, visitorId, cutAmount, opts){
   const isActive = s => s.budgetMode || s.yearsRemaining>0;
   const specificMatch = s => isActive(s) &&
     ((!s.generalA && samePropertyOrLot(s.propA,propId) && s.companyA===ownerId) ||
@@ -17076,8 +17697,9 @@ function swapSplit(propId, ownerId, visitorId, cutAmount){
     const remaining = Math.max(0, totalCap - swap[disbursedKey]);
     let toPartner = perEventCap!=null ? Math.min(cutAmount, perEventCap) : cutAmount;
     toPartner = Math.min(toPartner, remaining);
-    swap[disbursedKey] += toPartner;
     const toOwner = cutAmount - toPartner;
+    if(opts && opts.dryRun) return {toOwner, toPartner, partnerId}; // Section 323
+    swap[disbursedKey] += toPartner;
     
     
     
@@ -18691,56 +19313,219 @@ function svgLineChart(series, fmtFn){
 
 
 
-function expectationVsActualChartHtml(company, periods){
-  const data = periods.map(p=>{
-    const is = incomeStatementFor(company.id, p.semesterIndex);
-    const expectation = companyExpectedNetIncome(company, p.semesterIndex);
-    const estimate = expectation ? expectation.expected : null;
-    const actual = p.isCurrent ? null : is.netIncome;
-    const tier = p.isCurrent ? null : netIncomeExpectationTier(is, expectation);
-    return {label: p.label, isCurrent: p.isCurrent, estimate, actual, tier};
-  });
-  const allVals = data.flatMap(d=>[d.estimate, d.actual]).filter(v=>v!==null && v!==undefined);
-  if(allVals.length===0){
-    return `<div class="small">Pas encore assez d'historique pour comparer les attentes des analystes aux résultats réels.</div>`;
+// Section 323 — textes et couleurs communs de l'affichage des analystes (rien n'est calculé ici : on lit
+// analystForecastFor(co), co.analystHistory et les constantes du moteur).
+// Ronde de corrections (A2) : un seul signe moins (U+2212) dans le bloc, le graphique, le journal et la ligne du résumé ;
+// un montant qui s'affiche nul s'écrit « 0 », sans signe.
+const ANALYST_MINUS = '\u2212';
+function analystIsZero(v){ const a = Math.abs(Number(v)||0); return a<1 && Math.round(a*1000)===0; }
+function analystMoney(v){ v = Number(v)||0; return analystIsZero(v) ? '0' : (v<0 ? ANALYST_MINUS : '') + fmt(Math.abs(v)); }
+function analystSigned(v){ v = Number(v)||0; return analystIsZero(v) ? '0' : (v<0 ? ANALYST_MINUS : '+') + fmt(Math.abs(v)); }
+function analystMoneyColor(v){ return analystIsZero(v) ? '#64748b' : v<0 ? 'var(--brick)' : '#047857'; }
+function analystCubesPhrase(n){ return n + ' cube' + (n>1?'s':''); }
+function analystVerdictColor(verdict){
+  return (verdict==='normalUp'||verdict==='strongUp') ? '#047857' : (verdict==='normalDown'||verdict==='strongDown') ? 'var(--brick)' : '#64748b';
+}
+// Ronde de corrections (A6) : bénéfice jugé d'une ligne d'historique (le bénéfice officiel pour une ligne sans `judged`),
+// et la courte explication quand il diffère du bénéfice officiel (intérêts hypothécaires rejugés, applyAnalystVerdict).
+function analystJudgedOf(e){ return (e && typeof e.judged==='number' && isFinite(e.judged)) ? e.judged : e.actual; }
+function analystJudgedNote(e){
+  const adj = analystJudgedOf(e) - e.actual;
+  if(!(Math.abs(adj)>1e-9)) return '';
+  return `bénéfice jugé ${analystSigned(analystJudgedOf(e))} : intérêts hypothécaires de fin d'année comptés tels que prévus au premier lancer du semestre, ajustement de ${analystSigned(adj)}`;
+}
+// Une ligne d'historique en clair : « bénéfice net … (bénéfice jugé … : …) contre une cible de … (zone de … à …) :
+// verdict, N battus sur M — cubes ». plain = texte brut (journal), sinon échappé pour le HTML.
+// Décision D2 : dans la zone, « dans la zone — 1 cube vert au sac fondamental » ou « dans la zone — aucun cube » (le
+// nombre d'analystes battus n'y joue aucun rôle, il n'est pas écrit).
+function analystCubesText(e){
+  return (e.qty>0 && e.color) ? analystCubesPhrase(e.qty) + ' ' + (e.color==='green'?'vert':'rouge') + (e.qty>1?'s':'') : 'aucun cube';
+}
+function analystBeatenText(e, sep){
+  return e.verdict==='zone' ? '' : `${sep}${e.beaten} analyste${e.beaten>1?'s':''} battu${e.beaten>1?'s':''} sur ${e.of}`;
+}
+// Section 323 (pari du PDG) — ce que l'annonce a changé aux cubes de cette ligne d'historique, en clair ('' sans annonce).
+// Les cubes affichés (qty) sont déjà le total réellement tiré, effet de l'annonce compris.
+function analystCallText(e){
+  if(!e || (e.call!=='warning' && e.call!=='promise')) return '';
+  if(typeof e.callEffect==='string' && e.callEffect) return e.callEffect;
+  return e.call==='promise' ? 'promesse du PDG tenue' : 'avertissement du PDG sans effet : bénéfice pas sous la zone';
+}
+function analystVerdictLineText(e, plain){
+  const q = plain ? (s => String(s)) : esc;
+  const lo = e.target - e.zone, hi = e.target + e.zone;
+  const label = ANALYST_VERDICT_LABELS[e.verdict] || e.verdict;
+  const callTxt = analystCallText(e); // Section 323 (pari du PDG)
+  const cubes = analystCubesText(e) + ((e.qty>0 && e.color) ? ' au sac fondamental' : '') + (callTxt ? ` (${q(callTxt)})` : '');
+  const note = analystJudgedNote(e);
+  return `bénéfice net ${q(analystSigned(e.actual))}${note ? ` (${q(note)})` : ''} contre une cible de ${q(analystSigned(e.target))} (zone de ${q(analystSigned(lo))} à ${q(analystSigned(hi))}) : ${q(label)}${analystBeatenText(e, ', ')} — ${cubes}.`;
+}
+
+// Section 323 — bloc « Attentes des analystes (ce semestre) » de l'onglet Entreprise : les trois analystes, la cible, la
+// zone acceptable, le détail du modélisateur, l'état (provisoire / publié / pas de verdict) et le rappel de la règle.
+function analystExpectationBlockHtml(co){
+  const f = analystForecastFor(co);
+  if(!f) return `<span class="small">Pas d'attente des analystes pour cette entreprise.</span>`;
+  const cell = v => v===null ? `<td class="small">absent</td>` : `<td class="money" style="font-weight:700;color:${analystMoneyColor(v)};">${esc(analystSigned(v))}</td>`;
+  const hWhy = f.h===null
+    ? `l'entreprise n'a pas encore ${ANALYST_HISTORIAN_MIN_SEMESTERS} semestres clos`
+    : 'moyenne des derniers semestres clos (3 au plus)';
+  // Ronde finale (R3) : la vraie raison de l'absence du marché, lue dans les chiffres (kAbsent) ; avant : toujours « la
+  // capitalisation du marché n'est pas positive », faux avec une seule entreprise à capitalisation positive.
+  const kWhy = f.k!==null ? "ce que le cours de l'action exige, au rendement moyen du marché"
+    : f.kAbsent==='fewCompanies' ? `moins de ${ANALYST_MARKET_MIN_COMPANIES} entreprises à capitalisation positive : pas de deuxième avis`
+    : f.kAbsent==='capNotPositive' ? `la capitalisation du marché n'est pas positive`
+    : `absent au moment de la publication des chiffres`;
+  const p = f.parts;
+  const lo = f.target - f.zone, hi = f.target + f.zone;
+  // Ronde de corrections (A1) : le libellé de la cible suit le nombre d'analystes présents (médiane, milieu, seul chiffre).
+  const present = [f.h, f.m, f.k].filter(x=>x!==null).length;
+  const targetWhy = present>=3 ? "l'analyste du milieu" : present===2 ? 'le milieu entre les deux analystes présents' : 'le chiffre du seul analyste présent';
+  // Ronde de corrections (A4) : partie terminée, plus de lancer : ni « provisoires jusqu'au premier lancer », ni verdict.
+  const state_ = state.gameEndedReason
+    ? (f.frozen ? "Chiffres publiés, mais la partie est terminée : ce semestre ne sera pas clos, pas de verdict." : "Partie terminée : plus aucun lancer, ces chiffres ne seront pas publiés.")
+    : !f.verdictPossible
+    ? "Pas de verdict ce semestre : les chiffres n'ont pas été publiés au début du semestre."
+    : (f.frozen ? 'Chiffres publiés.' : 'Chiffres provisoires : ils bougent jusqu\'au premier lancer du semestre.');
+  // Ronde de corrections (A3) : chaque poste avec son effet sur le bénéfice (les intérêts et charges peuvent être un
+  // revenu net pour un prêteur ou un porteur d'ABS) ; intérêts hypothécaires de fin d'année signalés (rejugés à la clôture).
+  const mort = Number(p.mortgage)||0;
+  const mortNote = analystIsZero(mort) ? '' : ` (dont intérêts hypothécaires de fin d'année ${analystSigned(-mort)}, comptés tels que prévus ici au verdict)`;
+  return `<table>
+      <tr><td style="font-weight:600;">Historien</td>${cell(f.h)}<td class="small">${esc(hWhy)}</td></tr>
+      <tr><td style="font-weight:600;">Modélisateur</td>${cell(f.m)}<td class="small">ce que le parc devrait rapporter en 3 lancers</td></tr>
+      <tr><td style="font-weight:600;">Marché</td>${cell(f.k)}<td class="small">${esc(kWhy)}</td></tr>
+    </table>
+    <div style="margin:6px 0 2px;"><b>Cible</b> (${esc(targetWhy)}) : <span class="money" style="font-weight:700;color:${analystMoneyColor(f.target)};">${esc(analystSigned(f.target))}</span> — zone acceptable de <span class="money">${esc(analystSigned(lo))}</span> à <span class="money">${esc(analystSigned(hi))}</span></div>
+    <div class="small">Détail du modélisateur : subvention de départ ${esc(analystSigned(p.subsidy))}, loyers reçus ${esc(analystSigned(p.rentsIn))}, loyers payés ${esc(analystSigned(-p.rentsOut))}, taxes ${esc(analystSigned(-p.taxes))}, intérêts et charges ${esc(analystSigned(-p.charges))}${esc(mortNote)}.</div>
+    <div class="small" style="margin-top:4px;font-weight:600;">${esc(state_)}</div>
+    ${ceoCallPublicLineHtml(co)}
+    <div class="small" style="margin-top:4px;">À la clôture : dans la zone, ${ANALYST_ZONE_CUBES_MIN} ou ${ANALYST_ZONE_CUBES_MAX} cube du côté de l'écart (vert au-dessus de la cible, rouge en dessous). Hors de la zone, des analystes divisés donnent un verdict normal (${analystCubesPhrase(ANALYST_VERDICT_NORMAL_CUBES)}), des analystes tous du même avis un verdict fort (${analystCubesPhrase(ANALYST_VERDICT_STRONG_CUBES)}) : cubes verts au-dessus de la zone, rouges en dessous, au sac fondamental.</div>`;
+}
+
+// ===================================================================================================================
+// Section 323 (lot 7) — interface du pari du PDG (contrat section 7.3). Un seul encadré, fabriqué par ceoCallBoxHtml,
+// placé dans la fenêtre « Résultats du tour » (place 'pop') et dans l'onglet Entreprise sous les attentes des analystes
+// (place 'ent'). Le moteur (ceoCallRefusal, announceCeoCall) décide de tout ; ici on affiche, on confirme et on appelle.
+// Tous les nombres viennent des constantes du moteur.
+// ===================================================================================================================
+function ceoCubesText(n, color){ return `${n} cube${n>1?'s':''} ${color==='red'?'rouge':'vert'}${n>1?'s':''}`; }
+// Effet immédiat, au sac fondamental, de chaque geste.
+function ceoCallNowText(kind){
+  return kind==='warning'
+    ? `coûte tout de suite ${ceoCubesText(CEO_WARNING_COST_CUBES, 'red')} au sac fondamental`
+    : `donne tout de suite ${ceoCubesText(CEO_PROMISE_GAIN_CUBES, 'green')} au sac fondamental`;
+}
+// Section 323 (ronde finale, R6) — le même effet, sans verbe ni « tout de suite » : pour la confirmation, déjà titrée
+// « Tout de suite : » (avant : « Tout de suite : donne tout de suite 1 cube vert… »).
+function ceoCallNowCubesText(kind){
+  return kind==='warning'
+    ? `${ceoCubesText(CEO_WARNING_COST_CUBES, 'red')} au sac fondamental`
+    : `${ceoCubesText(CEO_PROMISE_GAIN_CUBES, 'green')} au sac fondamental`;
+}
+// Effet à la clôture du semestre (lu dans analystVerdictCubes) : phrase complète.
+function ceoCallLaterText(kind){
+  return kind==='warning'
+    ? `Si le bénéfice finit sous la zone, le verdict est adouci d'un cran : un verdict fort passe de ${ANALYST_VERDICT_STRONG_CUBES} à ${ANALYST_VERDICT_NORMAL_CUBES} cubes rouges, un verdict normal de ${ANALYST_VERDICT_NORMAL_CUBES} cubes rouges à un tirage de ${ANALYST_ZONE_CUBES_MIN} ou ${ANALYST_ZONE_CUBES_MAX} cube rouge.`
+    : `Si le bénéfice finit sous la zone, ${ceoCubesText(CEO_PROMISE_BROKEN_RED_CUBES, 'red')} s'ajoutent au verdict ; dans la zone ou au-dessus, la promesse est tenue : rien de plus.`;
+}
+// Ligne visible de tous dans le bloc des attentes des analystes : l'annonce du semestre en cours, s'il y en a une.
+function ceoCallPublicLineHtml(co){
+  const call = ceoCallFor(co, analystCurrentSemester());
+  if(!call) return '';
+  return `<div class="small" style="margin-top:4px;" data-ceo-call-public="${esc(call.kind)}">📣 Annonce du PDG pour ce semestre : <b>${esc(CEO_CALL_LABELS[call.kind])}</b> (${esc(ceoCallNowText(call.kind))}). ${esc(ceoCallLaterText(call.kind))}</div>`;
+}
+// L'encadré. co = l'entreprise ; place = 'pop' (fenêtre du tour) ou 'ent' (onglet Entreprise) : préfixe des identifiants.
+// Rien du tout si le joueur de l'appareil ne dirige pas `co`.
+function ceoCallBoxHtml(co, place){
+  const me = myCompany();
+  if(!co || !me || me.id!==co.id) return '';
+  const sem = analystCurrentSemester();
+  const box = inner => `<div id="${place}CeoCallBox" style="margin-top:12px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:6px;"><div style="font-weight:600;">📣 Annonce du PDG pour le semestre qui commence</div>${inner}</div>`;
+  const done = ceoCallFor(co, sem);
+  if(done){
+    const cubes = done.kind==='warning' ? `${ceoCubesText(CEO_WARNING_COST_CUBES, 'red')} ajouté au sac fondamental` : `${ceoCubesText(CEO_PROMISE_GAIN_CUBES, 'green')} reçu au sac fondamental`;
+    return box(`<div class="small" style="margin-top:4px;">Annonce faite pour ce semestre : ${esc(CEO_CALL_LABELS[done.kind])} — ${esc(cubes)}.</div><div class="small" style="margin-top:4px;">${esc(ceoCallLaterText(done.kind))}</div>`);
   }
+  const refusal = ceoCallRefusal(co, myPlayerId);
+  if(refusal) return box(`<div class="small" style="margin-top:4px;">${esc(refusal)}</div>`);
+  const f = analystForecastFor(co);
+  const targetLine = f ? `<div class="small" style="margin-top:4px;">Cible provisoire des analystes : <span class="money" style="font-weight:700;">${esc(analystSigned(f.target))}</span> — zone acceptable de <span class="money">${esc(analystSigned(f.target - f.zone))}</span> à <span class="money">${esc(analystSigned(f.target + f.zone))}</span>.</div>` : '';
+  const geste = (kind, btnClass, btnLabel) => `<div style="margin-top:8px;"><button type="button" class="btn ${btnClass} btn-sm" id="${place}Ceo${kind==='warning'?'Warning':'Promise'}Btn" style="max-width:100%;white-space:normal;">${esc(btnLabel)}</button><div class="small" style="margin-top:3px;"><b>${esc(CEO_CALL_LABELS[kind].replace(/^./, c=>c.toUpperCase()))}</b> : ${esc(ceoCallNowText(kind))}. ${esc(ceoCallLaterText(kind))}</div></div>`;
+  return box(`${targetLine}
+    <div class="small" style="margin-top:4px;">Une seule annonce par semestre, sans retour possible, avant le premier lancer du semestre.</div>
+    ${geste('warning', 'btn-brick', 'Faire un avertissement')}
+    ${geste('promise', 'btn-pale-success', 'Faire une promesse')}
+    <div class="small" style="margin-top:8px;">Ne rien annoncer : rien ne change.</div>`);
+}
+// Fenêtre de confirmation (confirmWithFreshConditions, section 308) : les conditions sont revérifiées au clic sur
+// « Annoncer » ; le moteur (announceCeoCall) revérifie tout une dernière fois dans l'action synchronisée.
+let ceoCallBusy = false;
+function openCeoCallConfirm(companyId, kind, afterDone){
+  if(!CEO_CALL_KINDS.includes(kind)) return;
+  const label = CEO_CALL_LABELS[kind];
+  return confirmWithFreshConditions({
+    title: `Annonce du PDG — ${label}`,
+    compute: ()=>{
+      const co = companyById(companyId);
+      const refusal = ceoCallRefusal(co, myPlayerId);
+      return refusal ? {unavailable: refusal} : {kind, semester: analystCurrentSemester(), name: co.name};
+    },
+    describe: c=>`<div class="small" style="margin-bottom:8px;">${esc(c.name)} : vous allez faire un${kind==='promise'?'e':''} <b>${esc(label)}</b> pour le ${esc(analystSemesterName(c.semester))}.</div>
+      <div class="small" style="margin-bottom:6px;"><b>Tout de suite :</b> ${esc(ceoCallNowCubesText(kind))}.</div><!-- Section 323 (R6) : sans « tout de suite » répété -->
+      <div class="small" style="margin-bottom:6px;"><b>À la clôture du semestre :</b> ${esc(ceoCallLaterText(kind))}</div>
+      <div class="small" style="margin-bottom:6px;color:var(--brick);font-weight:600;">⚠️ Sans retour possible : une seule annonce par semestre, le cube est donné tout de suite et ne peut pas être repris.</div>`,
+    okLabel: ()=>`Annoncer : ${label}`,
+    run: async ()=>{
+      if(ceoCallBusy) return {ok:false, error:null}; // double clic : un seul appel au moteur
+      ceoCallBusy = true;
+      try{ return await announceCeoCall(companyId, kind); }
+      finally{ ceoCallBusy = false; }
+    },
+    onDone: ()=>{ renderPreservingForms(); if(typeof afterDone==='function') afterDone(); },
+  });
+}
+// Branche les deux boutons de l'encadré (s'ils sont là). afterDone : redessin propre à l'endroit (ex. rouvrir la fenêtre du tour).
+// Ronde finale (R5) : seul l'identifiant de l'entreprise est gardé (l'objet peut être remplacé avant le clic) ; la
+// confirmation et le moteur relisent l'entreprise par cet identifiant.
+function bindCeoCallBox(place, co, afterDone){
+  if(!co) return;
+  const companyId = co.id;
+  [['Warning','warning'], ['Promise','promise']].forEach(([id, kind])=>{
+    const b = document.getElementById(`${place}Ceo${id}Btn`);
+    if(b) b.addEventListener('click', ()=>openCeoCallConfirm(companyId, kind, afterDone));
+  });
+}
+
+/// Section 323 — graphique « cible et résultat réel ». Ronde de corrections (A5) : une colonne par période choisie par
+// l'écran (`periods`, comme les états voisins, avec leurs libellés) ; avant, tout co.analystHistory (jusqu'à 40
+// colonnes) quel que soit le choix. Par période, lu dans co.analystHistory : bande de la zone, cible, bénéfice jugé
+// (point plein) et, s'il diffère (A6), bénéfice officiel (cercle creux), verdict en clair. Période en cours : cible et
+// zone de analystForecastFor (provisoires ou publiées), sans point. Période sans ligne d'historique (avant la section
+// 323, ou sans chiffres figés) : « pas de verdict », rien n'est inventé. Sans `periods` : les semestres de l'historique.
+function expectationVsActualChartHtml(company, periods){
+  const hist = (Array.isArray(company.analystHistory) ? company.analystHistory : []).filter(e=>e && typeof e.actual==='number' && typeof e.target==='number');
+  const bySemester = new Map();
+  hist.forEach(e=>bySemester.set(e.semester, e));
+  const cols = (Array.isArray(periods) && periods.length>0)
+    ? periods.map(p=>{
+        const e = bySemester.get(p.semesterIndex) || null;
+        let cur = null;
+        if(!e && p.isCurrent && !state.gameEndedReason){ const f = analystForecastFor(company); if(f && f.verdictPossible) cur = f; }
+        return {label:p.label, e, cur};
+      })
+    : hist.slice().sort((a,b)=>a.semester-b.semester).map(e=>({label:'Semestre ' + (e.semester+1), e, cur:null}));
+  if(!cols.some(c=>c.e)){
+    return `<div class="small">Pas encore de semestre jugé par les analystes.</div>`;
+  }
+  const data = cols.map(c=>{
+    const src = c.e || c.cur;
+    if(!src) return Object.assign(c, {has:false});
+    return Object.assign(c, {has:true, target:src.target, lo:src.target-src.zone, hi:src.target+src.zone, judged: c.e ? analystJudgedOf(c.e) : null});
+  });
+  const anyAdjusted = data.some(d=>d.e && Math.abs(d.judged - d.e.actual)>1e-9);
   const n = data.length;
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
+  const allVals = data.filter(d=>d.has).flatMap(d=>[d.lo, d.hi, d.target].concat(d.e ? [d.judged, d.e.actual] : []));
   const COL_POSTE_WIDTH = 220, COL_DATA_WIDTH = 140;
   const height = 274, padL = COL_POSTE_WIDTH, padR = 20, padT = 30, padB = 88;
   const width = padL + n*COL_DATA_WIDTH, plotH = height-padT-padB;
@@ -18748,74 +19533,70 @@ function expectationVsActualChartHtml(company, periods){
   const rangeY = dataMaxY-dataMinY;
   const padY = rangeY>1e-9 ? rangeY*0.15 : Math.max(Math.abs(dataMaxY)*0.15, 1);
   const minY = dataMinY-padY, maxY = dataMaxY+padY;
-  const xAt = i => padL + i*COL_DATA_WIDTH + COL_DATA_WIDTH/2; 
+  const xAt = i => padL + i*COL_DATA_WIDTH + COL_DATA_WIDTH/2;
   const yAt = v => padT + plotH - (maxY>minY ? (v-minY)/(maxY-minY) : 0.5)*plotH;
   const gridN = 4;
   const grid = Array.from({length:gridN+1}, (_,i)=>{
     const gy = padT + plotH - (i/gridN)*plotH;
     const val = minY + (i/gridN)*(maxY-minY);
-    
-    
-    
     return `<line x1="${padL}" x2="${width-padR}" y1="${gy}" y2="${gy}" stroke="var(--line)" stroke-width="1" opacity="0.5"/>
-      <text x="8" y="${gy+4}" text-anchor="start" class="tv-chart-axis">${esc(fmt(val))}</text>`;
+      <text x="8" y="${gy+4}" text-anchor="start" class="tv-chart-axis">${esc(analystMoney(val))}</text>`;
   }).join('');
-  
-  
-  const tierColor = t => (t==='sigBeat'||t==='beat') ? '#047857' : (t==='sigMiss'||t==='miss'||t==='reallyMiss') ? 'var(--brick)' : '#64748b';
-  
-  
-  
-  
-  
-  
-  const tierWord = t => (t==='sigBeat'||t==='beat') ? 'Battu' : (t==='sigMiss'||t==='miss'||t==='reallyMiss') ? 'Manqué' : t==='flat' ? '= attendu' : null;
-  
-  
-  const currentIdx = data.findIndex(d=>d.isCurrent);
-  const step = COL_DATA_WIDTH; 
-  const todayDivider = (currentIdx>0) ? `
-    <line x1="${xAt(currentIdx)-step/2}" x2="${xAt(currentIdx)-step/2}" y1="${padT}" y2="${padT+plotH}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 4"/>` : '';
+  const wordOf = d => !d.has ? 'Pas de verdict' : d.cur ? 'En cours' : d.e.verdict==='zone' ? 'Dans la zone' : (d.e.verdict==='normalUp'||d.e.verdict==='strongUp') ? 'Au-dessus' : 'Sous la zone';
+  const strengthOf = d => d.cur ? (d.cur.frozen ? 'chiffres publiés' : 'provisoire') : (!d.e || d.e.verdict==='zone') ? '' : (d.e.verdict==='strongUp'||d.e.verdict==='strongDown') ? 'verdict fort' : 'verdict normal';
   const points = data.map((d,i)=>{
-    const x = xAt(i);
-    let dots = '';
-    if(d.estimate!==null) dots += `<circle cx="${x}" cy="${yAt(d.estimate)}" r="7" fill="var(--paper)" stroke="#64748b" stroke-width="2.5"/>`;
-    if(d.actual!==null){
-      const c = tierColor(d.tier);
-      if(d.estimate!==null) dots += `<line x1="${x}" x2="${x}" y1="${yAt(d.estimate)}" y2="${yAt(d.actual)}" stroke="${c}" stroke-width="1" stroke-dasharray="2 3" opacity="0.6"/>`;
-      dots += `<circle cx="${x}" cy="${yAt(d.actual)}" r="7" fill="${c}" stroke="var(--paper)" stroke-width="1.5"/>`;
+    const x = xAt(i), c = d.e ? analystVerdictColor(d.e.verdict) : '#64748b';
+    let marks = '';
+    if(d.has){
+      const bandY = yAt(d.hi), bandH = Math.max(2, yAt(d.lo)-yAt(d.hi));
+      marks += `<rect x="${x-34}" y="${bandY}" width="68" height="${bandH}" fill="#64748b" opacity="0.16" rx="3"/>`;
+      marks += `<line x1="${x-34}" x2="${x+34}" y1="${yAt(d.target)}" y2="${yAt(d.target)}" stroke="#64748b" stroke-width="2.5"${d.cur ? ' stroke-dasharray="5 4"' : ''}/>`;
     }
-    const word = tierWord(d.tier);
-    const delta = (d.actual!==null && d.estimate!==null) ? d.actual-d.estimate : null;
-    const wordLine = d.isCurrent
-      ? `<text x="${x}" y="${height-padB+16}" text-anchor="middle" class="small" font-style="italic">en cours</text>`
-      : (word ? `<text x="${x}" y="${height-padB+16}" text-anchor="middle" font-weight="700" fill="${tierColor(d.tier)}" font-size="12">${esc(word)}</text>` : '');
-    const deltaLine = (delta!==null) ? `<text x="${x}" y="${height-padB+31}" text-anchor="middle" fill="${tierColor(d.tier)}" font-size="12" font-weight="600">${delta>=0?'+':''}${esc(fmt(delta))}</text>` : '';
-    
-    
-    
-    
+    if(d.e){
+      if(Math.abs(d.judged - d.e.actual)>1e-9) marks += `<circle cx="${x}" cy="${yAt(d.e.actual)}" r="6" fill="none" stroke="${c}" stroke-width="2"/>`;
+      marks += `<circle cx="${x}" cy="${yAt(d.judged)}" r="7" fill="${c}" stroke="var(--paper)" stroke-width="1.5"/>`;
+    }
+    const wordLine = `<text x="${x}" y="${height-padB+16}" text-anchor="middle" font-weight="700" fill="${c}" font-size="12">${esc(wordOf(d))}</text>`;
+    const strongLine = strengthOf(d) ? `<text x="${x}" y="${height-padB+31}" text-anchor="middle" fill="${c}" font-size="12">${esc(strengthOf(d))}</text>` : '';
     const [labelLine1, labelLine2] = d.label.split(', ');
     const labelY = height-padB+50;
-    const labelLine = `<text x="${x}" y="${labelY}" text-anchor="middle" class="tv-chart-axis"><tspan x="${x}" dy="0">${esc(labelLine1)}</tspan><tspan x="${x}" dy="13">${esc(labelLine2)}${d.isCurrent?' (courant)':''}</tspan></text>`;
-    return dots + wordLine + deltaLine + labelLine;
+    const labelLine = `<text x="${x}" y="${labelY}" text-anchor="middle" class="tv-chart-axis"><tspan x="${x}" dy="0">${esc(labelLine1)}</tspan><tspan x="${x}" dy="13">${esc(labelLine2||'')}</tspan></text>`;
+    return marks + wordLine + strongLine + labelLine;
   }).join('');
   const legend = `<g>
-    <circle cx="${padL}" cy="${padT-16}" r="6" fill="var(--paper)" stroke="#64748b" stroke-width="2"/>
-    <text x="${padL+12}" y="${padT-12}" class="small">Attendu (analystes)</text>
-    <circle cx="${padL+150}" cy="${padT-16}" r="6" fill="#64748b"/>
-    <text x="${padL+162}" y="${padT-12}" class="small">Réel</text>
+    <rect x="${padL}" y="${padT-22}" width="16" height="12" fill="#64748b" opacity="0.16" rx="2"/>
+    <text x="${padL+22}" y="${padT-12}" class="small">Zone acceptable</text>
+    <line x1="${padL+140}" x2="${padL+158}" y1="${padT-16}" y2="${padT-16}" stroke="#64748b" stroke-width="2.5"/>
+    <text x="${padL+164}" y="${padT-12}" class="small">Cible</text>
+    <circle cx="${padL+226}" cy="${padT-16}" r="6" fill="#64748b"/>
+    <text x="${padL+238}" y="${padT-12}" class="small">${anyAdjusted ? 'Bénéfice jugé' : 'Bénéfice réel'}</text>${anyAdjusted ? `
+    <circle cx="${padL+346}" cy="${padT-16}" r="5" fill="none" stroke="#64748b" stroke-width="2"/>
+    <text x="${padL+358}" y="${padT-12}" class="small">Bénéfice officiel</text>` : ''}
   </g>`;
-  
-  
-  
+  const dash = '<span class="small">–</span>';
+  const rows = data.map(d=>{
+    if(!d.has) return `<tr><td>${esc(d.label)}</td><td>${dash}</td><td>${dash}</td><td>${dash}</td><td class="small" style="color:#64748b;">pas de verdict</td></tr>`;
+    const zoneCell = `<td class="money">${esc(analystSigned(d.target))}</td><td class="money">${esc(analystSigned(d.lo))} à ${esc(analystSigned(d.hi))}</td>`;
+    if(d.cur) return `<tr><td>${esc(d.label)}</td>${zoneCell}<td>${dash}</td><td class="small" style="color:#64748b;">en cours (${d.cur.frozen ? 'chiffres publiés' : 'chiffres provisoires'})</td></tr>`;
+    const note = analystJudgedNote(d.e);
+    return `<tr><td>${esc(d.label)}</td>${zoneCell}<td class="money" style="color:${analystMoneyColor(d.e.actual)};">${esc(analystSigned(d.e.actual))}${note ? `<div class="small" style="font-weight:400;">${esc(note)}</div>` : ''}</td><td class="small" style="color:${analystVerdictColor(d.e.verdict)};font-weight:600;">${analystVerdictLineTail(d.e)}</td></tr>`;
+  }).join('');
   return `<div style="overflow-x:auto;"><svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible;display:block;">
     ${grid}
     <line x1="${padL}" x2="${width-padR}" y1="${padT+plotH}" y2="${padT+plotH}" stroke="var(--board)" stroke-width="1.5"/>
-    ${todayDivider}
     ${legend}
     ${points}
-  </svg></div>`;
+  </svg></div>
+  <div style="overflow-x:auto;margin-top:8px;"><table>
+    <tr><th>Semestre</th><th>Cible</th><th>Zone acceptable</th><th>Réel</th><th>Verdict</th></tr>
+    ${rows}
+  </table></div>`;
+}
+// Section 323 — fin de la phrase d'un verdict (libellé, analystes battus, cubes) pour la table sous le graphique.
+function analystVerdictLineTail(e){
+  const label = ANALYST_VERDICT_LABELS[e.verdict] || e.verdict;
+  const callTxt = analystCallText(e); // Section 323 (pari du PDG) : ce que l'annonce a changé aux cubes
+  return `${esc(label)}${analystBeatenText(e, ' — ')} — ${analystCubesText(e)}${callTxt ? ` (${esc(callTxt)})` : ''}`; // Section 323 (D2) : zone = « dans la zone — 1 cube vert »
 }
 function tvChartLegend(series){
   return `<div class="tv-chart-legend">${series.map(s=>`
@@ -19523,6 +20304,7 @@ function bindTabEvents(t){
     
     const entReviewLastTurnBtn = document.getElementById('entReviewLastTurnBtn');
     if(entReviewLastTurnBtn) entReviewLastTurnBtn.addEventListener('click', ()=>reviewLastTurnSummary());
+    bindCeoCallBox('ent', myCompany()); // Section 323 (pari du PDG)
     
     
     
@@ -22656,7 +23438,7 @@ function modalIssueNewShares(){
   const remaining = shareIssuanceRemainingCap(myCo);
   openModal(`
     <h3>Émission de nouvelles actions — ${esc(myCo.name)}</h3>
-    <div class="small" style="margin-bottom:10px;">Émet de nouvelles parts au prix actuel de l'action et encaisse le montant reçu dans la trésorerie de l'entreprise. Cette dilution exerce une pression baissière sur le marché, comme une vente d'actions (plus marquée qu'une vente équivalente). L'effet se compte par tranche de ${fmtShares(STOCK_TRADE_IMPACT_UNIT_PCT*myCo.totalShares)} parts émises (0,5 % des parts) ; le supplément de l'émission ne vaut qu'une fois par ouverture du marché. Plafond cumulatif dans la partie: 10% des parts de départ de l'entreprise, net des rachats déjà effectués.</div><!-- Section 322 -->
+    <div class="small" style="margin-bottom:10px;">Émet de nouvelles parts au prix actuel de l'action et encaisse le montant reçu dans la trésorerie de l'entreprise. Cette dilution exerce une pression baissière sur le marché, comme une vente d'actions (plus marquée qu'une vente équivalente) : cubes rouges au sac trading. L'effet se compte par tranche de ${fmtShares(STOCK_TRADE_IMPACT_UNIT_PCT*myCo.totalShares)} parts émises (0,5 % des parts) ; le supplément de l'émission ne vaut qu'une fois par ouverture du marché. Plafond cumulatif dans la partie: 10% des parts de départ de l'entreprise, net des rachats déjà effectués.</div><!-- Section 322 -->
     <div class="small" style="margin-bottom:8px;">Prix actuel: <b>${fmtPrice(myCo.stockPrice)}</b>/part &nbsp;|&nbsp; Marge d'émission restante: <b>${fmtShares(remaining)}</b> part(s) (10% de ${fmtShares(myCo.totalShares)})</div>
     <label>Quantité de parts à émettre</label>
     <input type="number" step="1" min="0" max="${remaining}" id="mIssueSharesQty" value="0">
@@ -22685,7 +23467,7 @@ function modalBuybackShares(){
   if(!myCo){ alert('Vous devez d’abord fonder une entreprise.'); return; }
   openModal(`
     <h3>Rachat d'actions — ${esc(myCo.name)}</h3>
-    <div class="small" style="margin-bottom:10px;">Rachète des parts au prix actuel de l'action, payées à même la trésorerie de l'entreprise. Ce retrait d'offre exerce une pression haussière sur le marché, comme un achat d'actions (plus marquée qu'un achat équivalent), et libère de la marge d'émission future. L'effet se compte par tranche de ${fmtShares(STOCK_TRADE_IMPACT_UNIT_PCT*myCo.totalShares)} parts rachetées (0,5 % des parts) : en dessous d'une tranche, aucun cube ; le supplément du rachat ne vaut qu'une fois par ouverture du marché.</div><!-- Section 322 -->
+    <div class="small" style="margin-bottom:10px;">Rachète des parts au prix actuel de l'action, payées à même la trésorerie de l'entreprise. Ce retrait d'offre exerce une pression haussière sur le marché, comme un achat d'actions (plus marquée qu'un achat équivalent) : cubes verts au sac trading ; il libère aussi de la marge d'émission future. L'effet se compte par tranche de ${fmtShares(STOCK_TRADE_IMPACT_UNIT_PCT*myCo.totalShares)} parts rachetées (0,5 % des parts) : en dessous d'une tranche, aucun cube ; le supplément du rachat ne vaut qu'une fois par ouverture du marché.</div><!-- Section 322 -->
     <div class="small" style="margin-bottom:8px;">Prix actuel: <b>${fmtPrice(myCo.stockPrice)}</b>/part &nbsp;|&nbsp; Trésorerie actuelle: <b>${fmt(myCo.cash)}</b></div>
     <label>Quantité de parts à racheter</label>
     <input type="number" step="1" min="0" id="mBuybackSharesQty" value="0">

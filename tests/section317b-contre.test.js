@@ -1,7 +1,7 @@
 // Contre-épreuves automatiques (section 317, seconde moitié) : pour chaque bogue d'affichage, une observation minimale est
 // faite sur le moteur ACTUEL (elle doit montrer le comportement corrigé) puis sur un moteur où l'ancien code est
 // réintroduit par loadEngine({transform}) (elle doit montrer le défaut). Si le correctif disparaît, ce fichier échoue.
-// Couvre 82, 83, 84, 89, 90, 93, 94, 97 et le libellé de durée de partie (95). Les bogues 88 et 95 (années) ont leur
+// Couvre 82, 83, 84, 89, 93, 94, 97 et le libellé de durée de partie (95). Les bogues 88 et 95 (années) ont leur
 // contre-épreuve dans section317b-lot.test.js et section317b-annees.test.js.
 // Lancer depuis la racine du dépôt :  node tests/section317b-contre.test.js
 const { loadEngine, check } = require('./helpers/engine');
@@ -34,8 +34,6 @@ const cas = [
     obs: async (eng) => { eng.run(`__modals.length = 0; showTransactionPopup('T', [{label:'a', amount:3}], 'note');`); return !/écart d.arrondi/.test(eng.run(`__modals[__modals.length-1]`)); } },
   { bogue: '89 libellé capitalisation', transform: swap('(toutes les parts émises, part de la banque comprise)', '(excl. part de la banque)'),
     obs: async (eng) => !/excl\. part de la banque/.test(eng.run(`renderEntrepriseFinancials(state.companies[0])`)) },
-  { bogue: '90 attente fixe', transform: swap('netIncomeExpectation.bootstrap ? (', 'false ? ('),
-    obs: async (eng) => { eng.run(`state.gameClock.rollCount = 3;`); return /attente fixe de départ pour le 2e semestre de l'entreprise/.test(eng.run(`renderEntreprise()`)); } },
   { bogue: '93 taux du journal', transform: swap('(taux ${(priceRate*100).toFixed(1)}%)', '(taux ${(riskAdjustedRate(state.settings.goAdvanceRate,co)*100).toFixed(1)}%)'),
     obs: async (eng) => {
       eng.run(`state.settings.goAdvanceRate = 0.10; state.settings.debtSpreadFactor = 0.10; globalThis.C = state.companies[0];`);

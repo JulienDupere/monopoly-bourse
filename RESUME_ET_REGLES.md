@@ -2578,3 +2578,34 @@ position négative de la banque). Suite : 84 fichiers, 4 206 vérifications et 5
 un réviseur, puis relecture de contrôle, avec ses propres sondes (2 bloquants et 1 sérieux à la revue : points 9, 10
 et 11 ; 1 sérieux au contrôle : point 16 ; plafonds du point 10). Vérifié à l'écran en mode local : aperçus des deux
 fenêtres, refus à l'annonce, annonce réduite à la clôture, ajustement des options, fenêtre des ordres d'achat.
+
+## 322. Rachat et émission d'actions : le bonus de cubes une seule fois par ouverture du marché, à partir d'une tranche ; rachat refusé au-delà de la trésorerie — 2026-11-16
+
+Contexte : la relecture de contrôle de la section 321 a signalé, hors de son lot, que chaque rachat d'actions ajoutait
+1 à 2 cubes verts de bonus au sac fondamental quelle que soit la quantité : 20 rachats d'une part (2 000 $) ajoutaient
+34 verts. Le défaut existait avant la section 321. Décision de l'utilisateur, verbatim : « Oui, corrige ». Chaque
+changement du code porte le commentaire « Section 322 ».
+
+1. **Bonus du rachat** (`buybackShares`, `corpActionBonusDue`) — le bonus (1 à 2 verts,
+   `STOCK_TRIGGER_SHARE_BUYBACK_BONUS_MIN/MAX`) n'est donné qu'une fois par fenêtre de marché et par entreprise, et
+   seulement quand le rachat franchit une tranche d'impact (`tradeCubeRange` : 0,5 % des parts, soit 1 000 parts pour
+   200 000, comptées en cumul). La base (1 à 2 verts par tranche, 12 tranches au plus par fenêtre) ne change pas.
+   Mémoire dans le budget de la fenêtre (`company.tradeImpactBudget.bonus`), remis à zéro avec lui quand la fenêtre
+   change ; une partie enregistrée sans ce champ se joue sans erreur.
+   *Exemple* : 20 rachats d'une part : aucun cube (avant : 20 à 40 verts) ; 1 000 parts : bonus + 1 à 2 verts ; encore
+   1 000 parts à la même ouverture : 1 à 2 verts seulement ; à l'ouverture suivante, le bonus revient une fois.
+2. **Bonus de l'émission** (`issueNewShares`) — même défaut en miroir (1 à 2 rouges à chaque appel : 20 émissions d'une
+   part ajoutaient 20 à 40 rouges, de quoi écraser son propre cours presque gratuitement), même règle. Étendu de ma
+   propre initiative, signalé à l'utilisateur. Les deux bonus sont distincts : un rachat et une émission de la même
+   ouverture reçoivent chacun le leur.
+3. **Fenêtres** « Rachat d'actions » et « Émission de nouvelles actions » — une phrase dit que l'effet se compte par
+   tranche et que le supplément ne vaut qu'une fois par ouverture du marché.
+4. **Rachat refusé au-delà de la trésorerie** (vu au passage ; décision de l'utilisateur, verbatim : « Ajoute, puis
+   pousse ») — `buybackShares` ne vérifiait pas la trésorerie : un rachat de 1 000 000 de parts (100 M$) était accepté
+   avec 20 M$ en caisse (trésorerie à −80 M$). Il est maintenant refusé avec un message, comme l'annonce d'un
+   dividende ; un rachat d'exactement toute la trésorerie reste permis ; rien n'est modifié par un refus.
+
+**Tests** : `tests/section322-rachat.test.js` (8 scénarios, 72 vérifications, 8 versions cassées exprès attrapées, dont
+l'ancien code). Suite : 85 fichiers, 4 278 vérifications et 53 cas multi-appareils. Vérifié à l'écran en mode local :
+textes des deux fenêtres, rachat par un vrai clic (un rachat d'une part n'ajoute aucun cube ; le second rachat de
+1 000 parts de la même ouverture n'ajoute que la base).

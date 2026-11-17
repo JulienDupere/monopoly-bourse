@@ -90,6 +90,9 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
   `announcedDividendPayoutPenalty`, rejugé par `closeAnnouncedDividendPayoutPenalty`) ; jauge du récurrent limitée à un
   changement par semestre ; plus de règle des 5 cubes au sac type. Ordre d'achat exécuté au cours, jamais au-dessus de
   sa limite (`fillPendingBid`). Aide-mémoire et cahiers 6 et 7 pas à jour des sections 320 et 321 (demande de Julien).
+- Rachat et émission d'actions (section 322) : `buybackShares`, `issueNewShares` ; cubes par tranche
+  (`tradeCubeRange`), bonus une fois par fenêtre de marché et seulement si une tranche est franchie
+  (`corpActionBonusDue`) ; rachat refusé au-delà de la trésorerie.
 - Marché : `executeShareTrade`, `placeBid` / `placeAsk` / `checkPendingOrders`, `drawStockCubes`, options
   (`blackScholesPremium`, `openOptionPosition`…), `enforceMarginCalls`.
 
@@ -109,8 +112,8 @@ titre `## 301.`) peuvent se lire d'un bloc quand on touche une règle de base.
 
 ## Tests
 
-- `node tests/run-all.js` lance tous les `tests/*.test.js` (84 fichiers, 4 206 vérifications et 53 cas
-  multi-appareils au 2026-11-16, après la section 321). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
+- `node tests/run-all.js` lance tous les `tests/*.test.js` (85 fichiers, 4 278 vérifications et 53 cas
+  multi-appareils au 2026-11-16, après la section 322). Banc multi-appareils : `tests/section308-sync.test.js` (faux serveur
   `tests/helpers/fake-firebase.js`, mini-DOM `tests/helpers/fake-dom.js` ; `SYNC_SEEDS=40` pour un passage long). Il charge
   tout le script d'`index.html`, donc une erreur de syntaxe le fait échouer. Tout doit passer avant un push.
 - Syntaxe seule : `node -e "new (require('vm').Script)(require('./tests/helpers/engine').engineSource())"`.
